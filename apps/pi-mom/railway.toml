@@ -1,0 +1,11 @@
+# Railway worker configuration for the Covent Pi Slack Socket Mode bridge.
+# Socket Mode is a long-running websocket process, not an HTTP/serverless function.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm ci"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

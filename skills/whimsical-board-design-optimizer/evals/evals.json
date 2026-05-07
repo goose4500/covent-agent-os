@@ -1,0 +1,23 @@
+{
+  "skill_name": "whimsical-board-design-optimizer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Analyze this workflow diagram in Whimsical: Jake. Tell me what it communicates and how you would improve the design, but don't edit it yet.",
+      "expected_output": "Finds the named Whimsical board, fetches details and an image, summarizes the workflow meaning, identifies design issues, and proposes a concise cleanup plan without modifying the board.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Use your tools to make the Whimsical board called Jake more visually appealing while preserving the workflow meaning.",
+      "expected_output": "Fetches the board, applies a basic visual system with title, color-coded branches, clearer labels/callouts, spacing improvements, verifies with an image fetch, and reports the board URL plus changes made.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Clean up my Whimsical board for a current vs proposed product flow. Make it easier for someone to understand in five seconds.",
+      "expected_output": "Asks for the target board if not provided, then analyzes semantic flow and applies safe readability/design improvements focused on title, path distinction, outcomes, spacing, and callouts.",
+      "files": []
+    }
+  ]
+}

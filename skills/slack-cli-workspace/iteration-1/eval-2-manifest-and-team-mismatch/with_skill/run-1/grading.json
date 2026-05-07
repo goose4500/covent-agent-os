@@ -1,0 +1,49 @@
+{
+  "expectations": [
+    {
+      "text": "Explains invalid_manifest as a manifest/schema/YAML/config validation problem",
+      "passed": true,
+      "evidence": "Defines invalid_manifest as manifest/config validation/schema problem."
+    },
+    {
+      "text": "Explains app_auth_team_mismatch as an app/team/workspace mismatch requiring correct --team/--app selection",
+      "passed": true,
+      "evidence": "Defines app/team mismatch and points to explicit --team/--app selection."
+    },
+    {
+      "text": "Recommends slack manifest validate or manifest checks",
+      "passed": true,
+      "evidence": "Recommends slack manifest validate."
+    },
+    {
+      "text": "Avoids blind retries or destructive fixes before diagnosis",
+      "passed": true,
+      "evidence": "Warns to diagnose/confirm before destructive or blind changes."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "tool_calls": {},
+    "total_tool_calls": 0,
+    "total_steps": 1,
+    "errors_encountered": 0,
+    "output_chars": 2419,
+    "transcript_chars": 0
+  },
+  "timing": {},
+  "claims": [],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "Assertions check the core Slack CLI safety and command guidance for this prompt."
+  }
+}

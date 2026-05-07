@@ -1,0 +1,51 @@
+# dependencies/build
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.cache/
+*.tsbuildinfo
+
+# env/secrets
+.env
+.env.*
+!.env.example
+!.env.template
+*.local
+*.secret
+secrets/
+
+# Slack local state
+apps/pi-mom/.slack/apps.json
+apps/pi-mom/.slack/config.json
+apps/pi-mom/.slack/cache/
+apps/pi-mom/.env.local
+
+# Pi runtime state / logs / artifacts
+sessions/
+transcripts/
+subagent-artifacts/
+logs/
+*.log
+*.pid
+generated-images/
+pi-session-audit/
+
+# MCP/browser local state
+mcp.json
+mcp-cache.json
+chrome-profile/
+User Data/
+*.har
+*.heapsnapshot
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]

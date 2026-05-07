@@ -1,0 +1,11 @@
+title = "covent-agent-os local gitleaks config"
+
+[allowlist]
+description = "Placeholders in examples/docs"
+regexes = [
+  '''xoxb-placeholder''',
+  '''xapp-placeholder''',
+  '''sk-placeholder''',
+  '''xoxb-\.\.\.''',
+  '''xapp-\.\.\.'''
+]

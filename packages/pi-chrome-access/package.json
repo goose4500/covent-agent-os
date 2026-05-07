@@ -1,0 +1,18 @@
+{
+  "name": "pi-chrome-access",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi extension and skill for high-leverage local Chrome browser agency via Chrome DevTools MCP.",
+  "keywords": ["pi-package", "chrome", "browser", "mcp", "agent"],
+  "pi": {
+    "extensions": ["./extensions/chrome-access.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  }
+}

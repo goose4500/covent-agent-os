@@ -1,0 +1,299 @@
+{
+  "metadata": {
+    "skill_name": "slack-cli",
+    "skill_path": "/home/jfloyd/.pi/agent/skills/slack-cli",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-05T23:08:42Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 1476,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Includes safe preflight commands: slack version, slack auth list, and slack doctor",
+          "passed": true,
+          "evidence": "Found slack version, slack auth list, and slack doctor."
+        },
+        {
+          "text": "Mentions inspecting .slack project metadata before changing configuration",
+          "passed": true,
+          "evidence": "Mentions .slack metadata/files."
+        },
+        {
+          "text": "Explains using explicit --team and/or --app to resolve workspace/app selection",
+          "passed": true,
+          "evidence": "Includes explicit --team and --app usage."
+        },
+        {
+          "text": "Avoids destructive commands and avoids exposing secrets",
+          "passed": true,
+          "evidence": "Warns against changes/destructive actions and shows no raw tokens."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 799,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Includes CI command using slack deploy -s --token \"$SLACK_SERVICE_TOKEN\" or equivalent env-var token usage",
+          "passed": true,
+          "evidence": "Includes slack deploy with service token env var and -s/skip update."
+        },
+        {
+          "text": "States service tokens are secrets and should not be printed, committed, or logged",
+          "passed": true,
+          "evidence": "States token must be treated as a secret and not logged/committed."
+        },
+        {
+          "text": "Mentions confirming target workspace/team/app/environment before production deployment",
+          "passed": true,
+          "evidence": "Mentions confirming/pinning workspace/team, app, and environment."
+        },
+        {
+          "text": "Mentions --skip-update/-s or skip update checks for CI stability",
+          "passed": true,
+          "evidence": "Mentions -s/skip update behavior for CI."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 2419,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Explains invalid_manifest as a manifest/schema/YAML/config validation problem",
+          "passed": true,
+          "evidence": "Defines invalid_manifest as manifest/config validation/schema problem."
+        },
+        {
+          "text": "Explains app_auth_team_mismatch as an app/team/workspace mismatch requiring correct --team/--app selection",
+          "passed": true,
+          "evidence": "Defines app/team mismatch and points to explicit --team/--app selection."
+        },
+        {
+          "text": "Recommends slack manifest validate or manifest checks",
+          "passed": true,
+          "evidence": "Recommends slack manifest validate."
+        },
+        {
+          "text": "Avoids blind retries or destructive fixes before diagnosis",
+          "passed": true,
+          "evidence": "Warns to diagnose/confirm before destructive or blind changes."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.5,
+        "passed": 2,
+        "failed": 2,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 1574,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Includes safe preflight commands: slack version, slack auth list, and slack doctor",
+          "passed": false,
+          "evidence": "Missing one or more of slack version, slack auth list, slack doctor."
+        },
+        {
+          "text": "Mentions inspecting .slack project metadata before changing configuration",
+          "passed": true,
+          "evidence": "Mentions .slack metadata/files."
+        },
+        {
+          "text": "Explains using explicit --team and/or --app to resolve workspace/app selection",
+          "passed": false,
+          "evidence": "Does not include both --team and --app selectors."
+        },
+        {
+          "text": "Avoids destructive commands and avoids exposing secrets",
+          "passed": true,
+          "evidence": "Warns against changes/destructive actions and shows no raw tokens."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.5,
+        "passed": 2,
+        "failed": 2,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 786,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Includes CI command using slack deploy -s --token \"$SLACK_SERVICE_TOKEN\" or equivalent env-var token usage",
+          "passed": false,
+          "evidence": "Missing deploy token env var or -s/skip-update."
+        },
+        {
+          "text": "States service tokens are secrets and should not be printed, committed, or logged",
+          "passed": true,
+          "evidence": "States token must be treated as a secret and not logged/committed."
+        },
+        {
+          "text": "Mentions confirming target workspace/team/app/environment before production deployment",
+          "passed": true,
+          "evidence": "Mentions confirming/pinning workspace/team, app, and environment."
+        },
+        {
+          "text": "Mentions --skip-update/-s or skip update checks for CI stability",
+          "passed": false,
+          "evidence": "Does not mention -s/--skip-update/skip update checks."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "failed": 1,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 1983,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Explains invalid_manifest as a manifest/schema/YAML/config validation problem",
+          "passed": true,
+          "evidence": "Defines invalid_manifest as manifest/config validation/schema problem."
+        },
+        {
+          "text": "Explains app_auth_team_mismatch as an app/team/workspace mismatch requiring correct --team/--app selection",
+          "passed": false,
+          "evidence": "Does not clearly connect mismatch to explicit --team/--app selection."
+        },
+        {
+          "text": "Recommends slack manifest validate or manifest checks",
+          "passed": true,
+          "evidence": "Recommends slack manifest validate."
+        },
+        {
+          "text": "Avoids blind retries or destructive fixes before diagnosis",
+          "passed": true,
+          "evidence": "Warns to diagnose/confirm before destructive or blind changes."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 1564.6667,
+        "stddev": 813.6316,
+        "min": 799,
+        "max": 2419
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.5833,
+        "stddev": 0.1443,
+        "min": 0.5,
+        "max": 0.75
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 1447.6667,
+        "stddev": 608.4179,
+        "min": 786,
+        "max": 1983
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.42",
+      "time_seconds": "+0.0",
+      "tokens": "+117"
+    }
+  },
+  "notes": [
+    "With-skill runs passed all 12 assertions across 3 evals; without-skill runs passed 7/12, mainly missing Slack-CLI-specific preflight, --team/--app, and CI -s/skip-update guidance.",
+    "The biggest skill-specific lift appears in eval 0 and eval 1: baseline answers were generally safe, but did not consistently include Slack CLI diagnostics (`slack version`, `slack doctor`) or CI-specific `-s` update suppression.",
+    "Eval 2 is less discriminating because the baseline already knew common manifest troubleshooting; the skill still improved by explicitly connecting `app_auth_team_mismatch` to `--team`/`--app` targeting.",
+    "Timing data was unavailable from the subagent result, so benchmark time fields are 0.0; token values are output-character proxies from grading metrics, not actual model tokens.",
+    "Only one run per eval/config was executed, so pass rates are a quick sanity check rather than a statistically stable benchmark."
+  ]
+}

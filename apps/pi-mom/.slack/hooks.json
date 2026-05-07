@@ -1,0 +1,18 @@
+{
+  "runtime": "node",
+  "hooks": {
+    "get-manifest": "python3 .slack/get-manifest.py"
+  },
+  "config": {
+    "watch": {
+      "manifest": {
+        "paths": ["manifest.yaml"]
+      },
+      "app": {
+        "paths": ["index.mjs", "doctor.mjs", "package.json"],
+        "filter-regex": "\\.(mjs|js|json)$"
+      }
+    },
+    "sdk-managed-connection-enabled": true
+  }
+}

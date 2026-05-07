@@ -1,0 +1,37 @@
+{
+  "name": "covent-agent-os",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private Covent AI automation operating layer for Slack, Pi, skills, agents, and bounded tools.",
+  "workspaces": [
+    "apps/pi-mom",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "npm run secret-scan && npm run validate:skills && npm run check:pi-mom && npm run typecheck",
+    "doctor": "npm run doctor:pi-mom",
+    "dev:pi-mom": "npm --prefix apps/pi-mom start",
+    "doctor:pi-mom": "npm --prefix apps/pi-mom run doctor",
+    "check:pi-mom": "npm --prefix apps/pi-mom run check",
+    "typecheck": "tsc --noEmit",
+    "validate:skills": "node scripts/validate-skills.mjs",
+    "secret-scan": "bash scripts/secret-scan.sh",
+    "install:pi": "bash scripts/install-local.sh"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"],
+    "agents": ["./agents"],
+    "prompts": ["./prompts"]
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@types/node": "^22.15.3",
+    "typebox": "latest",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  }
+}

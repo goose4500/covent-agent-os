@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "linear": { "command": "example", "args": [] },
+    "slack": { "command": "example", "args": [] },
+    "chrome-devtools": { "command": "example", "args": [] }
+  }
+}

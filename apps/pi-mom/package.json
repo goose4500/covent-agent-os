@@ -1,0 +1,20 @@
+{
+  "name": "covent-pi-mom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Socket Mode Slack bridge for routing Covent Slack requests into Pi agents.",
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "doctor": "node doctor.mjs",
+    "check": "node --check index.mjs && node --check doctor.mjs"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@slack/bolt": "^4.6.0"
+  }
+}

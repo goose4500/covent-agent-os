@@ -1,0 +1,41 @@
+{
+  "skill_name": "slack-cli",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I'm in a Slack app repo and `slack run` seems to be using the wrong workspace/app. Give me the safest command sequence to diagnose it before I change anything.",
+      "expected_output": "A safe diagnostic sequence that checks Slack CLI version, auth list, doctor, .slack metadata, and app/team selection without exposing secrets or making destructive changes.",
+      "files": [],
+      "assertions": [
+        "Includes safe preflight commands: slack version, slack auth list, and slack doctor",
+        "Mentions inspecting .slack project metadata before changing configuration",
+        "Explains using explicit --team and/or --app to resolve workspace/app selection",
+        "Avoids destructive commands and avoids exposing secrets"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "We want to deploy a Slack app from CI. The service token is stored in an env var named SLACK_SERVICE_TOKEN. What Slack CLI command should the workflow use, and what should I be careful about?",
+      "expected_output": "A CI-safe deploy command using slack deploy -s --token \"$SLACK_SERVICE_TOKEN\", with guidance to protect service tokens and confirm app/team/environment before production deploys.",
+      "files": [],
+      "assertions": [
+        "Includes CI command using slack deploy -s --token \"$SLACK_SERVICE_TOKEN\" or equivalent env-var token usage",
+        "States service tokens are secrets and should not be printed, committed, or logged",
+        "Mentions confirming target workspace/team/app/environment before production deployment",
+        "Mentions --skip-update/-s or skip update checks for CI stability"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Slack CLI is failing with invalid_manifest and app_auth_team_mismatch after I edited the app config. Explain what those errors mean and the next commands/checks I should run.",
+      "expected_output": "Troubleshooting guidance that distinguishes manifest validation errors from app/team selection mismatch, recommends slack manifest validate and explicit --team/--app checks, and avoids blind retries or destructive fixes.",
+      "files": [],
+      "assertions": [
+        "Explains invalid_manifest as a manifest/schema/YAML/config validation problem",
+        "Explains app_auth_team_mismatch as an app/team/workspace mismatch requiring correct --team/--app selection",
+        "Recommends slack manifest validate or manifest checks",
+        "Avoids blind retries or destructive fixes before diagnosis"
+      ]
+    }
+  ]
+}
