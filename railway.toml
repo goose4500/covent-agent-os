@@ -4,7 +4,6 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm ci"
 
 [deploy]
 startCommand = "npm run dev:pi-mom"
