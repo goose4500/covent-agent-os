@@ -34,6 +34,40 @@ Install/load as a Pi package locally:
 npm run install:pi
 ```
 
+## Railway POC worker
+
+Railway is scaffolded as a long-running Socket Mode worker, not a web/serverless function.
+
+```text
+Railway project: covent-pi-mom
+Environment: production
+Service: covent-pi-mom
+Start command: npm run dev:pi-mom
+```
+
+From the repo root:
+
+```bash
+railway status
+railway service status
+railway variable list --kv
+```
+
+Before first deploy, set required secrets in Railway Variables only:
+
+```text
+SLACK_BOT_TOKEN
+SLACK_APP_TOKEN
+OPENAI_API_KEY # or the provider key matching PI_EXTRA_ARGS
+```
+
+Then deploy intentionally:
+
+```bash
+railway up --detach
+railway logs --service covent-pi-mom
+```
+
 ## Operating spine
 
 ```text
