@@ -10,12 +10,6 @@ This repo is the canonical source for the current Slack ↔ Pi automation code, 
 - **Pi agent layer**: `skills/`, `agents/`, and `extensions/` define reusable operating modes and bounded tools.
 - **Automation tooling**: image generation, MCP guards, permission gates, Chrome/browser access, and context-prime workflows.
 - **DX foundation**: doctors, validation scripts, examples, and source-linked docs for local POC work.
-
-## What this repo is not
-
-- Not a dump of `~/.pi/agent` runtime state.
-- Not a place for Slack/Linear/GitHub/OpenAI tokens.
-- Not a raw archive of Slack messages, Linear exports, Pi session JSONL, browser cookies, logs, generated images, or caches.
 - Not production infrastructure yet; this is private POC source control first.
 
 ## Quick start
