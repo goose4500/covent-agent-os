@@ -1,13 +1,13 @@
 name: ci
 
-# Trigger on PRs targeting main, and on direct main pushes (post-merge).
-# This avoids the double-fire of running both `push` and `pull_request` on
-# every PR commit. concurrency cancels stale PR runs on force-push.
+# pull_request fires for ANY base (so stacked PRs against feature branches still
+# get CI). push is restricted to main so post-merge runs are gated, but feature
+# branches don't double-fire CI on every push (the open PR's pull_request event
+# already covers it). concurrency cancels stale PR runs on force-push.
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
