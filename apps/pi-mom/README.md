@@ -36,8 +36,9 @@ Copy the app token (`xapp-...`) into your local secret manager.
 
 ## 4. Install local dependencies
 
+From the repo root:
+
 ```bash
-cd /home/jfloyd/.pi/agent/pi-mom
 npm install
 ```
 
@@ -76,11 +77,14 @@ export LINEAR_API_KEY='lin_api_...'
 
 ## 6. Run the bridge
 
+From the repo root:
+
 ```bash
-cd /home/jfloyd/.pi/agent/pi-mom
-npm run doctor
-npm start
+npm run doctor:pi-mom
+npm run dev:pi-mom
 ```
+
+Before live local testing, confirm whether the Railway production worker is already running. Do not intentionally run duplicate workers against the same Slack app/channel unless you are doing controlled debugging.
 
 ## 7. Test in private #idea-specs
 
@@ -128,7 +132,7 @@ Routed workflow prefixes:
 @Covent Pi spec: turn this idea into a safe implementation/spec draft
 @Covent Pi digest: create a compact digest from this context
 @Covent Pi image: create a clean Covent hero visual for active buyer intelligence
-@Covent Pi image edit: use the image attached in this thread as reference and restyle it as a polished Covent asset
+@Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
 ```
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
@@ -153,7 +157,7 @@ Image route behavior in `PI_MOM_MODE=pi`:
 
 - `image:` is handled directly by the bridge, not by an unrestricted Pi subprocess.
 - Requires `OPENAI_API_KEY` in the pi-mom environment.
-- `image:` / `image generate:` calls text-to-image generation. `image edit:` explicitly uses Slack image files in the current thread as references.
+- `image:` / `image: generate ...` calls text-to-image generation. `image: edit ...` explicitly uses Slack image files in the current thread as references.
 - Generated files are uploaded back to the same Slack thread and saved locally under `PI_MOM_IMAGE_OUTPUT_DIR` or `~/.pi/agent/generated-images/slack`.
 - Draft defaults are cheap/fast: `OPENAI_IMAGE_MODEL=gpt-image-1`, `OPENAI_IMAGE_QUALITY=low`, `OPENAI_IMAGE_SIZE=1024x1024`, `OPENAI_IMAGE_OUTPUT_FORMAT=png`.
 - Optional knobs: `PI_MOM_IMAGE_ROUTE_ENABLED=false`, `PI_MOM_IMAGE_MAX_INPUTS=4`, `PI_MOM_IMAGE_MAX_BYTES=20971520`, `OPENAI_IMAGE_MODEL_FALLBACKS=gpt-image-1.5,gpt-image-1`.
@@ -201,7 +205,7 @@ Known-good non-secret values:
 - Full mode: `PI_MOM_MODE=pi`
 - Pi model when `PI_EXTRA_ARGS=""`: Pi default `openai-codex/gpt-5.5` with high thinking
 
-Detailed memory/runbook: `/home/jfloyd/.pi/agent/docs/covent-pi-mom-known-good.md`
+Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 
 ## Notes
 

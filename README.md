@@ -21,6 +21,14 @@ npm run check
 npm run doctor
 ```
 
+## System map
+
+Start with:
+
+- `docs/SYSTEM_INDEX.md` — canonical map across Slack, Pi, Linear, Git, Railway, Whimsical, and docs.
+- `docs/AGENT_CONTEXT.md` — read-first context for future agents.
+- `BOUNDARY.md` and `SECURITY.md` — authority and secret-handling rules.
+
 Run the Slack/Pi bridge locally:
 
 ```bash
@@ -50,15 +58,21 @@ From the repo root:
 ```bash
 railway status
 railway service status
-railway variable list --kv
+railway variable list --json # verify names/status only; do not paste values
 ```
 
-Before first deploy, set required secrets in Railway Variables only:
+Before first deploy, set required startup secrets in Railway Variables only:
 
 ```text
 SLACK_BOT_TOKEN
 SLACK_APP_TOKEN
-OPENAI_API_KEY # or the provider key matching PI_EXTRA_ARGS
+```
+
+Optional route/runtime secrets:
+
+```text
+OPENAI_API_KEY # image route or provider key matching PI_EXTRA_ARGS
+LINEAR_API_KEY # required for @Covent Pi create Linear issue
 ```
 
 Then deploy intentionally:
@@ -76,6 +90,8 @@ Pi = reasoning + execution runtime
 Skills/agents = reusable operating modes
 MCP/tools = bounded capabilities, not authority
 Linear/GitHub = durable truth / code truth
+Repo docs = canonical system memory
+Whimsical = visual map / navigation layer
 ```
 
-Read `BOUNDARY.md` and `SECURITY.md` before adding write-capable automation.
+Read `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, `BOUNDARY.md`, and `SECURITY.md` before adding write-capable automation.

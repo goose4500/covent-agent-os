@@ -235,7 +235,7 @@ function formatHelp() {
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
     `• \`@Covent Pi image: create a clean Covent hero visual for active buyer intelligence\`\n` +
-    `• attach an image in-thread, then \`@Covent Pi image edit: restyle this as a polished Covent website asset\`\n` +
+    `• attach an image in-thread, then \`@Covent Pi image: edit restyle this as a polished Covent website asset\`\n` +
     `• \`@Covent Pi escalation: brief this customer problem\``;
 }
 
@@ -560,7 +560,7 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
-      text: "Usage: `@Covent Pi image: create ...` or attach an image and use `@Covent Pi image edit: ...`.",
+      text: "Usage: `@Covent Pi image: create ...` or attach an image and use `@Covent Pi image: edit ...`.",
     });
     trace("slack.replied_image_usage", { requestId, durationMs: Date.now() - start });
     return;
@@ -592,7 +592,7 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
       await client.chat.update({
         channel,
         ts: thinking.ts,
-        text: "For `image edit:`, attach an image in this thread or use `image generate:` for text-only generation.",
+        text: "For `image: edit`, attach an image in this thread or use `image: generate` for text-only generation.",
       });
       trace("slack.replied_image_missing_input", { requestId, durationMs: Date.now() - start });
       return;

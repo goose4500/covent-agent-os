@@ -7,7 +7,7 @@ Slack cockpit
   → pi-mom route detection / ack / progress / final response
   → Pi skill/agent/runtime or direct bounded tool
   → artifacts/source links
-  → optional approval-gated mutation into Linear/GitHub/Slack/Whimsical
+  → optional declared-route + current-approval mutation into Linear/GitHub/Slack/Whimsical
 ```
 
 ## Layers
@@ -22,5 +22,5 @@ Slack cockpit
 
 1. Make `apps/pi-mom` reliable locally.
 2. Preserve and validate GPT Image route and Slack output behavior.
-3. Keep Linear/source-of-truth writes draft/approval-gated.
-4. Make this repo canonical, then productionize.
+3. Keep Linear/source-of-truth writes explicit, source-linked, and approval-gated by route.
+4. Make repo docs canonical and Whimsical visual, then productionize.

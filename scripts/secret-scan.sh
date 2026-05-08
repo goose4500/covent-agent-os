@@ -18,7 +18,7 @@ rg -n --hidden --no-messages \
   --glob '!**/node_modules/**' \
   --glob '!package-lock.json' \
   --glob '!*.png' --glob '!*.jpg' --glob '!*.jpeg' --glob '!*.gif' --glob '!*.webp' \
-  'xox[baprs]-[0-9A-Za-z-]{20,}|xapp-[0-9]+-[A-Za-z0-9-]{20,}|sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{30,}|AIza[0-9A-Za-z_-]{30,}' . > "$TMP" || true
+  'xox[baprs]-[0-9A-Za-z-]{20,}|xapp-[0-9]+-[A-Za-z0-9-]{20,}|lin_api_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{30,}|AIza[0-9A-Za-z_-]{30,}|RAILWAY_[A-Z0-9_]*(TOKEN|KEY|SECRET)=[A-Za-z0-9_./+=-]{16,}' . > "$TMP" || true
 
 if [ -s "$TMP" ]; then
   echo "Potential secrets found. Redacted locations:" >&2

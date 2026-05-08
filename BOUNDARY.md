@@ -19,7 +19,7 @@ Humans approve risky external mutations.
 | Slack | Cockpit, intake, progress, approval | Read current context; write only through approved routes |
 | Pi | Reasoning/execution runtime | Can plan, draft, run local checks; no external writes unless route allows |
 | MCP tools | Bounded capability adapters | Read-first; writes require explicit current approval |
-| Linear | Durable work truth | Draft-first; mutation only after approval |
+| Linear | Durable work truth | Draft-first by default; mutation only after explicit approval or an approved write-capable route such as `@Covent Pi create Linear issue` |
 | GitHub/Git | Code truth/review/rollback | Local commits OK after scan; remote push only after repo boundary is understood |
 | Browser/Chrome | Visible supervised action surface | Read/inspect by default; consequential actions require approval |
 
@@ -38,7 +38,7 @@ Every Slack/Pi route should declare:
 ## Mutations requiring explicit current approval
 
 - Posting/uploading/updating/deleting Slack content outside the active response route.
-- Creating/updating/deleting Linear issues/comments/statuses.
+- Creating/updating/deleting Linear issues/comments/statuses outside approved explicit routes.
 - Creating/pushing GitHub repos, branches, PRs, or releases.
 - Sending email or external messages.
 - Editing Whimsical/Figma/browser state with real-world consequences.

@@ -7,8 +7,10 @@ This is a private POC repo, but treat it as production-sensitive because it touc
 Never commit:
 
 - `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, Slack signing secrets, OAuth tokens.
+- `LINEAR_API_KEY` and Linear OAuth/API credentials.
 - OpenAI/Gemini/Anthropic/xAI/API keys.
 - GitHub tokens.
+- Railway tokens and Railway variable values.
 - MCP server credentials or real `mcp.json` with secrets.
 - Browser cookies, Chrome profiles, session storage.
 - Raw Slack exports, Linear issue dumps, private Pi JSONL sessions, logs, generated images.
