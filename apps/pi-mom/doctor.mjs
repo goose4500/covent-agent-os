@@ -1,8 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { WebClient } from "@slack/web-api";
-import { LINEAR_DEFAULT_TARGET, REQUIRED_ENV, SLACK_TOKEN_PREFIXES, runtimeConfig } from "./lib/runtime-config.mjs";
+import { getRuntimeConfigErrors, LINEAR_DEFAULT_TARGET, REQUIRED_ENV, SLACK_TOKEN_PREFIXES, runtimeConfig } from "./lib/runtime-config.mjs";
 
 let ok = true;
+for (const error of getRuntimeConfigErrors(runtimeConfig)) {
+  console.error(`✗ ${error}`);
+  ok = false;
+}
 for (const key of REQUIRED_ENV) {
   if (!runtimeConfig.env[key]) {
     console.error(`✗ ${key} is not set`);

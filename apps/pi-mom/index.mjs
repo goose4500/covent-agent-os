@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { getRuntimeConfigErrors, runtimeConfig } from "./lib/runtime-config.mjs";
 import { ROUTES, parseSlackRequestCommand, stripBotMentions } from "./lib/route-parser.mjs";
