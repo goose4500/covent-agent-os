@@ -55,6 +55,7 @@ image:
 - Repo docs = canonical system memory.
 - Whimsical = visual map, not canonical decision storage.
 - Railway = runtime/deployment/config truth, never a place to disclose secrets.
+- EC2 Pi Agent Machine = POC execution surface/shared workbench; not canonical code, durable project truth, or secret storage.
 
 If stable knowledge only exists in Slack, a Pi session, or a Linear comment, promote it to repo docs.
 
@@ -65,6 +66,7 @@ If stable knowledge only exists in Slack, a Pi session, or a Linear comment, pro
 - `BOUNDARY.md` — authority model and mutation boundaries.
 - `SECURITY.md` — secret/data handling.
 - `docs/architecture.md` — compact architecture.
+- `docs/runbooks/covent-ec2-pi-agent-machine.md` — EC2 POC source-of-truth/runbook for company agent-machine execution.
 - `apps/pi-mom/index.mjs` — implementation truth.
 - `apps/pi-mom/README.md` — runtime/runbook truth.
 - `apps/pi-mom/doctor.mjs` — non-secret diagnostics.
@@ -76,7 +78,14 @@ Treat `docs/history/**` as evidence/archive, not current instructions.
 
 ## Runtime behavior map
 
-Central path: `handleRequest()` in `apps/pi-mom/index.mjs`.
+There are two distinct runtime lanes:
+
+1. Slack bridge lane: `apps/pi-mom` handles Slack-originated requests. Default posture remains no-session/no-tools/no-extensions for child Pi subprocesses.
+2. Supervised EC2 operator lane: a human intentionally starts Pi on the company EC2 machine with bash/filesystem access for bounded POC work inside approved paths.
+
+Do not collapse these lanes into “Slack can run shell.” Tool-enabled EC2 usage needs explicit human supervision or a future route-specific threat model and approval.
+
+Central Slack bridge path: `handleRequest()` in `apps/pi-mom/index.mjs`.
 
 High-level flow:
 

@@ -18,6 +18,7 @@ This file is the front door for humans and agents working on the Covent Slack �
 | Repo docs | Canonical system memory | Architecture, source-of-truth rules, runbooks, ADRs | Secret values, raw private exports |
 | Whimsical | Visual map / navigation layer | Architecture diagrams and quick orientation | Canonical decisions unless linked back to repo docs |
 | Railway | Runtime deployment/config truth | Running service, environment variable presence, logs | Secret disclosure, system design source of truth |
+| EC2 Pi Agent Machine | POC execution surface / shared agent workbench | Runtime workspace, supervised tool-enabled Pi execution, EC2-hosted worker experiments | Canonical code, durable project truth, secret values |
 
 ## Current operating loop
 
@@ -56,6 +57,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Slack/Pi runtime
 
+- `docs/runbooks/covent-ec2-pi-agent-machine.md` — EC2 Pi Agent Machine POC runbook, runtime lanes, AWS asks, and supervised bash/filesystem boundaries.
 - `apps/pi-mom/README.md` — primary pi-mom setup, route, streaming, image, and Linear behavior runbook.
 - `apps/pi-mom/index.mjs` — implementation truth for request handling.
 - `apps/pi-mom/doctor.mjs` — non-secret readiness diagnostics.
