@@ -27,7 +27,8 @@
       "./extensions/git-checkpoint.ts",
       "./extensions/linear-mcp-guard.ts",
       "./extensions/permission-gate.ts",
-      "./extensions/slack-mcp-guard.ts"
+      "./extensions/slack-mcp-guard.ts",
+      "./packages/pi-ext-covent-aws/src/index.ts"
     ],
     "skills": ["./skills"],
     "agents": ["./.pi/agents", "./agents"],

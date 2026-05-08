@@ -13,6 +13,7 @@ let count = 0;
 
 const toolAllowlist = new Set([
   "bash",
+  "cloudwatch_log_audit",
   "code_search",
   "contact_supervisor",
   "edit",
@@ -26,6 +27,9 @@ const toolAllowlist = new Set([
   "mcp",
   "mcp:context7",
   "read",
+  "s3_put_artifact",
+  "sqs_send_event",
+  "ssm_get_secret",
   "web_search",
   "write",
 ]);

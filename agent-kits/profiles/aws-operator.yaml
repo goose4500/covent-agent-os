@@ -1,0 +1,12 @@
+name: aws-operator
+description: Supervised AWS operator profile for the EC2 Covent Pi workbench operator lane. Has full AWS toolkit (SSM, SQS, S3, CloudWatch Logs) and shell access for runbook execution. NOT exposed to Slack — Slack-originated work must hop via the bridge lane and the SQS operator queue.
+tools: [read, grep, find, ls, bash, edit, write, ssm_get_secret, sqs_send_event, s3_put_artifact, cloudwatch_log_audit]
+skills: [git-workflow, diagnose, ripgrep, uv-scripts]
+extensions: [permission-gate, env-guard, git-checkpoint, pi-ext-covent-aws]
+runtime: ec2
+allowShell: true
+allowWrites: true
+allowExternalMutation: true
+approval: required-for-any-aws-mutation-or-deploy
+forbiddenFromSlack: [secrets, credentials, tokens, raw-private-exports, ssm_get_secret, s3_put_artifact, cloudwatch_log_audit]
+requiresEnv: [COVENT_LANE=operator, AWS_REGION]
