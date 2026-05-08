@@ -1,0 +1,11 @@
+name: slack-safe
+description: Slack-safe read and summarization profile with no external mutation.
+tools: [read, grep, find, ls, mcp, contact_supervisor]
+skills: [pi-slack-contextprime, slack-cli]
+extensions: [slack-mcp-guard, permission-gate, env-guard]
+runtime: pi
+allowShell: false
+allowWrites: false
+allowExternalMutation: false
+approval: required-for-any-slack-write-or-external-mutation
+forbiddenFromSlack: [secrets, credentials, tokens, raw-private-exports]

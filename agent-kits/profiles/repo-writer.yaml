@@ -1,0 +1,11 @@
+name: repo-writer
+description: Bounded repository writer profile for local file edits and validation.
+tools: [read, grep, find, ls, bash, edit, write]
+skills: [git-workflow, diagnose, context7-docs, tdd]
+extensions: [permission-gate, env-guard, git-checkpoint]
+runtime: local
+allowShell: true
+allowWrites: true
+allowExternalMutation: false
+approval: required-for-push-deploy-or-external-mutation
+forbiddenFromSlack: [secrets, credentials, tokens, raw-private-exports]

@@ -1,0 +1,11 @@
+name: browser-operator
+description: Visible browser operation profile for supervised inspection and reversible actions.
+tools: [read, grep, find, ls, mcp, contact_supervisor]
+skills: [design-recon, figma-browser, diagnose]
+extensions: [browser-use-tools, permission-gate, env-guard]
+runtime: visible-browser
+allowShell: false
+allowWrites: false
+allowExternalMutation: false
+approval: required-for-consequential-browser-actions
+forbiddenFromSlack: [secrets, credentials, tokens, raw-private-exports]
