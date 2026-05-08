@@ -4,65 +4,46 @@ import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { getRuntimeConfigErrors, runtimeConfig } from "./lib/runtime-config.mjs";
 import { ROUTES, parseSlackRequestCommand, stripBotMentions } from "./lib/route-parser.mjs";
 
-const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    console.error(`Missing ${key}.`);
-    process.exit(1);
-  }
-}
+const configErrors = getRuntimeConfigErrors(runtimeConfig);
+for (const error of configErrors) console.error(error);
+if (configErrors.length > 0) process.exit(1);
 
-const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
-const ALLOWED_CHANNEL_ID = process.env.SLACK_ALLOWED_CHANNEL_ID || "";
-const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
-const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
-if (!["echo", "pi"].includes(MODE)) {
-  console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
-  process.exit(1);
-}
-const STREAMING_ENV = process.env.PI_MOM_STREAMING || "true";
-if (!["true", "false"].includes(STREAMING_ENV)) {
-  console.error(`Invalid PI_MOM_STREAMING=${STREAMING_ENV}. Expected true or false.`);
-  process.exit(1);
-}
-const STREAMING_ENABLED = STREAMING_ENV === "true";
-const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
-const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
-if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
-  console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
-  process.exit(1);
-}
-const PI_COMMAND = process.env.PI_COMMAND || "pi";
-const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS || "").split(/\s+/).filter(Boolean);
-const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
-const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
-const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
-const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
-const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
-const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
-const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
-const IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
-const IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
-const IMAGE_BACKGROUND = process.env.OPENAI_IMAGE_BACKGROUND || "auto";
-const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 0, max: 16 });
-const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
-const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
-const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
-const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
-const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
-const STARTED_AT = new Date();
-let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
-
-function boundedIntegerEnv(name, fallback, { min, max }) {
-  const parsed = Number(process.env[name]);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
+const TEST_CHANNEL_NAME = runtimeConfig.slack.testChannelName;
+const ALLOWED_CHANNEL_ID = runtimeConfig.slack.allowedChannelId;
+const EXPECTED_SLACK_BOT_USER = runtimeConfig.slack.expectedBotUser;
+const MODE = runtimeConfig.mode; // echo | pi
+const STREAMING_ENABLED = runtimeConfig.streaming.enabled;
+const STREAM_APPEND_CHARS = runtimeConfig.streaming.appendChars;
+const STREAM_BUFFER_CHARS = runtimeConfig.streaming.bufferChars;
+const PI_COMMAND = runtimeConfig.pi.command;
+const PI_EXTRA_ARGS = runtimeConfig.pi.extraArgs;
+const MAX_SLACK_TEXT = runtimeConfig.pi.maxSlackText;
+const PI_TIMEOUT_MS = runtimeConfig.pi.timeoutMs;
+const PI_OUTPUT_IDLE_MS = runtimeConfig.pi.outputIdleMs;
+const PI_ALLOW_TOOLS = runtimeConfig.pi.allowTools;
+const PI_WORKDIR = runtimeConfig.pi.workdir;
+const TRACE_ENABLED = runtimeConfig.traceEnabled;
+const IMAGE_ROUTE_ENABLED = runtimeConfig.image.routeEnabled;
+const OPENAI_API_KEY = runtimeConfig.image.apiKey;
+const IMAGE_OUTPUT_DIR = runtimeConfig.image.outputDir;
+const IMAGE_MODEL = runtimeConfig.image.model;
+const IMAGE_SIZE = runtimeConfig.image.size;
+const IMAGE_QUALITY = runtimeConfig.image.quality;
+const IMAGE_OUTPUT_FORMAT = runtimeConfig.image.outputFormat;
+const IMAGE_BACKGROUND = runtimeConfig.image.background;
+const IMAGE_MAX_INPUTS = runtimeConfig.image.maxInputs;
+const IMAGE_MAX_BYTES = runtimeConfig.image.maxBytes;
+const LINEAR_API_KEY = runtimeConfig.linear.apiKey;
+const LINEAR_API_URL = runtimeConfig.linear.apiUrl;
+const LINEAR_TEAM_ID = runtimeConfig.linear.teamId;
+const LINEAR_PROJECT_ID = runtimeConfig.linear.projectId;
+const LINEAR_STATE_ID = runtimeConfig.linear.stateId;
+const STARTED_AT = runtimeConfig.startedAt;
+let AUTH_TEAM_ID = runtimeConfig.slack.teamId;
 
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
@@ -72,7 +53,7 @@ function trace(eventName, data = {}) {
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
-  return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
+  return runtimeConfig.slack.allowAnyChannel;
 }
 
 function truncateForSlack(text) {
@@ -152,9 +133,9 @@ async function formatStatus(client) {
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi command: \`${PI_COMMAND}\`\n` +
-    `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
-    `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
-    `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
+    `• pi tools/extensions: \`${PI_ALLOW_TOOLS ? "enabled" : "disabled"}\`\n` +
+    `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
+    `• Linear issue creation: \`${LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
     `• routes: \`${Object.keys(ROUTES).join(", ")}\``;
@@ -222,7 +203,7 @@ function extractLinearIssuePayload(piOutput = "") {
 }
 
 async function createLinearIssue({ title, description, slackUrl, requestId }) {
-  const apiKey = process.env.LINEAR_API_KEY;
+  const apiKey = LINEAR_API_KEY;
   if (!apiKey) {
     throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");
   }
@@ -351,7 +332,7 @@ async function slackFileToImageInput(file) {
   if (!url) return undefined;
 
   const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+    headers: { Authorization: `Bearer ${runtimeConfig.slack.botToken}` },
   });
   if (!response.ok) {
     throw new Error(`Could not download Slack image ${file.id || file.name || "unknown"}: ${response.status}`);
@@ -461,7 +442,7 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
     return;
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!OPENAI_API_KEY) {
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
@@ -602,11 +583,11 @@ async function runPi(prompt, { onOutput } = {}) {
 
   try {
     return await new Promise((resolve, reject) => {
-      const safeRuntimeArgs = process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? [] : ["--no-tools", "--no-extensions"];
+      const safeRuntimeArgs = PI_ALLOW_TOOLS ? [] : ["--no-tools", "--no-extensions"];
       const args = [...PI_EXTRA_ARGS, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
       const child = spawn(PI_COMMAND, args, {
         env: piSubprocessEnv(),
-        cwd: process.env.PI_WORKDIR || process.env.HOME || process.cwd(),
+        cwd: PI_WORKDIR,
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -750,7 +731,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
 }
 
 async function preflight() {
-  const web = new WebClient(process.env.SLACK_BOT_TOKEN);
+  const web = new WebClient(runtimeConfig.slack.botToken);
   const auth = await web.auth.test();
   AUTH_TEAM_ID = auth.team_id || AUTH_TEAM_ID;
   console.log(`🔑 Bot auth: ${auth.user} (${auth.user_id}) on ${auth.team}`);
@@ -761,7 +742,7 @@ async function preflight() {
   const connection = await fetch("https://slack.com/api/apps.connections.open", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.SLACK_APP_TOKEN}`,
+      Authorization: `Bearer ${runtimeConfig.slack.appToken}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
   }).then((r) => r.json());
@@ -773,10 +754,10 @@ async function preflight() {
 }
 
 const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  appToken: process.env.SLACK_APP_TOKEN,
+  token: runtimeConfig.slack.botToken,
+  appToken: runtimeConfig.slack.appToken,
   socketMode: true,
-  logLevel: process.env.PI_MOM_DEBUG === "true" ? LogLevel.DEBUG : LogLevel.INFO,
+  logLevel: runtimeConfig.slack.debugEnabled ? LogLevel.DEBUG : LogLevel.INFO,
 });
 
 app.error(async (error) => {
@@ -1009,7 +990,7 @@ app.message(async ({ message, client }) => {
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
     console.log(`Slack streaming: ${STREAMING_ENABLED ? "enabled" : "disabled"}`);
-    console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
+    console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
