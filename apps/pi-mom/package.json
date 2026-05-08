@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs"
+    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/route-parser.mjs && node --test lib/*.test.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",
