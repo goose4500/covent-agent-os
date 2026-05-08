@@ -53,7 +53,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
   - `pi-mom` not persistently running; stale pidfile observed.
   - Slack CLI project config incomplete (`manifest.source` / hooks), causing `slack doctor` and manifest validation issues.
   - Slack MCP guard validator failed due missing `@mariozechner/jiti`.
-  - Manifest declares `/thread->spec`, but `index.mjs` lacked a matching command handler.
+  - Manifest declares `/thread-spec`, but `index.mjs` lacked a matching command handler.
   - FE-460 contains credential-like material and must be treated as compromised until rotated/redacted.
 
 ### `019e036a-a7b3` — 12:09:41 → 12:33:46 CDT
@@ -71,10 +71,10 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 - Goal: verify Slack CLI/dev lifecycle and implement the next `pi-mom` harness iteration; main concrete issue was Slack slash command not doing anything.
 - First-principles diagnosis:
   - Real system path should be `Slack trigger/event → local/hosted bridge → deterministic route selection → specific Pi agent/skill/mode → safe Slack thread output → optional approval-gated mutations`.
-  - Root issue for `/thread->spec` was missing command handler, not Slack auth.
+  - Root issue for `/thread-spec` was missing command handler, not Slack auth.
 - Important observed facts:
   - `/home/jfloyd/.pi/agent/pi-mom` was **not a git repository**.
-  - Manifest declared `/thread->spec`; `index.mjs` had mention/DM routes but no `app.command("/thread->spec", ...)` handler.
+  - Manifest declared `/thread-spec`; `index.mjs` had mention/DM routes but no `app.command("/thread-spec", ...)` handler.
   - Runtime doctor passed with approved env sourcing; Slack CLI lifecycle remained incomplete.
   - User later reported app mentions stopped working; background diagnosis found `pi-mom` likely down/not supervised, stale pidfile, and last successful app mention earlier in logs.
 - Mutation: assistant created a Linear FE-460 handoff comment only because the user explicitly asked.
@@ -193,7 +193,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 - **Brain/tool split:** GPT Image is a tool target, not the reasoning agent model.
 - **Slack delivery split:** Slack MCP is not event ingress. `pi-mom`/Slack bridge owns Socket Mode events and in-thread replies/uploads.
 - **Draft-first:** Slack/Linear/GitHub/Whimsical actions should produce drafts and require approval before durable mutations.
-- **Slash command diagnosis:** `/thread->spec` does not work because the manifest declares it but `pi-mom/index.mjs` lacked an `app.command` handler.
+- **Slash command diagnosis:** `/thread-spec` does not work because the manifest declares it but `pi-mom/index.mjs` lacked an `app.command` handler.
 - **Mention failure diagnosis:** app mentions likely stopped because `pi-mom` was not persistently running; stale pidfile observed.
 - **Repo bootstrap recommendation:** do a private-first, secret-scanned extraction from local operational paths into a clean repo; do not `git init` inside `~/.pi/agent/pi-mom` without first deciding scope and excluding secrets/state.
 
@@ -284,7 +284,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 ### P0 — core Slack/Pi runtime safety
 
 7. **Verify `pi-mom` current code/process state.** It was not running persistently and had a stale pidfile; app mentions likely failed because the bridge was down.
-8. **Fix or explicitly defer `/thread->spec`.** Manifest declares it, but code lacked handler. Either implement `app.command('/thread->spec')` or remove it from the manifest until ready.
+8. **Fix or explicitly defer `/thread-spec`.** Manifest declares it, but code lacked handler. Either implement `app.command('/thread-spec')` or remove it from the manifest until ready.
 9. **Confirm OpenAI image model/API target.** Local default was `gpt-image-1`; user intent says GPT Image 2. Use current OpenAI docs before changing claims/defaults.
 10. **Harden image routes.** Explicit attachment/current-request scope for edits, local image path allowlist/confirmation, no absolute local paths/base64/tokens in Slack output.
 
@@ -298,7 +298,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
     - `docs/repo-inventory.md` — included/excluded paths and rationale.
     - `skills/`, `agents/`, `extensions/`, `lib/`, `packages/`, `apps/pi-mom/` or similar.
 12. **Add minimal validation scripts.** Syntax checks for `pi-mom`, image client, extension load, doctor with redacted env presence, no live Slack posts by default.
-13. **Document route contracts.** `image:`, `image edit:`, `spec:`, future `/thread->spec`, approval semantics, Slack output policy.
+13. **Document route contracts.** `image:`, `image edit:`, `spec:`, future `/thread-spec`, approval semantics, Slack output policy.
 14. **Fix Slack CLI project config if keeping Slack CLI lifecycle in repo.** Add `manifest.source` and required hooks or document why Slack CLI is not authoritative.
 
 ### P2 — productization after repo foundation
@@ -340,7 +340,7 @@ Desired outcome:
 1. Produce a repo-boundary proposal: include/sanitize/exclude file list, one-repo vs split-repo recommendation, privacy/security risks, and bootstrap commands.
 2. Recommend a private-first repo structure for `pi-mom`, skills, agents, extensions, libs, packages, and docs.
 3. Add a secret-scan and validation plan before first commit.
-4. Call out unresolved decisions requiring Jake: repo name, visibility, public/private split, whether Covent-specific Slack/Linear IDs belong in repo, and whether to implement `/thread->spec` before or after repo bootstrap.
+4. Call out unresolved decisions requiring Jake: repo name, visibility, public/private split, whether Covent-specific Slack/Linear IDs belong in repo, and whether to implement `/thread-spec` before or after repo bootstrap.
 5. If approved, create a clean staging directory and copy only sanitized files; do not use raw operational directories as the repo root.
 ```
 

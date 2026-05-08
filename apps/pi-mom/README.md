@@ -11,11 +11,14 @@ This enables:
 - bot user `Covent Pi`
 - `app_mention` events
 - DM events via `message.im`
+- slash command `/thread-spec`
 - private-channel thread context for channels the app is invited into
+
+When updating the deployed Covent app, update the existing app that owns bot user `covent_pi` / `U0B0VJJDKFH`; do not create a new Slack app. If editing an existing remote manifest, merge this command into the exported app config instead of overwriting pre-existing shortcuts, commands, scopes, functions, or event subscriptions.
 
 ## 2. Reinstall the app
 
-After changing scopes/events, go to **OAuth & Permissions** and reinstall the app to Covent.
+After changing scopes/events/slash commands, go to **OAuth & Permissions** and reinstall the app to Covent. Slash commands require the `commands` bot scope to be installed/authorized.
 
 Copy the **Bot User OAuth Token** (`xoxb-...`) into your local secret manager. Do not paste it into chat or git.
 
@@ -85,6 +88,23 @@ Built-in bridge commands:
 @Covent Pi help:
 @Covent Pi status:
 ```
+
+Preferred spec UX:
+
+```text
+# Reply inside the Slack thread you want turned into a spec
+@Covent Pi draft spec
+```
+
+The app mention event includes the current thread context, so no one has to copy/paste a Slack URL. If this command is run outside a thread, the bot replies with a usage hint instead of guessing.
+
+Fallback slash command:
+
+```text
+/thread-spec <Slack message/thread URL> [optional focus]
+```
+
+Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
 
 Routed workflow prefixes:
 

@@ -55,7 +55,7 @@ Trigger types:
 - **Events API:** `app_mention`, `message.im`, `reaction_added`, etc.
 - **Socket Mode:** receive events over WebSocket; great for local/dev agents.
 - **HTTP Events API:** Slack sends events to a public request URL.
-- **Slash commands:** explicit commands like `/thread->spec`.
+- **Slash commands:** explicit commands like `/thread-spec`.
 - **Shortcuts:** message/global actions selected by users.
 - **Interactivity:** buttons, selects, modals, approvals, revisions.
 

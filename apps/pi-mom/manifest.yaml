@@ -23,8 +23,8 @@ features:
     - slack#/entities/file
     is_active: true
   slash_commands:
-  - command: /thread->spec
-    description: Takes a thread and boils it down into a concise PRD/Spec
+  - command: /thread-spec
+    description: Draft a spec from a Slack thread
     should_escape: false
 oauth_config:
   pkce_enabled: false
@@ -85,6 +85,6 @@ settings:
   interactivity:
     is_enabled: true
   is_mcp_enabled: false
-  org_deploy_enabled: false
+  org_deploy_enabled: true
   socket_mode_enabled: true
   token_rotation_enabled: false

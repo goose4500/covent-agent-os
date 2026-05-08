@@ -102,7 +102,10 @@ function isAllowedChannel(channel) {
 }
 
 function stripBotMentions(text = "") {
-  return text.replace(/<@[A-Z0-9]+>\s*/g, "").trim();
+  return text
+    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>\s*/g, "")
+    .replace(/^@?(?:covent[-\s]?agent|covent\s+pi)\s*/i, "")
+    .trim();
 }
 
 function truncateForSlack(text) {
@@ -129,6 +132,37 @@ function parseCommand(text = "") {
     route: ROUTES[routeKey],
     text: match[2].trim() || `(No extra instructions after ${routeKey}:; use the Slack thread context.)`,
   };
+}
+
+function parseThreadSpecIntent(text = "") {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const patterns = [
+    /\b(?:draft|write|create|make|generate)\s+(?:a\s+|an\s+)?(?:spec|prd|product\s+requirements?(?:\s+doc(?:ument)?)?|requirements?\s+doc(?:ument)?)\b/i,
+    /\b(?:turn|convert)\s+(?:this|thread|it)\s+into\s+(?:a\s+|an\s+)?(?:spec|prd|product\s+requirements?(?:\s+doc(?:ument)?)?|requirements?\s+doc(?:ument)?)\b/i,
+    /\b(?:spec|prd)\s+(?:this|thread|it)\b/i,
+  ];
+
+  const pattern = patterns.find((candidate) => candidate.test(trimmed));
+  if (!pattern) return undefined;
+
+  const focus = trimmed.replace(pattern, "").replace(/^[\s:;,.\-–—]+/, "").trim();
+  return {
+    kind: "route",
+    routeKey: "spec",
+    route: ROUTES.spec,
+    text: focus || "Turn this Slack thread into a concise PRD/spec draft.",
+    naturalIntent: "thread_spec",
+    requiresThread: true,
+  };
+}
+
+function parseSlackRequestCommand(text = "", { mode } = {}) {
+  const command = parseCommand(text);
+  if (command.kind !== "plain") return command;
+  if (mode === "app_mention") return parseThreadSpecIntent(command.text || text) || command;
+  return command;
 }
 
 function normalizeSlackTs(value = "") {
@@ -174,6 +208,7 @@ function formatHelp() {
     `• \`status:\` show local bridge health/config\n` +
     `${routeLines}\n\n` +
     `Examples:\n` +
+    `• in a thread: \`@Covent Pi draft spec\`\n` +
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: draft an issue from this thread\`\n` +
     `• \`@Covent Pi image: create a clean Covent hero visual for active buyer intelligence\`\n` +
@@ -722,7 +757,7 @@ async function handleRequest({ client, event, mode }) {
   const user = event.user;
   const threadTs = event.thread_ts || event.ts;
   const rawText = stripBotMentions(event.text || "");
-  const command = parseCommand(rawText);
+  const command = parseSlackRequestCommand(rawText, { mode });
   const text = command.text || rawText;
 
   trace("slack.received", {
@@ -734,6 +769,7 @@ async function handleRequest({ client, event, mode }) {
     textLength: rawText.length,
     command: command.kind,
     route: command.routeKey,
+    naturalIntent: command.naturalIntent,
   });
 
   if (!isAllowedChannel(channel)) {
@@ -750,6 +786,16 @@ async function handleRequest({ client, event, mode }) {
   if (command.kind === "status") {
     await client.chat.postMessage({ channel, thread_ts: threadTs, text: await formatStatus(client) });
     trace("slack.replied_status", { requestId, durationMs: Date.now() - start });
+    return;
+  }
+
+  if (command.requiresThread && mode === "app_mention" && !event.thread_ts) {
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: "I can draft a spec from a thread. Reply inside the target thread with `@Covent Pi draft spec`, or use `/thread-spec <Slack message/thread URL>` as a fallback.",
+    });
+    trace("slack.replied_thread_required", { requestId, durationMs: Date.now() - start, route: command.routeKey });
     return;
   }
 
@@ -833,7 +879,7 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
   if (!reference) {
     await respond({
       response_type: "ephemeral",
-      text: "Usage: `/thread->spec <Slack message/thread URL> [optional focus]`\n\nTip: copy the link to the root message of the thread, or any threaded reply link that includes `thread_ts`.",
+      text: "Usage: `/thread-spec <Slack message/thread URL> [optional focus]`\n\nTip: copy the link to the root message of the thread, or any threaded reply link that includes `thread_ts`.",
     });
     trace("slack.command_replied_usage", { requestId });
     return;
@@ -857,7 +903,7 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
 
   await handleRequest({
     client,
-    mode: "slash_command:/thread->spec",
+    mode: "slash_command:/thread-spec",
     event: {
       channel: targetChannel,
       user,
@@ -870,7 +916,7 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
   });
 }
 
-app.command("/thread->spec", async ({ command, ack, client, respond }) => {
+app.command("/thread-spec", async ({ command, ack, client, respond }) => {
   await ack();
   await handleThreadSpecSlashCommand({ command, client, respond });
 });
