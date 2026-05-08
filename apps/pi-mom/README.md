@@ -63,6 +63,17 @@ Required before `PI_MOM_MODE=pi` unless you intentionally override with `PI_MOM_
 export SLACK_ALLOWED_CHANNEL_ID='C-or-G-channel-id-from-console'
 ```
 
+Optional for creating Linear issues from Slack threads:
+
+```bash
+export LINEAR_API_KEY='lin_api_...'
+# Defaults target Frontend Engineering / Distribution / Backlog.
+# Override only if the Linear target changes:
+# export LINEAR_TEAM_ID='c9c8376e-7fd3-4921-9996-8c98fc2274f2'
+# export LINEAR_PROJECT_ID='ba9682e2-c14e-4208-98a2-a89f3fb285b8'
+# export LINEAR_STATE_ID='adfdb6e9-b118-4d65-ada3-ad11087b7dab'
+```
+
 ## 6. Run the bridge
 
 ```bash
@@ -110,7 +121,8 @@ Routed workflow prefixes:
 
 ```text
 @Covent Pi summarize: decisions, open questions, and next actions
-@Covent Pi linear: draft an issue from this thread
+@Covent Pi linear: create an issue from this thread
+@Covent Pi create Linear issue
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi escalation: brief this customer/problem escalation
 @Covent Pi spec: turn this idea into a safe implementation/spec draft
@@ -120,6 +132,15 @@ Routed workflow prefixes:
 ```
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
+
+Linear route behavior in `PI_MOM_MODE=pi`:
+
+- `linear:` / `create Linear issue` first asks Pi to write a Linear-ready issue spec from the Slack thread.
+- Pi's first line should be `Title: <issue title>`; the bridge uses that as the Linear title.
+- The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
+- Default target is Frontend Engineering / `Distribution` / `Backlog`.
+- Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
+- Linear environment variables are stripped from the Pi subprocess environment.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
