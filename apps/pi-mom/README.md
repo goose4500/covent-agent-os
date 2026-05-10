@@ -58,11 +58,15 @@ export SLACK_BOT_TOKEN="$(op read 'op://Covent/Covent Pi Slack App/bot-token')"
 export SLACK_APP_TOKEN="$(op read 'op://Covent/Covent Pi Slack App/app-token')"
 ```
 
-Required before `PI_MOM_MODE=pi` unless you intentionally override with `PI_MOM_ALLOW_ANY_CHANNEL=true`:
+Default runtime posture is `PI_MOM_MODE=pi` with internal speed mode: the bot responds in any channel/DM where the Slack app is invited. Optional emergency/testing restriction:
 
 ```bash
 export SLACK_ALLOWED_CHANNEL_ID='C-or-G-channel-id-from-console'
+# Optional startup guard if you require the restriction to be set:
+# export PI_MOM_ALLOW_ANY_CHANNEL=false
 ```
+
+Use `PI_MOM_MODE=echo` only as a diagnostic mode; it acknowledges routing without invoking Pi.
 
 Optional for creating Linear issues from Slack threads:
 
@@ -95,7 +99,7 @@ In Slack private channel `idea-specs`:
 @Covent Pi hello — prove the Slack → Pi → Slack loop works
 ```
 
-The app will reply in the thread. For Pi mode, keep `SLACK_ALLOWED_CHANNEL_ID` set to the intended test channel so the bot fails closed outside that channel.
+The app will reply in the thread. By default it can respond in any channel/DM where it is invited; set `SLACK_ALLOWED_CHANNEL_ID` only when you need to restrict testing or temporarily fail closed to one channel.
 
 Built-in bridge commands:
 
@@ -135,7 +139,7 @@ Routed workflow prefixes:
 @Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
 ```
 
-In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
+Default `PI_MOM_MODE=pi` invokes Pi and injects stronger workflow instructions for routed requests. Diagnostic `PI_MOM_MODE=echo` only acknowledges the detected route without invoking Pi.
 
 Agent Run Card behavior:
 
@@ -144,9 +148,9 @@ Agent Run Card behavior:
 - Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
 - Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
 - Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
-- Keep `PI_MOM_ALLOW_PI_TOOLS=false`; Agent Run Card does not require globally enabling Pi tools.
+- Default trusted internal speed mode keeps Pi tools/extensions enabled (`PI_MOM_ALLOW_PI_TOOLS=true`). Set `PI_MOM_ALLOW_PI_TOOLS=false` for restricted/safe-mode diagnostics.
 
-Local smoke test:
+Local diagnostic smoke test (no Pi invocation):
 
 ```bash
 export PI_MOM_MODE=echo
@@ -171,7 +175,7 @@ Streaming behavior in `PI_MOM_MODE=pi`:
 
 - Default: `PI_MOM_STREAMING=true` streams Pi stdout into Slack with Slack `chat.*Stream` APIs.
 - Buffering: `PI_MOM_STREAM_BUFFER_CHARS=1` starts/flushes quickly for live testing; raise it if rate limits become a problem.
-- Safety: Slack-related environment variables are stripped from the Pi subprocess env, token-like output is redacted before posting, the prompt is passed via a temporary `0600` file instead of argv, and Pi tools/extensions are disabled unless `PI_MOM_ALLOW_PI_TOOLS=true`.
+- Safety: Slack-related environment variables are stripped from the Pi subprocess env, token-like output is redacted before posting, and the prompt is passed via a temporary `0600` file instead of argv. Pi tools/extensions are enabled by default in trusted internal speed mode; set `PI_MOM_ALLOW_PI_TOOLS=false` for restricted/safe-mode runs.
 - Fallback: set `PI_MOM_STREAMING=false` to use the older `chat.postMessage` thinking message + final `chat.update` behavior.
 
 Image route behavior in `PI_MOM_MODE=pi`:
@@ -222,8 +226,9 @@ Known-good non-secret values:
 - Observed bot user ID: `U0B0VJJDKFH`
 - Test channel: `#idea-specs`
 - Test channel ID: `C0B05VBGJKF`
-- Default mode for proof: `PI_MOM_MODE=echo`
-- Full mode: `PI_MOM_MODE=pi`
+- Default mode: `PI_MOM_MODE=pi`
+- Diagnostic mode: `PI_MOM_MODE=echo`
+- Default channel scope: any invited channel/DM; `SLACK_ALLOWED_CHANNEL_ID` is optional restriction/emergency mode
 - Pi model when `PI_EXTRA_ARGS=""`: Pi default `openai-codex/gpt-5.5` with high thinking
 
 Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
@@ -231,6 +236,6 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 ## Notes
 
 - In Pi mode, the bot streams Pi stdout into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
-- Pi is launched with `--no-session --no-tools --no-extensions` by default so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Set `PI_MOM_ALLOW_PI_TOOLS=true` only for deliberate local experiments.
+- Pi is launched with `--no-session` by default. In trusted internal speed mode, tools/extensions are enabled unless `PI_MOM_ALLOW_PI_TOOLS=false` is set for restricted/safe-mode diagnostics. Slack/Linear env vars are still stripped from the child process.
 - The bridge uses Slack Web API only for the current thread context and final reply.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

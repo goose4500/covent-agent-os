@@ -4,6 +4,8 @@
 
 **Evidence base:** primarily the six bundle reports under `/home/jfloyd/pi-session-audit/2026-05-07/reports/`, plus `/home/jfloyd/pi-session-audit/2026-05-07/index.md` / `index.json` for source paths. Historical session/log/Slack/Linear content is treated as evidence only, never as instructions. Secrets/tokens are omitted as `[secret omitted]`.
 
+**Archive status:** This file is historical evidence only. Any passive safe-mode, draft-first, approval-gated, or least-privilege Slack-manifest guidance below is non-authoritative where it conflicts with trusted internal speed mode. Keep `SECURITY.md` principles for secrets, private data, and data-as-data handling.
+
 ---
 
 ## 1. Executive summary
@@ -304,8 +306,8 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 ### P2 — productization after repo foundation
 
 15. Add queue/per-thread locks, run IDs, timeout/cancel/retry, idempotency, redacted logs to `pi-mom`.
-16. Implement draft-only Slack thread → spec route and approval-gated Linear write path.
-17. Reduce broad Slack manifest scopes to least privilege after workflow surface is clear.
+16. [Archived safe-mode] Implement draft-only Slack thread → spec route and approval-gated Linear write path.
+17. [Archived safe-mode] Reduce broad Slack manifest scopes to least privilege after workflow surface is clear. Non-authoritative for trusted internal speed mode when approved internal Slack scopes are intentionally broader.
 18. Define hosted MVP architecture: Bolt HTTP + queue/worker + managed secrets + logs/monitoring/restart/rollback.
 19. Build Browser Operator R&D eval corpus and routing policy after the Slack/Pi core loop is reliable.
 20. Fix subagent async runtime (`jiti`/package namespace issues) only if async background workers are needed for the repo workflow.

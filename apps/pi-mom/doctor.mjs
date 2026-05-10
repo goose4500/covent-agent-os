@@ -60,6 +60,16 @@ if (pi.error) {
 }
 
 console.log(`Test channel name: #${process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs"}`);
-console.log(`Allowed channel ID: ${process.env.SLACK_ALLOWED_CHANNEL_ID || "not restricted yet"}`);
+console.log(`Mode: ${process.env.PI_MOM_MODE || "pi"}`);
+const allowAnyChannel = process.env.PI_MOM_ALLOW_ANY_CHANNEL || "true";
+if (!["true", "false"].includes(allowAnyChannel)) {
+  console.error(`✗ PI_MOM_ALLOW_ANY_CHANNEL must be true or false when set, got ${allowAnyChannel}`);
+  ok = false;
+}
+console.log(`Channel scope: ${process.env.SLACK_ALLOWED_CHANNEL_ID ? `restricted to ${process.env.SLACK_ALLOWED_CHANNEL_ID}` : "any invited channel/DM"}`);
+if (!process.env.SLACK_ALLOWED_CHANNEL_ID && allowAnyChannel === "false") {
+  console.error("✗ PI_MOM_ALLOW_ANY_CHANNEL=false requires SLACK_ALLOWED_CHANNEL_ID");
+  ok = false;
+}
 
 process.exit(ok ? 0 : 1);

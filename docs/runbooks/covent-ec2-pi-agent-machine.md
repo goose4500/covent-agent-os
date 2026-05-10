@@ -1,13 +1,13 @@
 # Covent EC2 Pi Agent Machine
 
-Status: POC source-of-truth runbook  
+Status: trusted operator substrate source-of-truth runbook  
 Related Linear parent: FE-460 — Slack App  
 Related child issue: FE-532 — Stand up company EC2 Pi Agent machine for guarded POC execution  
-Last updated: 2026-05-08
+Last updated: 2026-05-10
 
 ## Purpose
 
-This document defines the fundamentals-first POC for using company AWS EC2 as the Covent Pi Agent OS execution surface.
+This document defines the fundamentals-first model for using company AWS EC2 as the always-on trusted Covent Pi Agent OS execution surface.
 
 The goal is not “move a Slack bot to a server.” The goal is to create a shared, controllable Linux execution layer where Covent Pi agents can safely use shell, filesystem, repo context, and future tools while Slack, Linear, GitHub, and repo docs remain the durable sources of truth.
 
@@ -16,14 +16,14 @@ The goal is not “move a Slack bot to a server.” The goal is to create a shar
 ```text
 Slack = cockpit / trigger / progress surface
 Pi = reasoning + execution harness
-EC2 = shared agent machine / runtime workbench
+EC2 = always-on trusted agent machine / runtime workbench
 Linear = execution truth
 GitHub = implementation truth
 Repo docs = canonical system truth
 AWS secret/artifact services = runtime durability layer
 ```
 
-EC2 is leverage because Pi agents need a real operating environment: bash, filesystem, packages, repo checkouts, generated artifacts, logs, and eventually browser/runtime services. Railway is still useful as a managed app host, but EC2 is the better substrate for a shared company agent machine.
+EC2 is leverage because Pi agents need a real operating environment: bash, filesystem, packages, repo checkouts, generated artifacts, logs, and eventually browser/runtime services. Railway is still useful as a managed app host, but EC2 is the trusted substrate for shared company agent-machine work.
 
 ## Current known EC2 baseline
 
@@ -53,12 +53,12 @@ Current limitations:
 
 ## Source-of-truth rules
 
-- Slack captures intent and approvals; it is not durable system memory.
-- Pi drafts, reasons, and executes inside approved lanes; it is not authority.
+- Slack captures intent and route/profile authorization; it is not durable system memory.
+- Pi drafts, reasons, and executes inside selected routes/profiles; it is not authority outside an invocation.
 - Linear owns executable work, status, owners, acceptance criteria, and follow-up.
 - GitHub owns code and implementation history.
 - Repo docs own canonical operating knowledge and runbooks.
-- EC2 owns runtime execution state only; it must be rebuildable.
+- EC2 owns runtime execution state only; it is always-on and trusted, but must remain rebuildable.
 - Secrets Manager / SSM / approved secret store owns secret values; docs and Linear only name variables.
 - S3 or approved artifact storage should own long-term artifacts once the POC hardens.
 
@@ -66,35 +66,36 @@ Current limitations:
 
 ### Lane A — Slack bridge lane
 
-Purpose: run `apps/pi-mom` from EC2 for approved Slack routes.
+Purpose: run `apps/pi-mom` from EC2 for trusted internal Slack routes/profiles.
 
 Default posture:
 
 ```text
 Slack app mention/slash command
   → pi-mom route parser
-  → current thread context
-  → Pi subprocess with --no-session --no-tools --no-extensions
+  → current route/profile authorization
+  → route/profile-declared Slack/Linear/Git/docs context
+  → Pi subprocess or bridge-owned tool with declared permissions
   → Slack threaded reply
-  → optional bridge-owned Linear issue creation for explicit linear route
+  → route/profile-allowed Linear/GitHub/Slack/docs mutation
 ```
 
 Rules:
 
-- Slack-originated routes stay no-tools/no-extensions by default.
-- No arbitrary Slack-to-bash route in this POC.
-- Slack/Linear env vars must remain stripped from child Pi subprocesses.
-- `@Covent Pi create Linear issue` remains explicit write approval for the current MVP Linear route.
+- Slack-originated routes use the Pi flags, tools, and permissions declared by the selected route/profile.
+- No arbitrary ambient Slack-to-bash; shell/filesystem actions must be bound to a declared trusted profile.
+- Slack/Linear env vars should remain stripped from child Pi subprocesses unless a route/profile explicitly needs them; prefer bridge-owned API calls.
+- `@Covent Pi create Linear issue` remains route/profile approval for the current Linear route.
 - Exactly one Socket Mode worker may be active during live tests; coordinate Railway/local/EC2 workers.
 
-### Lane B — Supervised EC2 Pi operator lane
+### Lane B — Trusted EC2 Pi operator lane
 
-Purpose: allow a human-supervised operator to run Pi on EC2 with bash/filesystem access for bounded POC tasks.
+Purpose: allow trusted Pi/operator workflows on EC2 with bash/filesystem/repo/tool access for bounded company tasks.
 
 Default posture:
 
 ```text
-Human SSH/SSM session
+Authorized Slack route/profile or human SSH/SSM session
   → cd approved repo/workspace
   → run Pi/tool-enabled workflow intentionally
   → produce checks/docs/diffs/artifacts
@@ -103,10 +104,10 @@ Human SSH/SSM session
 
 Rules:
 
-- Human starts the session intentionally.
+- A current authorized invocation or operator session selects the route/profile.
 - Work occurs only in approved paths.
-- No secret-bearing paths, `.env` files, raw Slack exports, browser profiles, cookies, or API keys are inspected/exported.
-- External mutations require explicit current approval.
+- No secret-bearing paths, `.env` files, raw Slack exports, browser profiles, cookies, or API keys are inspected/exported unless an explicitly declared high-trust profile permits it.
+- External mutations must be allowed by the selected route/profile; ask again for outside-profile, destructive, secret-bearing, or ambiguous actions.
 - Outputs become repo docs, Git diffs, Linear comments/issues, or approved artifacts — not hidden machine state.
 
 ## Proposed filesystem layout
@@ -151,14 +152,14 @@ Rules:
 | Use case | Input | Tools | Approval | Output | Durable destination |
 |---|---|---|---|---|---|
 | Status/help | `@Covent Pi status:` / `help:` | Bridge only | Slack mention | Slack thread response | None unless follow-up needed |
-| Spec draft | `@Covent Pi draft spec` / `spec:` | Pi no-tools | Slack mention | Slack draft | Promote decisions to Linear/docs |
-| Digest/agenda/escalation | `digest:` / `agenda:` / `escalation:` | Pi no-tools | Slack mention | Slack draft | Promote actions to Linear/docs |
-| Linear issue creation | `@Covent Pi create Linear issue` / `linear:` | Pi no-tools + bridge-owned Linear GraphQL | Explicit create phrase | Linear issue + Slack confirmation | Linear |
-| Supervised repo diagnostics | Human EC2 Pi session | bash/read/write in approved workdir | Human current-task approval | checks, diffs, reports | Git/Linear/docs |
-| Source-of-truth promotion | Human EC2 Pi session or Slack draft | read/write docs in repo | Human current-task approval | docs/ADRs/runbooks | Git/repo docs |
+| Spec draft | `@Covent Pi draft spec` / `spec:` | Route/profile-declared Pi context/tools | Authorized Slack invocation | Slack draft | Promote decisions to Linear/docs |
+| Digest/agenda/escalation | `digest:` / `agenda:` / `escalation:` | Route/profile-declared Pi context/tools | Authorized Slack invocation | Slack draft | Promote actions to Linear/docs |
+| Linear issue creation | `@Covent Pi create Linear issue` / `linear:` | Pi + bridge-owned Linear GraphQL | Authorized explicit create phrase | Linear issue + Slack confirmation | Linear |
+| Repo diagnostics | Slack route/profile or human EC2 Pi session | bash/read/write in approved workdir | Route/profile invocation | checks, diffs, reports | Git/Linear/docs |
+| Source-of-truth promotion | Human EC2 Pi session or Slack draft | read/write docs in repo | Route/profile invocation | docs/ADRs/runbooks | Git/repo docs |
 | Image route POC | `image:` | Bridge-owned OpenAI image client | Slack mention + route policy | Slack uploaded image | Approved artifact store if retained |
-| Linear audit | Human/subagent task | Linear read tools; write only if approved | Human task approval | summary/report | Linear comment/docs |
-| File/document analysis | Approved file in workspace | bash/read/write in approved workdir | Human task approval | sanitized report | docs/Linear/artifacts |
+| Linear audit | Human/subagent task | Linear read tools; write if route/profile allows | Route/profile invocation | summary/report | Linear comment/docs |
+| File/document analysis | Approved file in workspace | bash/read/write in approved workdir | Route/profile invocation | sanitized report | docs/Linear/artifacts |
 
 ## Specialized Pi agent use cases to document, not blindly expose
 
@@ -169,8 +170,8 @@ These should exist as explicit bundles or documented playbooks before becoming S
 3. **Linear auditor agent** — reads parent/child issue trees, summarizes status, blockers, and next actions.
 4. **Spec/PRD agent** — turns Slack threads and rough ideas into implementation-ready specs.
 5. **Image/artifact agent** — generates Covent visuals or assets with safe file handling and no base64/path leakage.
-6. **Browser operator agent** — future high-risk lane; requires separate policy, evals, and approval gates before real profile or mutation use.
-7. **Workflow orchestrator agent** — routes tasks to subagents/tools, asks for approval, returns evidence to Slack/Linear.
+6. **Browser operator agent** — high-risk lane; requires explicit profile policy, evals, redaction, audit, and kill-switch controls before real profile or mutation use.
+7. **Workflow orchestrator agent** — routes tasks to tools/profiles, asks for exceptions, returns evidence to Slack/Linear.
 8. **Runbook/ops agent** — manages non-secret health checks, service status, logs, drift reports, and rollback instructions.
 
 ## AWS admin asks
@@ -198,8 +199,8 @@ Ask Ali/Usman/AWS admin for:
 - [ ] `pi-mom` runs from EC2 in echo mode, then controlled pi mode.
 - [ ] One-worker policy is verified before live Slack tests.
 - [ ] Slack smoke passes for `status:`, one draft route, and optional explicit Linear issue creation.
-- [ ] Supervised EC2 Pi operator session demonstrates safe bash/filesystem access in an approved non-secret workspace.
-- [ ] POC use cases are documented with input, tools, approval, output, and source-of-truth destination.
+- [ ] Trusted EC2 Pi operator session demonstrates safe bash/filesystem access in an approved non-secret workspace.
+- [ ] POC use cases are documented with input, tools, route/profile authorization, output, and source-of-truth destination.
 - [ ] Rollback path is documented and tested enough to stop EC2 worker and return to Railway/local known-good path.
 
 ## Rollback

@@ -22,8 +22,14 @@ for (const key of requiredEnv) {
 
 const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
 const ALLOWED_CHANNEL_ID = process.env.SLACK_ALLOWED_CHANNEL_ID || "";
+const ALLOW_ANY_CHANNEL_ENV = process.env.PI_MOM_ALLOW_ANY_CHANNEL || "true";
+if (!["true", "false"].includes(ALLOW_ANY_CHANNEL_ENV)) {
+  console.error(`Invalid PI_MOM_ALLOW_ANY_CHANNEL=${ALLOW_ANY_CHANNEL_ENV}. Expected true or false.`);
+  process.exit(1);
+}
+const ALLOW_ANY_CHANNEL = ALLOW_ANY_CHANNEL_ENV === "true";
 const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
-const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
+const MODE = process.env.PI_MOM_MODE || "pi"; // pi | echo (diagnostic)
 if (!["echo", "pi"].includes(MODE)) {
   console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
   process.exit(1);
@@ -36,12 +42,13 @@ if (!["true", "false"].includes(STREAMING_ENV)) {
 const STREAMING_ENABLED = STREAMING_ENV === "true";
 const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
 const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
-if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
-  console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
+if (!ALLOWED_CHANNEL_ID && !ALLOW_ANY_CHANNEL) {
+  console.error("SLACK_ALLOWED_CHANNEL_ID is required when PI_MOM_ALLOW_ANY_CHANNEL=false.");
   process.exit(1);
 }
 const PI_COMMAND = process.env.PI_COMMAND || "pi";
 const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS || "").split(/\s+/).filter(Boolean);
+const PI_TOOLS_ENABLED = process.env.PI_MOM_ALLOW_PI_TOOLS !== "false";
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
@@ -57,8 +64,8 @@ const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 
 const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
 const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
 const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
-if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
-  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake or repo-health.`);
+if (!["fake", "repo-health", "supervised-pi"].includes(AGENT_RUNNER_MODE)) {
+  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake, repo-health, or supervised-pi.`);
   process.exit(1);
 }
 const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
@@ -122,7 +129,7 @@ function trace(eventName, data = {}) {
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
-  return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
+  return ALLOW_ANY_CHANNEL;
 }
 
 function stripBotMentions(text = "") {
@@ -275,9 +282,9 @@ async function formatStatus(client) {
     `• uptime: \`${uptimeSeconds}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
-    `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
+    `• channel scope: \`${ALLOWED_CHANNEL_ID ? `restricted to ${ALLOWED_CHANNEL_ID}` : "any channel"}\`\n` +
     `• pi command: \`${PI_COMMAND}\`\n` +
-    `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
+    `• pi tools/extensions: \`${PI_TOOLS_ENABLED ? "enabled" : "disabled"}\`\n` +
     `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
     `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
     `• agent run state: \`${RUN_STATE_PATH}\`\n` +
@@ -759,7 +766,7 @@ async function runPi(prompt, { onOutput } = {}) {
 
   try {
     return await new Promise((resolve, reject) => {
-      const safeRuntimeArgs = process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? [] : ["--no-tools", "--no-extensions"];
+      const safeRuntimeArgs = PI_TOOLS_ENABLED ? [] : ["--no-tools", "--no-extensions"];
       const args = [...PI_EXTRA_ARGS, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
       const child = spawn(PI_COMMAND, args, {
         env: piSubprocessEnv(),
@@ -1178,7 +1185,7 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
   if (!isAllowedChannel(targetChannel)) {
     await respond({
       response_type: "ephemeral",
-      text: `I can only work in the configured test channel for now. Target channel: \`${targetChannel}\`; allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`.`,
+      text: `I can only work in the configured channel scope for now. Target channel: \`${targetChannel}\`; channel scope: \`${ALLOWED_CHANNEL_ID ? `restricted to ${ALLOWED_CHANNEL_ID}` : "any channel"}\`.`,
     });
     trace("slack.command_ignored", { requestId, reason: "channel_not_allowed", targetChannel, allowed: ALLOWED_CHANNEL_ID });
     return;
@@ -1357,7 +1364,7 @@ app.message(async ({ message, client }) => {
     console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
     console.log(`Agent run state: ${RUN_STATE_PATH}`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
-    console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
+    console.log(`Channel scope: ${ALLOWED_CHANNEL_ID ? `restricted to ${ALLOWED_CHANNEL_ID}` : "any channel"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);

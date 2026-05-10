@@ -19,7 +19,7 @@ Avoid putting the token in tracked files or broad global shell profiles.
 
 1. Create or approve an internal Covent Slack app for Pi.
 2. Enable **Agents & AI Apps → Model Context Protocol** in the Slack app settings.
-3. Start with least privilege. Recommended tiers:
+3. Historical safe-mode baseline: start with least privilege. In trusted internal speed mode, this tiering is advisory rather than blocking; approved internal apps may carry the scopes needed for fast execution while still preserving `SECURITY.md` secret/data handling, admin approval, and guard/audit expectations. Recommended tiers when intentionally operating in safe mode:
    - Default search/read: `search:read.public`; optionally `search:read.private`, `search:read.mpim`, `search:read.im`, `search:read.files`, `search:read.users` only as needed.
    - Full context retrieval only when needed: `channels:history`, `groups:history`, `mpim:history`, `im:history`.
    - User directory: `users:read`; `users:read.email` only if email lookup is essential.
@@ -84,7 +84,7 @@ Operating rules:
 
 - **Not authenticated**: run `/mcp-auth slack` in interactive Pi and complete the browser OAuth flow.
 - **Invalid/revoked token**: run `/mcp-auth slack` again or remove the local Slack OAuth store and re-authenticate.
-- **Insufficient scopes**: Slack may return missing-scope/permission errors. Add only the next needed scope tier.
+- **Insufficient scopes**: Slack may return missing-scope/permission errors. In archived safe-mode, add only the next needed scope tier; in trusted internal speed mode, grant the approved internal scope set needed for the workflow and keep the decision auditable.
 - **Admin approval**: verify the internal app is approved/installed and MCP is enabled in Slack app settings.
 - **Rate limits**: slow down, reduce query breadth/result count, and honor retry-after timing.
 - **Unexpected write confirmation**: the guard intentionally fails closed for Slack tools that are not clearly read-only; review the actual tool name before allowing.

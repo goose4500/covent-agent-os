@@ -1,5 +1,5 @@
 name: deploy-supervised
-description: Supervised deployment profile for validation and release operations after explicit approval.
+description: Legacy safe-mode supervised deployment profile for validation and release operations after explicit approval.
 tools: [read, grep, find, ls, bash, mcp, contact_supervisor]
 skills: [git-workflow, diagnose]
 extensions: [permission-gate, env-guard, git-checkpoint]

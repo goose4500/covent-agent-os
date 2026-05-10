@@ -1,5 +1,5 @@
 name: linear-operator
-description: Linear inspection and supervised operation profile, read-only unless explicitly approved.
+description: Legacy safe-mode Linear inspection and supervised operation profile, read-only unless explicitly approved.
 tools: [mcp, contact_supervisor]
 skills: [linear-covent, linear-subissue-audit]
 extensions: [linear-mcp-guard, permission-gate, env-guard]

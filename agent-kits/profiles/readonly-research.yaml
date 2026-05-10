@@ -1,5 +1,5 @@
 name: readonly-research
-description: Read-only research profile for repo and external documentation lookup.
+description: Legacy safe-mode read-only research profile for repo and external documentation lookup.
 tools: [read, grep, find, ls, web_search, fetch_content, get_search_content, mcp]
 skills: [context7-docs, diagnose]
 extensions: [permission-gate, env-guard]

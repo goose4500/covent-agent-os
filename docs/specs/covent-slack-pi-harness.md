@@ -1,5 +1,9 @@
 # Covent Slack access for Pi harness
 
+Status: **Archived safe-mode spec — historical, non-authoritative for trusted internal speed mode.**
+
+This document preserves the earlier passive/read-mostly Slack posture. Where it requires least-privilege staging, draft-first behavior, or broad write avoidance beyond `SECURITY.md`/`BOUNDARY.md`, treat it as safe-mode history rather than current operating guidance. Current trusted internal speed mode may use approved internal scopes and write-capable workflows when ownership, auditability, and secret/data-handling requirements remain satisfied.
+
 ## Goal
 Give Pi useful, permission-aware access to Covent Slack as project memory/context while preventing accidental Slack writes, token leakage, prompt-injection/data exfiltration, and unnecessary retention of raw Slack content.
 
@@ -37,8 +41,8 @@ Default posture: **do not store or copy raw Slack content unless explicitly appr
 - Do not export raw private-channel, DM, file, or canvas content to files, git, Linear, other MCPs, public Slack channels, or external web requests without explicit user consent.
 - If Covent later approves retaining Slack-derived content, require explicit business/legal basis, local encryption/permissions, retention/deletion controls, and a summary/permalink-first policy.
 
-## Scope tiers / least privilege
-Start read-only or read-mostly. Grant broader scopes only when the workflow needs them and the guard/tests are passing.
+## Scope tiers / least privilege (archived safe-mode baseline)
+Archived safe-mode guidance: start read-only or read-mostly and grant broader scopes only when the workflow needs them and the guard/tests are passing. In trusted internal speed mode, this section is advisory history; approved internal Slack app scopes may be broader when needed for fast execution, provided `SECURITY.md` principles, admin approval, and guard/audit expectations are preserved.
 
 ### Tier 1: default search/read discovery
 - Public search: `search:read.public`

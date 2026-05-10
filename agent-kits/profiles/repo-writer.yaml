@@ -1,5 +1,5 @@
 name: repo-writer
-description: Bounded repository writer profile for local file edits and validation.
+description: Legacy safe-mode bounded repository writer profile for local file edits and validation.
 tools: [read, grep, find, ls, bash, edit, write]
 skills: [git-workflow, diagnose, context7-docs, tdd]
 extensions: [permission-gate, env-guard, git-checkpoint]

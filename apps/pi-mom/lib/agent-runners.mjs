@@ -12,8 +12,13 @@ const REPO_HEALTH_COMMANDS = Object.freeze([
   Object.freeze(["node", ["--check", "apps/pi-mom/lib/slack-canvas.mjs"]]),
 ]);
 
+const AGENT_RUNNER_MODES = Object.freeze(["fake", "repo-health", "supervised-pi"]);
 const DEFAULT_TIMEOUT_MS = 120_000;
 const OUTPUT_CAP_CHARS = 12_000;
+
+export function getAgentRunnerModes() {
+  return [...AGENT_RUNNER_MODES];
+}
 
 export function getRepoHealthCommandTuples() {
   return REPO_HEALTH_COMMANDS.map(([command, args]) => [command, [...args]]);
@@ -109,6 +114,21 @@ async function defaultCommandRunner({ command, args, cwd, env, signal, timeoutMs
   });
 }
 
+export async function runSupervisedPiAgent({ run, signal, onEvent = async () => {} }) {
+  if (signal?.aborted) throw new Error("agent run canceled");
+  await onEvent({
+    ts: new Date().toISOString(),
+    type: "runner",
+    text: "supervised-pi runner selected; Pi command execution is not yet wired",
+  });
+  const hash = promptHash(run.prompt || "");
+  return {
+    markdown: `# Agent Run ${run.id}\n\nMode: supervised-pi\nPrompt hash: ${hash}\n\n- Supervised Pi runner mode was explicitly selected.\n- Pi command execution is not yet wired in this bounded MVP.\n- No external tools executed and no repository files changed.`,
+    promptHash: hash,
+    wired: false,
+  };
+}
+
 export async function runRepoHealthAgent({ run, signal, onEvent = async () => {}, workdir = process.cwd(), commandRunner = defaultCommandRunner, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const results = [];
   const env = scrubSensitiveEnv();
@@ -138,12 +158,13 @@ export async function runRepoHealthAgent({ run, signal, onEvent = async () => {}
 }
 
 export function createAgentRunner({ mode = "fake", trace = () => {}, workdir, commandRunner, timeoutMs } = {}) {
-  if (!["fake", "repo-health"].includes(mode)) throw new Error(`invalid agent runner mode: ${mode}`);
+  if (!AGENT_RUNNER_MODES.includes(mode)) throw new Error(`invalid agent runner mode: ${mode}`);
   return {
     mode,
     async run({ run, signal, onEvent }) {
       trace("agent.runner_started", { runId: run.id, mode });
       if (mode === "fake") return runFakeAgent({ run, signal, onEvent });
+      if (mode === "supervised-pi") return runSupervisedPiAgent({ run, signal, onEvent });
       return runRepoHealthAgent({ run, signal, onEvent, workdir, commandRunner, timeoutMs });
     },
   };

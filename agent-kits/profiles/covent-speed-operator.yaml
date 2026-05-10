@@ -1,0 +1,14 @@
+name: covent-speed-operator
+description: High-agency default profile for trusted internal Covent operators in EC2/local speed mode; full-access execution with audit protections and no default permission/slack/linear gates.
+tools: [read, grep, find, ls, bash, edit, write, mcp, web_search, fetch_content, get_search_content, contact_supervisor]
+skills: [git-workflow, diagnose, context7-docs, systems-thinking, tdd, pi-slack-contextprime, slack-cli, linear-covent, linear-subissue-audit, design-recon, figma-browser]
+extensions: [env-guard, git-checkpoint]
+runtime: ec2-local-speed
+allowShell: true
+allowWrites: true
+allowExternalMutation: true
+approval: explicit-slack-invocation-is-approval
+slackInvocationApproval: true
+auditProtections: [env-guard, git-checkpoint]
+operatorTrust: trusted-internal-covent
+forbiddenFromSlack: [secrets, credentials, tokens, raw-private-exports]

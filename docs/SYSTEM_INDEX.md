@@ -1,7 +1,7 @@
 # Covent Agent OS System Index
 
 Status: canonical navigation map  
-Last updated: 2026-05-08  
+Last updated: 2026-05-10  
 Primary Linear parent: FE-460 — Slack App  
 Implementation spine: `113c563` and `c5fd843`
 
@@ -18,16 +18,16 @@ This file is the front door for humans and agents working on the Covent Slack �
 | Repo docs | Canonical system memory | Architecture, source-of-truth rules, runbooks, ADRs | Secret values, raw private exports |
 | Whimsical | Visual map / navigation layer | Architecture diagrams and quick orientation | Canonical decisions unless linked back to repo docs |
 | Railway | Runtime deployment/config truth | Running service, environment variable presence, logs | Secret disclosure, system design source of truth |
-| EC2 Pi Agent Machine | POC execution surface / shared agent workbench | Runtime workspace, supervised tool-enabled Pi execution, EC2-hosted worker experiments | Canonical code, durable project truth, secret values |
+| EC2 Pi Agent Machine | Always-on trusted Pi operator substrate / shared agent workbench | Runtime workspace, shell/filesystem/repo/tool-enabled Pi execution, EC2-hosted worker experiments | Canonical code, durable project truth, secret values |
 
 ## Current operating loop
 
 ```text
 Slack thread
   → explicit Covent Pi mention
-  → pi-mom route detection and thread-context fetch
-  → Pi synthesis or direct bounded route
-  → optional Linear issue creation
+  → pi-mom route detection and route/profile authorization
+  → Pi synthesis or route/profile-allowed tool execution
+  → route/profile-allowed Linear/GitHub/Slack/docs mutation
   → Slack threaded confirmation
   → Git implementation when code changes
   → Railway deploy when runtime changes
@@ -57,7 +57,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Slack/Pi runtime
 
-- `docs/runbooks/covent-ec2-pi-agent-machine.md` — EC2 Pi Agent Machine POC runbook, runtime lanes, AWS asks, and supervised bash/filesystem boundaries.
+- `docs/runbooks/covent-ec2-pi-agent-machine.md` — EC2 Pi Agent Machine trusted-operator runbook, runtime lanes, AWS asks, and shell/filesystem boundaries.
 - `apps/pi-mom/README.md` — primary pi-mom setup, route, streaming, image, and Linear behavior runbook.
 - `apps/pi-mom/index.mjs` — implementation truth for request handling.
 - `apps/pi-mom/doctor.mjs` — non-secret readiness diagnostics.
@@ -117,7 +117,7 @@ Prefix routes are also supported, including `summarize:`, `linear:`, `agenda:`, 
 
 ### Linear issue creation behavior
 
-- Explicit `@Covent Pi create Linear issue` or `linear:` is treated as the human approval for the current MVP route.
+- Explicit `@Covent Pi create Linear issue` or `linear:` by an authorized team member is approval for the current Linear route/profile.
 - Pi drafts a Linear-ready issue from the thread.
 - The bridge extracts the issue title from Pi output and uses the generated spec as the description.
 - The issue is created in Frontend Engineering / Distribution / Backlog by default.
@@ -159,10 +159,10 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 
 - Thread context is capped at 12 messages with no pagination.
 - Normal/spec/linear routes are text-only.
-- No modal preview/approval before Linear issue creation; explicit Slack phrase is the approval for now.
+- No modal preview before Linear issue creation; the explicit authorized Slack phrase is the route/profile approval.
 - Linear issue creation is not idempotent; rerunning the route can create duplicates.
 - Linear metadata is basic: team, project, state, title, description. No label, assignee, priority, estimate, cycle, or milestone mapping yet.
-- Slack manifest scopes are still POC-broad and should be reviewed before hardening.
+- Slack manifest scopes are intentionally broad enough for trusted internal speed mode; keep them tied to declared routes/profiles, logging, redaction, and revocation/kill-switch controls.
 - Some older docs contain stale local paths or draft-era policies; prefer this file plus current code.
 
 ## Required before meaningful changes
@@ -170,7 +170,7 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 1. Read `BOUNDARY.md` and `SECURITY.md`.
 2. Read `docs/AGENT_CONTEXT.md`.
 3. Inspect current code for behavior; docs may lag.
-4. Run validation before commit/push:
+4. Run validation before reporting or commit/push:
 
 ```bash
 npm run secret-scan
