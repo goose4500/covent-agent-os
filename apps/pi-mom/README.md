@@ -133,9 +133,21 @@ Routed workflow prefixes:
 @Covent Pi digest: create a compact digest from this context
 @Covent Pi image: create a clean Covent hero visual for active buyer intelligence
 @Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
+@Covent Pi private: walk me through this customer escalation 1:1
+@Covent Pi dm me a quick gut-check on this idea
 ```
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
+
+Private DM agent loop (works in both `echo` and `pi`):
+
+- `private:` (or natural-language triggers `dm me`, `reply privately`, `take this private`, `message me privately`) opens a 1:1 DM between the requesting user and the bot via `conversations.open`, posts a one-line ephemeral notice in the source channel ("🔒 Continuing privately in your DM…"), then streams the Pi answer into the DM instead of the public thread.
+- The Pi prompt receives the source thread context, so the private answer can still incorporate everything the user discussed publicly — only the *output* lands in the DM.
+- DM channels (`D…`) bypass the `SLACK_ALLOWED_CHANNEL_ID` public-channel allowlist. The allowlist only constrains public/private channel surface area; 1:1 DMs are inherently scoped to one user and the bot.
+- Direct DMs to `@Covent Pi` (no mention, just message the bot) now work as a continuous private agent loop with no `private:` prefix needed. The existing `message.im` handler is no longer blocked by the public-channel allowlist.
+- Slash command (`/covent-private`) is intentionally NOT shipped in this iteration to avoid a Slack app reinstall. The route prefix and natural-language triggers cover the same UX without manifest changes. To add the slash command later, declare it under `features.slash_commands` in `manifest.yaml`, reinstall the app, and route the command into `handlePrivateRequest` in `index.mjs`.
+- Disable knob: `PI_MOM_PRIVATE_ROUTE_ENABLED=false`.
+- Smoke test: `SLACK_BOT_TOKEN=xoxb-... SMOKE_USER_ID=U... node apps/pi-mom/test-private-dm.mjs` opens the DM and posts a probe message — verifies `conversations.open` + DM `chat.postMessage` end-to-end without needing a live mention or Pi.
 
 Linear route behavior in `PI_MOM_MODE=pi`:
 

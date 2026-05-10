@@ -42,6 +42,7 @@ const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
 const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
+const PRIVATE_ROUTE_ENABLED = process.env.PI_MOM_PRIVATE_ROUTE_ENABLED !== "false";
 const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
@@ -86,6 +87,10 @@ const ROUTES = {
     label: "GPT Image generation/edit",
     instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
   },
+  private: {
+    label: "Private DM agent loop",
+    instruction: "Reply privately to the requesting user in their direct-message channel with the bot. Be conversational, candid, and direct — this exchange is 1:1 and not visible to the rest of the channel. The bridge has already redirected this answer to the user's DM and posted a one-line ephemeral acknowledgement in the originating channel.",
+  },
 };
 
 function boundedIntegerEnv(name, fallback, { min, max }) {
@@ -100,7 +105,12 @@ function trace(eventName, data = {}) {
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
 }
 
+function isDmChannel(channel = "") {
+  return typeof channel === "string" && channel.startsWith("D");
+}
+
 function isAllowedChannel(channel) {
+  if (isDmChannel(channel)) return true;
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
   return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
 }
@@ -180,10 +190,34 @@ function parseLinearCreateIntent(text = "") {
   };
 }
 
+function parsePrivateIntent(text = "") {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const pattern = /\b(?:dm\s+me|message\s+me\s+privately|reply\s+(?:to\s+me\s+)?(?:in\s+)?(?:a\s+)?(?:dm|private(?:ly)?)|take\s+this\s+private|let'?s\s+go\s+private|privately\b)/i;
+  if (!pattern.test(trimmed)) return undefined;
+
+  const focus = trimmed.replace(pattern, "").replace(/^[\s:;,\.\-–—]+/, "").trim();
+  return {
+    kind: "route",
+    routeKey: "private",
+    route: ROUTES.private,
+    text: focus || "(No extra instructions; use the Slack thread context for the private reply.)",
+    naturalIntent: "private_dm",
+  };
+}
+
 function parseSlackRequestCommand(text = "", { mode } = {}) {
   const command = parseCommand(text);
   if (command.kind !== "plain") return command;
-  if (mode === "app_mention") return parseLinearCreateIntent(command.text || text) || parseThreadSpecIntent(command.text || text) || command;
+  if (mode === "app_mention") {
+    return (
+      parsePrivateIntent(command.text || text) ||
+      parseLinearCreateIntent(command.text || text) ||
+      parseThreadSpecIntent(command.text || text) ||
+      command
+    );
+  }
   return command;
 }
 
@@ -236,7 +270,10 @@ function formatHelp() {
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
     `• \`@Covent Pi image: create a clean Covent hero visual for active buyer intelligence\`\n` +
     `• attach an image in-thread, then \`@Covent Pi image: edit restyle this as a polished Covent website asset\`\n` +
-    `• \`@Covent Pi escalation: brief this customer problem\``;
+    `• \`@Covent Pi escalation: brief this customer problem\`\n` +
+    `• \`@Covent Pi private: walk me through this customer escalation 1:1\` _(reply lands in your DM, not the channel)_\n` +
+    `• \`@Covent Pi dm me a quick gut-check on this idea\` _(natural-language private trigger)_\n` +
+    `• DM \`@Covent Pi\` directly for a fully private agent loop`;
 }
 
 async function formatStatus(client) {
@@ -259,6 +296,7 @@ async function formatStatus(client) {
     `• pi command: \`${PI_COMMAND}\`\n` +
     `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
     `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
+    `• private DM route: \`${PRIVATE_ROUTE_ENABLED ? "on" : "off"}\` (uses \`conversations.open\` + DM streaming)\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
@@ -643,6 +681,142 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
   }
 }
 
+async function openDmChannel(client, userId) {
+  const response = await client.conversations.open({ users: userId });
+  if (!response?.ok || !response.channel?.id) {
+    throw new Error(`conversations.open failed for ${userId}: ${response?.error || "unknown_error"}`);
+  }
+  return response.channel.id;
+}
+
+async function postPrivateRedirectAck({ client, channel, threadTs, user, dmChannel, requestId }) {
+  try {
+    await client.chat.postEphemeral({
+      channel,
+      user,
+      thread_ts: threadTs,
+      text: `🔒 Continuing privately in your DM with Covent Pi (req: ${requestId}).`,
+    });
+    trace("slack.private_dm_ack_ephemeral", { requestId, channel, dmChannel });
+  } catch (error) {
+    trace("slack.private_dm_ack_ephemeral_failed", {
+      requestId,
+      error: error?.data?.error || error.message,
+    });
+  }
+}
+
+async function handlePrivateRequest({ client, event, channel, threadTs, user, text, requestId, start, command }) {
+  if (!PRIVATE_ROUTE_ENABLED) {
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: "The `private:` route is disabled. Set `PI_MOM_PRIVATE_ROUTE_ENABLED=true` and restart pi-mom to enable it.",
+    });
+    trace("slack.replied_private_disabled", { requestId, durationMs: Date.now() - start });
+    return;
+  }
+
+  let dmChannel;
+  try {
+    dmChannel = await openDmChannel(client, user);
+    trace("slack.private_dm_opened", { requestId, dmChannel, sourceChannel: channel });
+  } catch (error) {
+    const message = redactSensitiveText(error?.message || String(error)).slice(0, 800);
+    trace("slack.private_dm_open_failed", { requestId, error: message, durationMs: Date.now() - start });
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `I could not open a DM for the private route (req: ${requestId}). Make sure I have \`im:write\` and you've messaged Covent Pi at least once. Error: ${message}`,
+    });
+    return;
+  }
+
+  if (!isDmChannel(channel)) {
+    await postPrivateRedirectAck({ client, channel, threadTs, user, dmChannel, requestId });
+  }
+
+  const sourceLabel = isDmChannel(channel) ? "your existing DM" : `<#${channel}>`;
+  let anchor;
+  try {
+    anchor = await client.chat.postMessage({
+      channel: dmChannel,
+      text: `🔒 *Private reply* — request from ${sourceLabel} (req: ${requestId})`,
+    });
+  } catch (error) {
+    const message = redactSensitiveText(error?.message || String(error)).slice(0, 800);
+    trace("slack.private_dm_anchor_failed", { requestId, error: message, durationMs: Date.now() - start });
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `I opened a DM but could not post the private reply anchor (req: ${requestId}). Error: ${message}`,
+    });
+    return;
+  }
+  const dmThreadTs = anchor?.ts;
+
+  if (MODE === "echo") {
+    await client.chat.postMessage({
+      channel: dmChannel,
+      thread_ts: dmThreadTs,
+      text: `✅ Private route echo.\nreq: ${requestId}\nsource channel: ${isDmChannel(channel) ? "DM" : channel}\nroute: ${command.routeKey || "none"}\ntext: ${text || "(empty)"}`,
+    });
+    trace("slack.replied_private_echo", { requestId, durationMs: Date.now() - start });
+    return;
+  }
+
+  const sourceThreadContext = await getThreadContext(client, channel, threadTs);
+  trace("slack.private_dm_context", { requestId, contextLength: sourceThreadContext.length });
+
+  const prompt = buildPiPrompt({
+    mode: "private_dm",
+    user,
+    channel: dmChannel,
+    threadTs: dmThreadTs,
+    text,
+    threadContext: sourceThreadContext,
+    routeKey: command.routeKey,
+    route: command.route,
+  });
+  trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: "private" });
+
+  let thinking;
+  try {
+    if (STREAMING_ENABLED) {
+      const result = await runPiWithSlackStream({
+        client,
+        event: { ...event, channel: dmChannel, thread_ts: dmThreadTs, ts: dmThreadTs },
+        channel: dmChannel,
+        threadTs: dmThreadTs,
+        user,
+        prompt,
+        requestId,
+      });
+      trace("slack.replied_private_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+      return;
+    }
+
+    thinking = await client.chat.postMessage({
+      channel: dmChannel,
+      thread_ts: dmThreadTs,
+      text: `👀 Covent Pi is thinking privately… (req: ${requestId})`,
+    });
+    const result = await runPi(prompt);
+    await client.chat.update({ channel: dmChannel, ts: thinking.ts, text: truncateForSlack(result) });
+    trace("slack.replied_private", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+  } catch (error) {
+    trace("error", { requestId, route: "private", error: error.message, durationMs: Date.now() - start });
+    console.error(`[pi-mom] ${requestId} private error:`, error);
+    if (error.slackStreamNotified) return;
+    const errorText = `Pi encountered an error in the private route (req: ${requestId}). Check the pi-mom terminal for details.`;
+    if (thinking?.ts) {
+      await client.chat.update({ channel: dmChannel, ts: thinking.ts, text: errorText });
+    } else {
+      await client.chat.postMessage({ channel: dmChannel, thread_ts: dmThreadTs, text: errorText });
+    }
+  }
+}
+
 function redactSensitiveText(text = "") {
   return text
     .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "xox[REDACTED]")
@@ -934,6 +1108,11 @@ async function handleRequest({ client, event, mode }) {
       text: "I can draft a spec from a thread. Reply inside the target thread with `@Covent Pi draft spec`, or use `/thread-spec <Slack message/thread URL>` as a fallback.",
     });
     trace("slack.replied_thread_required", { requestId, durationMs: Date.now() - start, route: command.routeKey });
+    return;
+  }
+
+  if (command.kind === "route" && command.routeKey === "private") {
+    await handlePrivateRequest({ client, event, channel, threadTs, user, text, requestId, start, command });
     return;
   }
 
