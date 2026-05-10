@@ -39,6 +39,8 @@ The current high-value loop is:
 Slack discussion becomes Linear truth, backed by Git implementation and repo documentation.
 ```
 
+For explicit bulk Slack context recovery, use `skills/slack-data/` and `docs/runbooks/slack-data-context-engineering.md` to keep raw exports local/untracked and promote only minimal cited context packs.
+
 ## Canonical docs
 
 ### Start here
@@ -52,7 +54,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 - `BOUNDARY.md` — authority model, mutation boundaries, route-policy requirements.
 - `SECURITY.md` — secret handling, required scans, and data-as-data rule.
-- `.gitignore` — local/runtime state that must stay out of git.
+- `.gitignore` — local/runtime state that must stay out of git, including root `slack-data-exports/`.
 - `scripts/secret-scan.sh` — lightweight pre-commit secret scan.
 
 ### Slack/Pi runtime
@@ -73,6 +75,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 ### Runbooks and specs
 
 - `docs/runbooks/covent-slack-mcp-setup.md` — current Slack MCP OAuth/safety runbook.
+- `docs/runbooks/slack-data-context-engineering.md` — read-only bulk Slack export/context-pack runbook; pairs with `skills/slack-data/`.
 - `docs/runbooks/covent-pi-mom-known-good.md` — historical known-good notes; verify against current code before acting.
 - `docs/specs/context7-pi-agent-harness-spec.md` — Context7 Pi harness design.
 - `docs/specs/covent-slack-pi-harness.md` — older Slack MCP bearer-token harness spec; treat as historical/staged until reconciled with OAuth runbook.

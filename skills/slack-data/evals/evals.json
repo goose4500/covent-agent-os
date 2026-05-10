@@ -1,0 +1,23 @@
+{
+  "skill_name": "slack-data",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Use Slack to pull the last 72 hours of my self-DM at https://getcovent.slack.com/archives/D0AUA7LC0RK and export it as JSON for future analysis.",
+      "expected_output": "Uses deterministic JSON export workflow, names the channel ID D0AUA7LC0RK, creates or references a local JSON export path, includes a clear 72-hour window, and does not paste raw private DM content into chat.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Build me a minimal agent context pack from the last week of #rnd-team and include every relevant thread, but keep the final output small enough to paste into another agent.",
+      "expected_output": "Uses Slack MCP channel resolution/read workflow, includes thread handling, writes artifacts under slack-data-exports, summarizes by thread/surface, and produces a compact context-pack.md with source map.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Search private Slack and DMs for all recent discussion about EC2 pi-mom migration and summarize the open loops without dumping raw messages.",
+      "expected_output": "Recognizes explicit private/DM authorization, uses private search/read workflow, summarizes rather than dumps raw private content, redacts secrets, and returns open loops with source references.",
+      "files": []
+    }
+  ]
+}

@@ -17,6 +17,7 @@ coverage/
 secrets/
 
 # Slack local state
+/slack-data-exports/
 apps/pi-mom/.slack/apps.json
 apps/pi-mom/.slack/config.json
 apps/pi-mom/.slack/cache/

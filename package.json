@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:pi-mom && npm run typecheck",
+    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:slack-data && npm run check:pi-mom && npm run typecheck",
     "doctor": "npm run doctor:pi-mom",
     "dev:pi-mom": "npm --prefix apps/pi-mom start",
     "doctor:pi-mom": "npm --prefix apps/pi-mom run doctor",
@@ -17,9 +17,12 @@
     "typecheck": "tsc --noEmit",
     "validate:skills": "node scripts/validate-skills.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",
+    "check:slack-data": "node --check skills/slack-data/scripts/export-slack-history.mjs && bun test skills/slack-data/scripts/slack-context-pipeline.test.ts && bun build skills/slack-data/scripts/slack-context-pipeline.ts --target=bun --outdir=/tmp/covent-agent-os-slack-data-check",
     "agent:new": "node scripts/scaffold-agent.mjs",
     "secret-scan": "bash scripts/secret-scan.sh",
-    "install:pi": "bash scripts/install-local.sh"
+    "install:pi": "bash scripts/install-local.sh",
+    "slack:data:export": "node skills/slack-data/scripts/export-slack-history.mjs",
+    "slack:data:pack": "bun skills/slack-data/scripts/slack-context-pipeline.ts"
   },
   "pi": {
     "extensions": [
@@ -30,9 +33,16 @@
       "./extensions/slack-mcp-guard.ts",
       "./packages/pi-ext-covent-aws/src/index.ts"
     ],
-    "skills": ["./skills"],
-    "agents": ["./.pi/agents", "./agents"],
-    "prompts": ["./prompts"]
+    "skills": [
+      "./skills"
+    ],
+    "agents": [
+      "./.pi/agents",
+      "./agents"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "latest",

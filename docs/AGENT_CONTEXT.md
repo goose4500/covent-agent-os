@@ -59,6 +59,8 @@ image:
 
 If stable knowledge only exists in Slack, a Pi session, or a Linear comment, promote it to repo docs.
 
+For bulk Slack context recovery, use `skills/slack-data/` plus `docs/runbooks/slack-data-context-engineering.md`: keep raw exports and source maps local/untracked, summarize by surface/thread, and share only minimal cited context packs unless the user explicitly approves more.
+
 ## Key files
 
 - `docs/SYSTEM_INDEX.md` — canonical system navigation map.
@@ -67,6 +69,7 @@ If stable knowledge only exists in Slack, a Pi session, or a Linear comment, pro
 - `SECURITY.md` — secret/data handling.
 - `docs/architecture.md` — compact architecture.
 - `docs/runbooks/covent-ec2-pi-agent-machine.md` — EC2 POC source-of-truth/runbook for company agent-machine execution.
+- `skills/slack-data/SKILL.md` and `docs/runbooks/slack-data-context-engineering.md` — read-only bulk Slack context recovery/export/context-pack workflow.
 - `apps/pi-mom/index.mjs` — implementation truth.
 - `apps/pi-mom/README.md` — runtime/runbook truth.
 - `apps/pi-mom/doctor.mjs` — non-secret diagnostics.
