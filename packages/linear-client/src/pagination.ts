@@ -1,29 +1,56 @@
-// Pagination — generic helper over @linear/sdk's connection types.
+// Pagination — async-iterable walker over Linear's Relay-style connections.
 //
-// `paginate(connFn, { pageSize, max })` walks a relay-style connection until
-// exhaustion or `max` is reached. Real impl in W-A.
+// Yields one node at a time, fetching subsequent pages via the supplied
+// `connectionFn(after?)` until `hasNextPage` is false or `max` nodes have
+// been yielded.
 
-export interface PaginateOptions {
-	pageSize?: number;
-	max?: number;
+export interface PageInfoLike {
+	hasNextPage: boolean;
+	endCursor: string | null;
 }
 
 export interface ConnectionLike<T> {
 	nodes: T[];
-	pageInfo: {
-		hasNextPage: boolean;
-		endCursor?: string | null;
-	};
+	pageInfo: PageInfoLike;
 }
 
-export type ConnectionFetcher<T> = (args: {
-	first: number;
-	after?: string;
-}) => Promise<ConnectionLike<T>>;
+export type ConnectionFn<T> = (after?: string) => Promise<ConnectionLike<T>>;
 
-export async function paginate<T>(
-	_connFn: ConnectionFetcher<T>,
-	_options?: PaginateOptions,
-): Promise<T[]> {
-	throw new Error("not implemented");
+export interface PaginateOptions {
+	/** Stop yielding after this many nodes. Default `Number.POSITIVE_INFINITY`. */
+	max?: number;
+}
+
+/**
+ * Walk a paginated Linear connection lazily. Example:
+ *
+ * ```ts
+ * for await (const issue of paginate((after) => team.issues({ after }))) {
+ *   …
+ * }
+ * ```
+ */
+export async function* paginate<T>(
+	connectionFn: ConnectionFn<T>,
+	opts: PaginateOptions = {},
+): AsyncIterable<T> {
+	const max = opts.max ?? Number.POSITIVE_INFINITY;
+	if (max <= 0) return;
+
+	let yielded = 0;
+	let cursor: string | undefined;
+
+	while (true) {
+		const page = await connectionFn(cursor);
+		for (const node of page.nodes) {
+			yield node;
+			yielded++;
+			if (yielded >= max) return;
+		}
+
+		if (!page.pageInfo.hasNextPage) return;
+		const next = page.pageInfo.endCursor;
+		if (!next) return;
+		cursor = next;
+	}
 }

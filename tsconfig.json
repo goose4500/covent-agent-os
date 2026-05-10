@@ -22,6 +22,6 @@
     "node_modules",
     "apps/pi-mom/node_modules",
     "packages/pi-ext-covent-aws",
-    "packages/linear-client/tests"
+    "packages/linear-client"
   ]
 }

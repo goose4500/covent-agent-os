@@ -5,7 +5,7 @@
 // JSON body (UNIX milliseconds); replay window is 60s. See PRD principle 9
 // and Wave 2 R3 outcome.
 
-import { WebhookVerificationError } from "./errors.js";
+import { WebhookVerificationError } from "./errors.ts";
 
 export interface LinearWebhookHeaders {
 	"linear-signature"?: string;

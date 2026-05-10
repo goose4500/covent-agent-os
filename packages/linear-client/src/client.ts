@@ -5,11 +5,11 @@
 
 import type { LinearClient } from "@linear/sdk";
 
-import type { IssuesApi } from "./issues.js";
-import type { CommentsApi } from "./comments.js";
-import type { AttachmentsApi } from "./attachments.js";
-import type { WorkflowStatesApi } from "./workflow-states.js";
-import type { WebhooksApi } from "./webhooks.js";
+import type { IssuesApi } from "./issues.ts";
+import type { CommentsApi } from "./comments.ts";
+import type { AttachmentsApi } from "./attachments.ts";
+import type { WorkflowStatesApi } from "./workflow-states.ts";
+import type { WebhooksApi } from "./webhooks.ts";
 
 export interface CreateLinearClientOptions {
 	apiKey: string;

@@ -4,14 +4,14 @@
 // (docs/source-of-truth/LINEAR_INTEGRATION_PRD.md → "What we build").
 // W-A fills in the implementations. Stubs throw "not implemented".
 
-export * from "./client.js";
-export * from "./issues.js";
-export * from "./comments.js";
-export * from "./attachments.js";
-export * from "./workflow-states.js";
-export * from "./webhooks.js";
-export * from "./pagination.js";
-export * from "./rate-limit.js";
-export * from "./identifiers.js";
-export * from "./errors.js";
-export * from "./trace.js";
+export * from "./client.ts";
+export * from "./issues.ts";
+export * from "./comments.ts";
+export * from "./attachments.ts";
+export * from "./workflow-states.ts";
+export * from "./webhooks.ts";
+export * from "./pagination.ts";
+export * from "./rate-limit.ts";
+export * from "./identifiers.ts";
+export * from "./errors.ts";
+export * from "./trace.ts";
