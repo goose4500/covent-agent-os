@@ -3,8 +3,10 @@ import { WebClient } from "@slack/web-api";
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { verifyWebhook, WebhookVerificationError } from "@covent/linear-client";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -54,6 +56,10 @@ const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/gra
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
 const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
+const LINEAR_WEBHOOK_SIGNING_SECRET = process.env.LINEAR_WEBHOOK_SIGNING_SECRET || "";
+const LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS = process.env.LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS || "";
+const LINEAR_WEBHOOK_PORT = Number(process.env.LINEAR_WEBHOOK_PORT || 3001);
+const LINEAR_WEBHOOK_REQUIRED = process.env.LINEAR_WEBHOOK_REQUIRED === "true";
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
@@ -1107,6 +1113,174 @@ app.message(async ({ message, client }) => {
   await handleRequest({ client, event: message, mode: "direct_message" });
 });
 
+// -----------------------------------------------------------------------------
+// Linear webhook receiver (W-B)
+// -----------------------------------------------------------------------------
+// Standalone HTTP listener colocated with the Slack Socket Mode bridge.
+// PRD principle 10: "Webhook receiver is colocated with pi-mom" (same Railway
+// service, same env, same logs, separate port from Bolt). Signature
+// verification happens BEFORE JSON.parse, per PRD principle 9 and Wave 2 R3.
+//
+// The receiver imports `verifyWebhook` directly from @covent/linear-client
+// rather than building a facade via `createLinearClient`, because the facade
+// constructor requires a non-empty LINEAR_API_KEY and webhook verification
+// does not need the API surface. See docs/specs/linear-client-spec.md
+// "Webhooks" — `verifyWebhook` is exported from the package root.
+
+const WEBHOOK_STATUS_BY_CODE = {
+  missing_signature: 401,
+  invalid_signature: 401,
+  replay_expired: 400,
+  malformed_payload: 400,
+};
+
+function readRequestBody(req, { maxBytes = 1024 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on("data", (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        reject(new Error(`webhook body exceeded ${maxBytes} bytes`));
+        req.destroy();
+        return;
+      }
+      chunks.push(buf);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", (error) => reject(error));
+  });
+}
+
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function dispatchLinearWebhookEvent(event) {
+  // v1 dispatcher: structured log only. Future workers (v2) replace this with
+  // per-(type, action) handlers. Runs AFTER the 200 response so handler work
+  // never blocks the HTTP reply.
+  try {
+    trace("linear.webhook.received", {
+      type: event.type,
+      action: event.action,
+      webhookId: event.webhookId,
+      organizationId: event.organizationId,
+    });
+  } catch (error) {
+    trace("linear.webhook.handler.error", {
+      errorMessage: error?.message || String(error),
+    });
+  }
+}
+
+async function handleLinearWebhookRequest(req, res) {
+  const start = Date.now();
+  let rawBody;
+  try {
+    rawBody = await readRequestBody(req);
+  } catch (error) {
+    trace("linear.webhook.verify.failed", {
+      code: "malformed_payload",
+      durationMs: Date.now() - start,
+    });
+    sendJson(res, 400, { error: "could not read request body" });
+    return;
+  }
+
+  const additionalSecrets = LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS
+    ? [LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS]
+    : [];
+
+  let event;
+  try {
+    event = verifyWebhook({
+      rawBody,
+      headers: req.headers,
+      secret: LINEAR_WEBHOOK_SIGNING_SECRET,
+      additionalSecrets,
+    });
+  } catch (error) {
+    if (error instanceof WebhookVerificationError) {
+      const status = WEBHOOK_STATUS_BY_CODE[error.code] || 400;
+      trace("linear.webhook.verify.failed", {
+        code: error.code,
+        durationMs: Date.now() - start,
+      });
+      sendJson(res, status, { error: error.code });
+      return;
+    }
+    trace("linear.webhook.handler.error", {
+      errorMessage: error?.message || String(error),
+    });
+    sendJson(res, 500, { error: "internal_error" });
+    return;
+  }
+
+  // Reply 200 first; dispatch after. setImmediate keeps the reply on the same
+  // tick (already flushed) and runs the handler on the next tick.
+  sendJson(res, 200, { ok: true });
+  setImmediate(() => dispatchLinearWebhookEvent(event));
+}
+
+function createLinearWebhookServer() {
+  return createServer((req, res) => {
+    const method = req.method || "GET";
+    const url = req.url || "/";
+
+    if (method === "GET" && url === "/webhooks/linear/health") {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && url === "/webhooks/linear") {
+      handleLinearWebhookRequest(req, res).catch((error) => {
+        trace("linear.webhook.handler.error", {
+          errorMessage: error?.message || String(error),
+        });
+        if (!res.headersSent) {
+          sendJson(res, 500, { error: "internal_error" });
+        }
+      });
+      return;
+    }
+
+    sendJson(res, 404, { error: "not_found" });
+  });
+}
+
+function startLinearWebhookReceiver() {
+  if (!LINEAR_WEBHOOK_SIGNING_SECRET) {
+    if (LINEAR_WEBHOOK_REQUIRED) {
+      console.error("[pi-mom] LINEAR_WEBHOOK_REQUIRED=true but LINEAR_WEBHOOK_SIGNING_SECRET is not set. Exiting.");
+      process.exit(1);
+    }
+    console.log("[pi-mom] Linear webhook receiver disabled: LINEAR_WEBHOOK_SIGNING_SECRET not set");
+    return null;
+  }
+
+  const server = createLinearWebhookServer();
+  server.on("error", (error) => {
+    trace("linear.webhook.handler.error", {
+      errorMessage: error?.message || String(error),
+    });
+    console.error(`[pi-mom] Linear webhook listener error: ${error.message}`);
+  });
+
+  server.listen(LINEAR_WEBHOOK_PORT, () => {
+    trace("linear.webhook.listener.started", { port: LINEAR_WEBHOOK_PORT });
+    console.log(`🪝 Linear webhook receiver listening on :${LINEAR_WEBHOOK_PORT}/webhooks/linear`);
+  });
+
+  return server;
+}
+
 (async () => {
   try {
     await preflight();
@@ -1118,6 +1292,13 @@ app.message(async ({ message, client }) => {
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
+    // Webhook receiver is independent of Bolt; failures must not crash Slack.
+    try {
+      startLinearWebhookReceiver();
+    } catch (error) {
+      console.error(`[pi-mom] Failed to start Linear webhook receiver: ${error.message}`);
+      if (LINEAR_WEBHOOK_REQUIRED) process.exit(1);
+    }
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);
     process.exit(1);

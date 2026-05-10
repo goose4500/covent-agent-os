@@ -162,6 +162,19 @@ Image route behavior in `PI_MOM_MODE=pi`:
 - Draft defaults are cheap/fast: `OPENAI_IMAGE_MODEL=gpt-image-1`, `OPENAI_IMAGE_QUALITY=low`, `OPENAI_IMAGE_SIZE=1024x1024`, `OPENAI_IMAGE_OUTPUT_FORMAT=png`.
 - Optional knobs: `PI_MOM_IMAGE_ROUTE_ENABLED=false`, `PI_MOM_IMAGE_MAX_INPUTS=4`, `PI_MOM_IMAGE_MAX_BYTES=20971520`, `OPENAI_IMAGE_MODEL_FALLBACKS=gpt-image-1.5,gpt-image-1`.
 
+## Linear webhook receiver
+
+`pi-mom` runs a separate HTTP listener inside the same Node process as the Slack Socket Mode bridge so a single Railway service hosts both. The listener binds on `LINEAR_WEBHOOK_PORT` (default `3001`), exposes `POST /webhooks/linear` and `GET /webhooks/linear/health`, captures the raw request body before any JSON parsing, and verifies the `Linear-Signature` header via `verifyWebhook` from `@covent/linear-client`. Verification happens before parse; a missing or invalid signature returns 401, a stale `webhookTimestamp` (> 60s) returns 400, and any other shape problem returns 400. On success the receiver answers `200 OK` first and dispatches the event on the next tick — handler work never blocks the HTTP reply. The receiver only starts when `LINEAR_WEBHOOK_SIGNING_SECRET` is present; absent the secret, pi-mom logs that the receiver is disabled and the Slack bridge continues unaffected. Set `LINEAR_WEBHOOK_REQUIRED=true` to fail-fast in environments where the receiver is mandatory.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `LINEAR_WEBHOOK_SIGNING_SECRET` | yes (to enable receiver) | unset | HMAC-SHA256 signing secret from Linear. The receiver stays disabled when unset. |
+| `LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS` | no | unset | Previous signing secret accepted in parallel during zero-downtime rotation. |
+| `LINEAR_WEBHOOK_PORT` | no | `3001` | TCP port for the webhook listener. Must be separate from Bolt's Socket Mode wiring. |
+| `LINEAR_WEBHOOK_REQUIRED` | no | `false` | When `true`, pi-mom exits non-zero if `LINEAR_WEBHOOK_SIGNING_SECRET` is missing. |
+
+End-to-end configuration, signing-secret rotation, and operational details live in [`docs/runbooks/linear-webhook-setup.md`](../../docs/runbooks/linear-webhook-setup.md). The verifier contract is defined in [`docs/specs/linear-client-spec.md`](../../docs/specs/linear-client-spec.md) (§ Webhooks) and PRD principles 9–11 in [`docs/source-of-truth/LINEAR_INTEGRATION_PRD.md`](../../docs/source-of-truth/LINEAR_INTEGRATION_PRD.md).
+
 ## Observability & Tracing (DX)
 
 Tracing is enabled by default. Every request logs structured JSON lines prefixed with `[pi-mom-trace]` containing:
@@ -172,6 +185,10 @@ Tracing is enabled by default. Every request logs structured JSON lines prefixed
 - `pi.output_ready` — Pi stdout close/idle/timeout behavior
 - `slack.stream_started` / `slack.stream_stopped` / `slack.replied_pi_stream` — streaming response lifecycle
 - `slack.replied_echo` / `slack.replied_pi` / `slack.replied_help` / `slack.replied_status` — bridge response type
+- `linear.webhook.listener.started` — Linear webhook receiver bound (carries `port`)
+- `linear.webhook.received` — verified Linear event ready for dispatch (`type`, `action`, `webhookId`, `organizationId`)
+- `linear.webhook.verify.failed` — signature/replay/payload check rejected the request (`code`, `durationMs`)
+- `linear.webhook.handler.error` — unexpected throw inside the dispatcher (`errorMessage`)
 - `error` — any failures
 
 Each event includes a `requestId`, `durationMs`, lengths, and other useful metadata.
