@@ -11,7 +11,18 @@ import {
 	type IssuesSdkLike,
 } from "../src/issues.ts";
 import { LinearWriteError } from "../src/errors.ts";
+import { setTraceFn } from "../src/trace.ts";
 import { WorkflowStateCache } from "../src/workflow-states.ts";
+
+type TraceEvent = { event: string; data?: Record<string, unknown> };
+
+function captureTrace(): { events: TraceEvent[]; restore: () => void } {
+	const events: TraceEvent[] = [];
+	const prev = setTraceFn((event, data) => {
+		events.push({ event, data });
+	});
+	return { events, restore: () => setTraceFn(prev) };
+}
 
 interface FakeSdkConfig {
 	statesByTeam?: Record<string, Array<{ id: string; name: string; type: string }>>;
@@ -441,4 +452,167 @@ test("upsertFromSlack: re-run idempotency — second call dedupes to the first i
 	assert.equal(c.created, false);
 	assert.equal(a.issue.id, b.issue.id);
 	assert.equal(b.issue.id, c.issue.id);
+});
+
+test("upsertFromSlack: createAttachment failure re-throws and emits attachment_failed trace", async () => {
+	const created: IssueLike = {
+		id: "issue-orphan",
+		identifier: "FE-42",
+		title: "Build the thing",
+		url: "https://linear.app/test/issue/FE-42",
+	};
+	const sdk: IssuesSdkLike = {
+		async workflowStates(args) {
+			const teamId = args?.filter?.team?.id?.eq;
+			if (teamId !== "team-a") return { nodes: [] };
+			return { nodes: [{ id: "s-back", name: "Backlog", type: "backlog" }] };
+		},
+		async issue() {
+			throw new Error("unused");
+		},
+		async createIssue() {
+			return { success: true, issue: created };
+		},
+		async updateIssue() {
+			return { success: false };
+		},
+		async createAttachment() {
+			throw new Error("linear blip");
+		},
+		async attachmentsForURL() {
+			return { nodes: [] };
+		},
+	};
+
+	const { events, restore } = captureTrace();
+	try {
+		await assert.rejects(
+			upsertFromSlack(sdk, new WorkflowStateCache(), {
+				teamId: "team-a",
+				stateName: "Backlog",
+				title: "Build the thing",
+				slackPermalink: PERMA,
+				slackRequestId: "req-orphan",
+			}),
+			/linear blip/,
+		);
+	} finally {
+		restore();
+	}
+
+	const failed = events.find((e) => e.event === "linear.issue.upsert.attachment_failed");
+	assert.ok(failed, "expected linear.issue.upsert.attachment_failed to be emitted");
+	assert.equal(failed?.data?.issueId, "issue-orphan");
+	assert.equal(failed?.data?.url, PERMA);
+	assert.equal(failed?.data?.error, "linear blip");
+
+	// And the success trace must NOT have fired.
+	assert.equal(
+		events.find((e) => e.event === "linear.issue.upsert.created"),
+		undefined,
+	);
+});
+
+test("upsertFromSlack: attachment_resolve_failed trace fires when client.issue throws", async () => {
+	const sdk: IssuesSdkLike = {
+		async workflowStates(args) {
+			const teamId = args?.filter?.team?.id?.eq;
+			if (teamId !== "team-a") return { nodes: [] };
+			return { nodes: [{ id: "s-back", name: "Backlog", type: "backlog" }] };
+		},
+		async issue(id) {
+			throw new Error(`boom for ${id}`);
+		},
+		async createIssue(input) {
+			return {
+				success: true,
+				issue: {
+					id: "issue-new",
+					identifier: "FE-99",
+					title: input.title,
+					url: "https://linear.app/test/issue/FE-99",
+				} satisfies IssueLike,
+			};
+		},
+		async updateIssue() {
+			return { success: false };
+		},
+		async createAttachment(input) {
+			return { success: true, attachment: { id: "att-1", url: input.url, title: input.title } };
+		},
+		async attachmentsForURL() {
+			// Non-archived attachment with only issueId — forces resolveAttachmentIssue
+			// to call client.issue(...), which throws.
+			return {
+				nodes: [
+					{
+						id: "att-x",
+						url: PERMA,
+						createdAt: new Date(),
+						issueId: "issue-missing",
+					},
+				],
+			};
+		},
+	};
+
+	const { events, restore } = captureTrace();
+	try {
+		// Lookup fails → treated as cold miss → new issue is created.
+		const out = await upsertFromSlack(sdk, new WorkflowStateCache(), {
+			teamId: "team-a",
+			stateName: "Backlog",
+			title: "Fresh",
+			slackPermalink: PERMA,
+			slackRequestId: "req-resolve",
+		});
+		assert.equal(out.created, true);
+	} finally {
+		restore();
+	}
+
+	const failed = events.find(
+		(e) => e.event === "linear.issue.upsert.attachment_resolve_failed",
+	);
+	assert.ok(failed, "expected linear.issue.upsert.attachment_resolve_failed to be emitted");
+	assert.equal(failed?.data?.issueId, "issue-missing");
+	assert.equal(failed?.data?.url, PERMA);
+	assert.match(String(failed?.data?.error), /boom for issue-missing/);
+});
+
+test("findIssue: emits linear.issue.find.failed trace when the SDK throws", async () => {
+	const sdk: IssuesSdkLike = {
+		async workflowStates() {
+			return { nodes: [] };
+		},
+		async issue(id) {
+			throw new Error(`kaboom ${id}`);
+		},
+		async createIssue() {
+			return { success: false };
+		},
+		async updateIssue() {
+			return { success: false };
+		},
+		async createAttachment() {
+			return { success: false };
+		},
+		async attachmentsForURL() {
+			return { nodes: [] };
+		},
+	};
+
+	const { events, restore } = captureTrace();
+	let result: unknown;
+	try {
+		result = await findIssue(sdk, "FE-404");
+	} finally {
+		restore();
+	}
+
+	assert.equal(result, null);
+	const failed = events.find((e) => e.event === "linear.issue.find.failed");
+	assert.ok(failed, "expected linear.issue.find.failed to be emitted");
+	assert.equal(failed?.data?.input, "FE-404");
+	assert.match(String(failed?.data?.error), /kaboom FE-404/);
 });

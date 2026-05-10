@@ -8,9 +8,12 @@
 // in this package (non-exhaustive):
 //   - linear.issue.create.requested        — about to call createIssue
 //   - linear.issue.create.succeeded        — createIssue returned success
+//   - linear.issue.find.failed             — findIssue swallowed an SDK error; returning null
 //   - linear.issue.upsert.dedupe_hit       — attachmentsForURL returned a hit
 //   - linear.issue.upsert.created          — no hit, new issue created
 //   - linear.issue.upsert.multiple_matches — attachmentsForURL returned >1
+//   - linear.issue.upsert.attachment_failed — issue created but createAttachment threw; re-thrown to caller
+//   - linear.issue.upsert.attachment_resolve_failed — issue() lookup for an attachment node threw; treated as miss
 //   - linear.issue.transition.requested    — about to call updateIssue
 //   - linear.workflow_state.resolve.cache_hit
 //   - linear.workflow_state.resolve.cache_miss

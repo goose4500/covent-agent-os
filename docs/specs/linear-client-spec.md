@@ -319,6 +319,8 @@ Implements Wave 2 R2 exactly:
 4. **More than one live hit** → trace `linear.issue.upsert.multiple_matches` with all candidate IDs; return the oldest hit by `createdAt`.
 5. **Cold miss** → append `Source Slack thread: <permalink>` and `Covent Pi request: <slackRequestId>` to the description (belt-and-braces; helps humans), call `createIssue`, then `upsertAttachment({ issueId, url: slackPermalink, title: "Slack thread", subtitle: "Covent Pi request <id>" })`. Trace `linear.issue.upsert.created`. Return `{ issue, created: true }`.
 
+If `createIssue` succeeds but `upsertAttachment` throws (network blip, transient Linear failure, permission edge), the error is re-thrown after a `linear.issue.upsert.attachment_failed` trace. Returning a half-formed `{ issue, created: true }` would orphan the issue — the next retry of the same Slack thread would not find the attachment and would create a duplicate, violating PRD principle 4. Callers must surface the failure (pi-mom's existing `try { … } catch { … }` around `createLinearIssueFromPiOutput` covers this).
+
 Quote from Linear docs cited in Wave 2 R2: *"Attachment URL is used as an idempotent value if used in conjunction with the same issue id."*
 
 ### Webhook verification — `verifyWebhook`
@@ -366,6 +368,9 @@ Every event the package emits (derived from `grep -n 'trace("linear\.' packages/
 | `linear.issue.upsert.dedupe_hit` | `issues.ts:299` | `attachmentsForURL` found exactly one live attachment | `{ issueId, identifier, slackPermalink }` |
 | `linear.issue.upsert.multiple_matches` | `issues.ts:310` | `attachmentsForURL` returned more than one live attachment; oldest wins | `{ slackPermalink, chosen, candidates[] }` |
 | `linear.issue.upsert.created` | `issues.ts:343` | Cold miss path created a new issue and attached the Slack permalink | `{ issueId, identifier, slackPermalink }` |
+| `linear.issue.upsert.attachment_failed` | `issues.ts` | Cold-miss `createIssue` succeeded but `upsertAttachment` threw; the error is re-thrown so the caller surfaces it rather than leaving an issue without its idempotency anchor | `{ issueId, url, error }` |
+| `linear.issue.upsert.attachment_resolve_failed` | `issues.ts` | `resolveAttachmentIssue` saw a non-archived attachment with only `issueId`, called `client.issue(id)`, and the SDK threw; the node is treated as a miss | `{ issueId, url, error }` |
+| `linear.issue.find.failed` | `issues.ts` | `findIssue` swallowed an SDK error and returned `null`; emitted before the null so the cause is observable | `{ input, error }` |
 | `linear.workflow_state.resolve.cache_hit` | `workflow-states.ts:117` | `WorkflowStateCache.loadTeam` served from cache | `{ teamId }` |
 | `linear.workflow_state.resolve.cache_miss` | `workflow-states.ts:121` | `WorkflowStateCache.loadTeam` fetched from the SDK | `{ teamId }` |
 | `linear.rate_limit.throttle` | `rate-limit.ts:49` | `withRateLimitGuard` caught a `RatelimitedLinearError` | `{ retryAfterMs, requestsRemaining, complexityRemaining }` |

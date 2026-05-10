@@ -132,7 +132,12 @@ async function resolveAttachmentIssue(
 	if (node.issueId) {
 		try {
 			return await client.issue(node.issueId);
-		} catch {
+		} catch (error) {
+			trace("linear.issue.upsert.attachment_resolve_failed", {
+				issueId: node.issueId,
+				url: node.url,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			return null;
 		}
 	}
@@ -152,7 +157,11 @@ export async function findIssue(
 		const issue = await client.issue(idOrIdentifier);
 		if (!issue) return null;
 		return toIssueRef(issue);
-	} catch {
+	} catch (error) {
+		trace("linear.issue.find.failed", {
+			input: idOrIdentifier,
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return null;
 	}
 }
@@ -333,12 +342,24 @@ export async function upsertFromSlack(
 		priority: input.priority,
 	});
 
-	await upsertAttachment(client, {
-		issueId: issue.id,
-		url: slackPermalink,
-		title: "Slack thread",
-		subtitle: `Covent Pi request ${slackRequestId}`,
-	});
+	try {
+		await upsertAttachment(client, {
+			issueId: issue.id,
+			url: slackPermalink,
+			title: "Slack thread",
+			subtitle: `Covent Pi request ${slackRequestId}`,
+		});
+	} catch (error) {
+		// PRD principle 4 — idempotency: without the attachment, a retry of this
+		// Slack thread would create a duplicate issue. Surface the failure loudly
+		// rather than silently returning a half-formed result.
+		trace("linear.issue.upsert.attachment_failed", {
+			issueId: issue.id,
+			url: slackPermalink,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		throw error;
+	}
 
 	trace("linear.issue.upsert.created", {
 		issueId: issue.id,
