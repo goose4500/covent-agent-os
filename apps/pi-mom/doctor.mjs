@@ -44,7 +44,7 @@ if (process.env.LINEAR_API_KEY) {
 
 console.log(`Linear target team: ${process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"}`);
 console.log(`Linear target project: ${process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"}`);
-console.log(`Linear target state: ${process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"}`);
+console.log(`Linear default state name: ${process.env.LINEAR_DEFAULT_STATE_NAME || "Backlog"}`);
 
 if (process.env.LINEAR_WEBHOOK_SIGNING_SECRET) {
   console.log(`✓ LINEAR_WEBHOOK_SIGNING_SECRET is set (value hidden)`);

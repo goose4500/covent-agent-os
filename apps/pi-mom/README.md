@@ -72,7 +72,7 @@ export LINEAR_API_KEY='lin_api_...'
 # Override only if the Linear target changes:
 # export LINEAR_TEAM_ID='c9c8376e-7fd3-4921-9996-8c98fc2274f2'
 # export LINEAR_PROJECT_ID='ba9682e2-c14e-4208-98a2-a89f3fb285b8'
-# export LINEAR_STATE_ID='adfdb6e9-b118-4d65-ada3-ad11087b7dab'
+# export LINEAR_DEFAULT_STATE_NAME='Backlog'
 ```
 
 ## 6. Run the bridge
@@ -142,9 +142,11 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 - `linear:` / `create Linear issue` first asks Pi to write a Linear-ready issue spec from the Slack thread.
 - Pi's first line should be `Title: <issue title>`; the bridge uses that as the Linear title.
 - The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
-- Default target is Frontend Engineering / `Distribution` / `Backlog`.
+- Default target is Frontend Engineering / `Distribution` / `Backlog`. Override the state via `LINEAR_DEFAULT_STATE_NAME` (default `Backlog`); the bridge resolves it to a `stateId` per team via the typed client.
+- Creation is **idempotent via the Slack permalink**: pi-mom calls `linear.issues.upsertFromSlack(...)` from [`@covent/linear-client`](../../packages/linear-client) which looks up existing Linear attachments keyed by the Slack thread URL. First run on a thread creates the issue and replies with `✅ Created Linear issue …`; re-running the route on the same thread returns the existing issue with `♻️ Linear issue already exists for this Slack thread: …` instead of creating a duplicate.
 - Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
 - Linear environment variables are stripped from the Pi subprocess environment.
+- Client surface and idempotency contract: [`docs/specs/linear-client-spec.md`](../../docs/specs/linear-client-spec.md). Product intent / principles (notably 4–6): [`docs/source-of-truth/LINEAR_INTEGRATION_PRD.md`](../../docs/source-of-truth/LINEAR_INTEGRATION_PRD.md).
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
