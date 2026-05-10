@@ -9,12 +9,13 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:pi-mom && npm run typecheck",
+    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:pi-mom && npm run typecheck && npm run typecheck:linear-client",
     "doctor": "npm run doctor:pi-mom",
     "dev:pi-mom": "npm --prefix apps/pi-mom start",
     "doctor:pi-mom": "npm --prefix apps/pi-mom run doctor",
     "check:pi-mom": "npm --prefix apps/pi-mom run check",
     "typecheck": "tsc --noEmit",
+    "typecheck:linear-client": "npm --prefix packages/linear-client run typecheck",
     "validate:skills": "node scripts/validate-skills.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",
     "agent:new": "node scripts/scaffold-agent.mjs",

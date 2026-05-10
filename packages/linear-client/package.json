@@ -1,0 +1,24 @@
+{
+  "name": "@covent/linear-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed Linear client facade for Covent. Thin wrapper around @linear/sdk with idempotency, identifier helpers, webhook verification, rate-limit guard, and tracing.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@linear/sdk": "84.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  }
+}
