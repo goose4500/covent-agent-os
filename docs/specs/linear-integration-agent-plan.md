@@ -193,6 +193,43 @@ Each spec defines: charter, allowed actions, inputs, outputs, success criteria. 
 - Allowed: `git log`, read.
 - Outputs: per-commit pass/fail; PR description gap list.
 
+## Wave 2 outcomes (verified facts)
+
+Output of R1/R2/R3, locked in for Wave 3 implementation. Anything below contradicting prior notes is the latest truth.
+
+**R1 — SDK shape (PASS):**
+- Pin `@linear/sdk@84.0.0`. Tiny dep footprint (only `@graphql-typed-document-node/core`). Dual ESM/CJS with `"type": "module"`.
+- Compiles green under Node 22 + TS 5.9 + `module: NodeNext` + `strict: true`.
+- Corrections to the original research:
+  - The thrown class is `UserLinearError`, not `UserError`. `UserError` is a GraphQL payload type (mutation `userErrors[]`). All thrown subclasses extend `LinearError`: `AuthenticationLinearError`, `InvalidInputLinearError`, `FeatureNotAccessibleLinearError`, `RatelimitedLinearError`, `NetworkLinearError`, `ForbiddenLinearError`, `BootstrapLinearError`, `GraphqlLinearError`, `InternalLinearError`, `LockTimeoutLinearError`, `OtherLinearError`, `UnknownLinearError`, `UsageLimitExceededLinearError`, `UserLinearError`.
+  - `client.viewer` is a property accessor, not a method (no parens).
+  - `client.issue("FE-123")` accepts both UUID and human identifier with one `string` overload — no separate `issueByIdentifier` path.
+
+**R2 — Idempotency (Strategy B):**
+- Linear's docs explicitly state `attachment.url` is the per-issue idempotency key. Quote: *"Attachment URL is used as an idempotent value if used in conjunction with the same issue id."*
+- Workspace-global lookup: `client.attachmentsForURL(slackPermalink)` returns `{ nodes: { id, issue: { id, identifier, ... } } }`.
+- Canonical create path:
+  1. `attachmentsForURL(slackPermalink)` → if any non-archived hit, return its issue.
+  2. Else `createIssue(...)` → then `createAttachment({ issueId, url: slackPermalink, title: "Slack thread", subtitle: "Covent Pi request <id>" })`.
+- Resolved open questions for W-A:
+  - Yes, also append the Slack permalink to the issue description (belt-and-braces, cheap, helps humans).
+  - If `attachmentsForURL` does not surface `archivedAt`, accept one extra `client.issue(id)` round-trip on cold hit.
+  - v1 policy: archived hit → ignore and re-create.
+- Known v1 limitation: two concurrent pi-mom replicas with the same permalink can race. pi-mom is a single Railway service today; mitigation deferred. Trace `linear.dedupe.multiple_matches` if `attachmentsForURL` returns >1 node.
+
+**R3 — Webhook signature (verified):**
+- Header: `Linear-Signature` (lowercase hex HMAC-SHA256).
+- Body bytes signed: raw, unparsed.
+- Timestamp: JSON body field `webhookTimestamp`, UNIX **milliseconds**, no header counterpart.
+- Replay window: 60s.
+- No documented `Linear-Signature-Previous` header — rotation done via two env vars tried in turn at the verifier boundary.
+- `WebhookVerificationError` codes: `missing_signature` | `invalid_signature` | `replay_expired` | `malformed_payload`.
+- Critical W-B requirement: capture raw body via `bodyParser.raw({ type: "application/json" })` (or `express.json({ verify })`) BEFORE any JSON middleware. Express's `express.json()` consumes the stream.
+- Node `IncomingMessage.headers` lowercases keys → read `req.headers["linear-signature"]`.
+- Test fixtures with HMAC computed via both Node and openssl (matching) are in R3's report and will be reproduced in `packages/linear-client/tests/fixtures/`.
+
+**Orchestration note:** even though W-A / W-B / W-D have disjoint file scopes, the single working tree means a single git writer at a time. Workers run **serially** (not parallel) in the live execution. The wave structure remains the unit of progress; within Wave 3, dispatch order is W0 → W-A → W-D → W-B → W-C. QA and Verifiers stay parallel within their waves.
+
 ## Orchestrator (this session) duties
 
 - Launch each wave; wait for completion (no polling).
