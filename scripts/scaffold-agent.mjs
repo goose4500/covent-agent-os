@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { asList, parseYamlLite } from "../lib/yaml-lite.mjs";
 
 const GENERATED_MARKER = "<!-- generated-by: scaffold-agent -->";
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
@@ -66,76 +67,6 @@ function parseArgs(argv) {
   }
 
   return { agentName, options };
-}
-
-function stripQuotes(value) {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
-function parseScalar(value) {
-  const trimmed = value.trim();
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  return stripQuotes(trimmed);
-}
-
-function parseYamlValue(value) {
-  const trimmed = value.trim();
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    const inner = trimmed.slice(1, -1).trim();
-    if (!inner) return [];
-    return inner.split(",").map((item) => parseScalar(item)).filter((item) => item !== "");
-  }
-  return parseScalar(trimmed);
-}
-
-function parseYamlLite(text, sourceName) {
-  const result = {};
-  let currentListKey = null;
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-
-  for (let index = 0; index < lines.length; index++) {
-    const rawLine = lines[index];
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    if (line.startsWith("- ")) {
-      if (!currentListKey) {
-        throw new Error(`${sourceName}:${index + 1}: list item without a preceding key`);
-      }
-      result[currentListKey].push(parseScalar(line.slice(2)));
-      continue;
-    }
-
-    const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/);
-    if (!match) {
-      throw new Error(`${sourceName}:${index + 1}: unsupported YAML-lite syntax`);
-    }
-
-    const [, key, value = ""] = match;
-    if (value === "") {
-      result[key] = [];
-      currentListKey = key;
-    } else {
-      result[key] = parseYamlValue(value);
-      currentListKey = null;
-    }
-  }
-
-  return result;
-}
-
-function asList(value, fieldName) {
-  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
-  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
-  if (value == null) return [];
-  throw new Error(`${fieldName} must be an array or comma-separated string`);
 }
 
 function splitCsv(value) {

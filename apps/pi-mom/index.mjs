@@ -5,7 +5,8 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "../../lib/openai-image-client.mjs";
+import { redactSensitiveText } from "../../lib/redact.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -374,6 +375,27 @@ async function createLinearIssue({ title, description, slackUrl, requestId }) {
   return payload.data.issueCreate.issue;
 }
 
+async function maybeCreateLinearAfterPi({ client, channel, threadTs, requestId, command, result, start }) {
+  if (command.kind !== "route" || command.routeKey !== "linear") return;
+  try {
+    const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
+    });
+    trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
+  } catch (error) {
+    const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
+    trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
+    });
+  }
+}
+
 async function createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }) {
   const sourceUrl = await getSlackPermalink(client, channel, threadTs);
   const { title, description } = extractLinearIssuePayload(result);
@@ -641,20 +663,6 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
       text: `Image generation failed (req: ${requestId}). Check the pi-mom terminal/logs for details.`,
     });
   }
-}
-
-function redactSensitiveText(text = "") {
-  return text
-    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "xox[REDACTED]")
-    .replace(/xapp-[A-Za-z0-9-]+/g, "xapp-[REDACTED]")
-    .replace(/xoxe[.-][A-Za-z0-9.-]+/g, "xoxe[REDACTED]")
-    .replace(/sk-proj-[A-Za-z0-9_-]+/g, "sk-proj-[REDACTED]")
-    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-[REDACTED]")
-    .replace(/Authorization:\s*Bearer\s+[^\s'"`]+/gi, "Authorization: Bearer [REDACTED]")
-    .replace(/Authorization:\s+lin_api_[^\s'"`]+/gi, "Authorization: lin_api_[REDACTED]")
-    .replace(/lin_api_[A-Za-z0-9_-]+/g, "lin_api_[REDACTED]")
-    .replace(/slackauthticket\s+[A-Za-z0-9._-]+/gi, "slackauthticket [REDACTED]")
-    .replace(/((?:SLACK|OPENAI|LINEAR)_[A-Z0-9_]*(?:TOKEN|SECRET|KEY)[A-Z0-9_]*\s*=\s*)(['"]?)[^\s'"]+/gi, "$1$2[REDACTED]");
 }
 
 function cleanTerminalSequences(text = "") {
@@ -973,25 +981,7 @@ async function handleRequest({ client, event, mode }) {
     if (STREAMING_ENABLED) {
       const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-      if (command.kind === "route" && command.routeKey === "linear") {
-        try {
-          const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-        } catch (error) {
-          const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-          trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-          });
-        }
-      }
+      await maybeCreateLinearAfterPi({ client, channel, threadTs, requestId, command, result, start });
       return;
     }
 
@@ -1004,25 +994,7 @@ async function handleRequest({ client, event, mode }) {
     const result = await runPi(prompt);
     await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-    if (command.kind === "route" && command.routeKey === "linear") {
-      try {
-        const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-        });
-        trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-      } catch (error) {
-        const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-        trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-        });
-      }
-    }
+    await maybeCreateLinearAfterPi({ client, channel, threadTs, requestId, command, result, start });
   } catch (error) {
     trace("error", { requestId, error: error.message, durationMs: Date.now() - start });
     console.error(`[pi-mom] ${requestId} error:`, error);

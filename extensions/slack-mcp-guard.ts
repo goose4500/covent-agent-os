@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { redactSensitiveText } from "../lib/redact.mjs";
 
 /**
  * Global Slack safety guard for Pi's MCP adapter.
@@ -189,14 +190,6 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(/\bxox[a-zA-Z0-9]*-[A-Za-z0-9-]+/g, "[REDACTED_SLACK_TOKEN]")
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED_BEARER_TOKEN]")
-    .replace(/([\"']?(?:client[_-]?secret|api[_-]?key|password|access[_-]?token|refresh[_-]?token|bearer[_-]?token|token)[\"']?\s*:\s*[\"'])([^\"'\n]+)([\"'])/gi, "$1[REDACTED_SECRET]$3")
-    .replace(/((?:client[_-]?secret|api[_-]?key|password|access[_-]?token|refresh[_-]?token|bearer[_-]?token|token)\s*=\s*)[^\s&]+/gi, "$1[REDACTED_SECRET]");
 }
 
 function truncate(value: string, maxLength: number): string {
