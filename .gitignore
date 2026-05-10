@@ -32,6 +32,9 @@ logs/
 generated-images/
 pi-session-audit/
 
+# Claude Code harness state (isolated-agent worktrees, local session data)
+.claude/
+
 # MCP/browser local state
 mcp.json
 mcp-cache.json
