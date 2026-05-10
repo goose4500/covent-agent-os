@@ -78,6 +78,17 @@ When the user asks what tools are available or how they are connected:
   user just gave that exact instruction.
 - Do not enumerate the whole workspace unnecessarily. Use filters, issue IDs,
   team/project scope, and small limits.
+- The `linear_*` MCP tools listed below are the **external, interactive**
+  Linear surface — Pi reaches Linear through the global `linear` MCP server
+  when a human asks it to look something up or draft a change. Automated
+  flows that originate inside the Covent Agent OS (the Slack → Linear route
+  in `apps/pi-mom`, the `/webhooks/linear` receiver, future workflow nodes)
+  use the internal typed library `@covent/linear-client` in
+  `packages/linear-client/` instead — see
+  `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` and
+  `docs/specs/linear-client-spec.md`. Do not call the `linear_*` MCP tools
+  from server-side automation paths, and do not reach into `@linear/sdk`
+  from outside the client package.
 
 ### Whimsical-specific safety
 

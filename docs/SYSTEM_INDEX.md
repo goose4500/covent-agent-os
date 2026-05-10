@@ -69,13 +69,26 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 - `docs/source-of-truth/COVENT_OPERATING_SOURCE_OF_TRUTH_V0.md` — strategic operating model; still contains draft-era language, so prefer this index for current system boundaries.
 - `docs/source-of-truth/DISTRIBUTION_AGENT_LOOP_SOURCE_OF_TRUTH.md` — historical Distribution-agent context; useful evidence, not live instruction.
+- `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` — canonical PRD for the Linear integration: scope, principles, package surface, env shape. Any Linear doc that contradicts this PRD is wrong; update the PRD first.
 
 ### Runbooks and specs
 
 - `docs/runbooks/covent-slack-mcp-setup.md` — current Slack MCP OAuth/safety runbook.
 - `docs/runbooks/covent-pi-mom-known-good.md` — historical known-good notes; verify against current code before acting.
+- `docs/runbooks/linear-webhook-setup.md` — Linear webhook configuration, signing-secret rotation, and trace mapping.
 - `docs/specs/context7-pi-agent-harness-spec.md` — Context7 Pi harness design.
 - `docs/specs/covent-slack-pi-harness.md` — older Slack MCP bearer-token harness spec; treat as historical/staged until reconciled with OAuth runbook.
+- `docs/specs/linear-client-spec.md` — binding API surface and behavior for `@covent/linear-client`.
+- `docs/specs/linear-integration-agent-plan.md` — agent lifecycle plan for the Linear integration build (Wave 2 outcomes section is the verified-facts cite).
+
+### Architecture decisions (ADRs)
+
+- `docs/adr/0001-slack-app-mention-primary-ux.md`
+- `docs/adr/0002-linear-is-execution-truth.md`
+- `docs/adr/0003-repo-docs-are-canonical-system-truth.md`
+- `docs/adr/0004-whimsical-is-visual-map-not-canonical-data-store.md`
+- `docs/adr/0005-linear-client-library.md` — consolidate Linear access behind `@covent/linear-client`.
+- `docs/adr/0006-linear-webhooks-colocated-with-pi-mom.md` — webhook receiver runs inside `apps/pi-mom`.
 
 ### History/archive
 
@@ -160,7 +173,7 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 - Thread context is capped at 12 messages with no pagination.
 - Normal/spec/linear routes are text-only.
 - No modal preview/approval before Linear issue creation; explicit Slack phrase is the approval for now.
-- Linear issue creation is not idempotent; rerunning the route can create duplicates.
+- Linear issue creation from Slack is idempotent via `@covent/linear-client`'s `issues.upsertFromSlack` (Strategy B: Slack permalink as Linear attachment URL is the dedupe key). See `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` and `docs/specs/linear-client-spec.md`.
 - Linear metadata is basic: team, project, state, title, description. No label, assignee, priority, estimate, cycle, or milestone mapping yet.
 - Slack manifest scopes are still POC-broad and should be reviewed before hardening.
 - Some older docs contain stale local paths or draft-era policies; prefer this file plus current code.

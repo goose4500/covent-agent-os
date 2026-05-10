@@ -71,9 +71,15 @@ SLACK_APP_TOKEN
 Optional route/runtime secrets:
 
 ```text
-OPENAI_API_KEY # image route or provider key matching PI_EXTRA_ARGS
-LINEAR_API_KEY # required for @Covent Pi create Linear issue
+OPENAI_API_KEY                          # image route or provider key matching PI_EXTRA_ARGS
+LINEAR_API_KEY                          # required for @Covent Pi create Linear issue
+LINEAR_WEBHOOK_SIGNING_SECRET           # required when the /webhooks/linear receiver is enabled
+LINEAR_WEBHOOK_SIGNING_SECRET_PREVIOUS  # populate only during a signing-secret rotation window
+LINEAR_WEBHOOK_PORT                     # optional; default 3001
+LINEAR_DEFAULT_STATE_NAME               # optional; default "Backlog"
 ```
+
+See `docs/runbooks/linear-webhook-setup.md` for the webhook configuration and rotation procedure.
 
 Then deploy intentionally:
 
@@ -93,5 +99,7 @@ Linear/GitHub = durable truth / code truth
 Repo docs = canonical system memory
 Whimsical = visual map / navigation layer
 ```
+
+`@covent/linear-client` (in `packages/linear-client/`) is the canonical typed surface for every internal Linear call — `apps/pi-mom`, future workflow nodes, and PI agents the team launches. See `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md`, `docs/specs/linear-client-spec.md`, and ADRs 0005 / 0006.
 
 Read `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, `BOUNDARY.md`, and `SECURITY.md` before adding write-capable automation.

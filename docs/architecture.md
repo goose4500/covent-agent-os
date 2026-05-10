@@ -15,7 +15,7 @@ Slack cockpit
 1. **Apps** — concrete runtimes such as `apps/pi-mom`.
 2. **Skills/agents** — reusable reasoning workflows and specialist subagents.
 3. **Extensions/lib** — bounded tools and shared implementation code.
-4. **Packages** — installable Pi packages, e.g. Chrome browser access.
+4. **Packages** — installable Pi packages and typed internal libraries, e.g. Chrome browser access and `packages/linear-client` (the canonical typed surface for Linear; see `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` and `docs/specs/linear-client-spec.md`).
 5. **Docs/specs/runbooks** — source-linked operating knowledge.
 
 ## Current POC priorities

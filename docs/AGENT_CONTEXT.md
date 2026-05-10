@@ -153,7 +153,7 @@ No current support for automatic assignee, labels, priority, cycle, estimate, mi
 | Output | Pi draft streamed/posted to Slack, then Slack confirmation with Linear issue link on success. |
 | Failure behavior | If Linear creation fails or key is missing, leave the draft in Slack and post a failure/no-issue-created notice. |
 | Redaction/logging | Token-like output is redacted before Slack; logs/request IDs are operational evidence but raw logs still count as sensitive. |
-| Idempotency | Not idempotent. Re-running the route can create duplicate Linear issues; check the thread for an existing confirmation first. |
+| Idempotency | Idempotent via `@covent/linear-client`'s `issues.upsertFromSlack`: the Slack permalink is attached to the Linear issue and acts as the dedupe key, so re-running the route on the same thread returns the existing issue. See `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` (principle 4) and `docs/specs/linear-client-spec.md`. |
 
 Invoking the Linear route exports a Slack-derived summary/spec plus source thread permalink and request ID into the configured Linear team/project/state. Do not invoke it on threads containing customer secrets, credentials, or private material that should not enter Linear.
 

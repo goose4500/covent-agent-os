@@ -139,6 +139,8 @@ LINEAR_API_KEY
 OPENAI_API_KEY or provider-specific key
 ```
 
+The EC2 lane needs `LINEAR_API_KEY` only (for outbound Linear calls via `@covent/linear-client`). The Linear webhook signing secret (`LINEAR_WEBHOOK_SIGNING_SECRET`) belongs to the pi-mom side that hosts the `/webhooks/linear` receiver — see `docs/runbooks/linear-webhook-setup.md` and `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md`.
+
 Rules:
 
 - Secret values must never be printed, pasted, committed, put in Linear, or stored in Slack messages.

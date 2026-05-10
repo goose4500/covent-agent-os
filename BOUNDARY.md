@@ -19,7 +19,7 @@ Humans approve risky external mutations.
 | Slack | Cockpit, intake, progress, approval | Read current context; write only through approved routes |
 | Pi | Reasoning/execution runtime | Can plan, draft, run local checks; no external writes unless route allows |
 | MCP tools | Bounded capability adapters | Read-first; writes require explicit current approval |
-| Linear | Durable work truth | Draft-first by default; mutation only after explicit approval or an approved write-capable route such as `@Covent Pi create Linear issue` |
+| Linear | Durable work truth | Draft-first by default; mutation only after explicit approval or an approved write-capable route such as `@Covent Pi create Linear issue`. All internal Linear access goes through `@covent/linear-client` (`packages/linear-client`); inbound events arrive via the colocated webhook receiver at `/webhooks/linear` inside `apps/pi-mom`. See `docs/source-of-truth/LINEAR_INTEGRATION_PRD.md` principles 1, 9, and 10. |
 | GitHub/Git | Code truth/review/rollback | Local commits OK after scan; remote push only after repo boundary is understood |
 | Browser/Chrome | Visible supervised action surface | Read/inspect by default; consequential actions require approval |
 
