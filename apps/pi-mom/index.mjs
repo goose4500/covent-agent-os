@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
 import { createRunStore } from "./lib/agent-run-store.mjs";
-import { createAgentRunner } from "./lib/agent-runners.mjs";
+import { createAgentRunner, parseSupervisedPiExtraArgs } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
@@ -71,8 +71,14 @@ if (!["fake", "repo-health", "supervised-pi"].includes(AGENT_RUNNER_MODE)) {
 const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
 const AGENT_MAX_CONCURRENT = boundedIntegerEnv("PI_MOM_AGENT_MAX_CONCURRENT", 1, { min: 1, max: 3 });
 const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT_MS", 60000, { min: 1000, max: 300000 });
+const SUPERVISED_PI_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_SUPERVISED_PI_TIMEOUT_MS", 300000, { min: 1000, max: 300000 });
+const SUPERVISED_PI_OUTPUT_CAP_CHARS = boundedIntegerEnv("PI_MOM_SUPERVISED_PI_OUTPUT_CAP_CHARS", 20000, { min: 1000, max: 20000 });
 const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
 const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
+const SUPERVISED_PI_WORKDIR = process.env.PI_MOM_SUPERVISED_PI_WORKDIR || REPO_HEALTH_WORKDIR || process.cwd();
+const SUPERVISED_PI_COMMAND = process.env.PI_MOM_SUPERVISED_PI_COMMAND || "pi";
+const SUPERVISED_PI_PROFILE = process.env.PI_MOM_SUPERVISED_PI_PROFILE || "covent-speed-operator";
+const SUPERVISED_PI_EXTRA_ARGS = parseSupervisedPiExtraArgs(process.env.PI_MOM_SUPERVISED_PI_EXTRA_ARGS || "");
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
@@ -944,7 +950,20 @@ const app = new App({
 });
 
 const runStore = createRunStore({ path: RUN_STATE_PATH, trace });
-const agentRunner = createAgentRunner({ mode: AGENT_RUNNER_MODE, trace, workdir: REPO_HEALTH_WORKDIR, timeoutMs: AGENT_COMMAND_TIMEOUT_MS });
+const agentRunner = createAgentRunner({
+  mode: AGENT_RUNNER_MODE,
+  trace,
+  workdir: REPO_HEALTH_WORKDIR,
+  timeoutMs: AGENT_COMMAND_TIMEOUT_MS,
+  supervisedPi: {
+    command: SUPERVISED_PI_COMMAND,
+    profile: SUPERVISED_PI_PROFILE,
+    workdir: SUPERVISED_PI_WORKDIR,
+    timeoutMs: SUPERVISED_PI_TIMEOUT_MS,
+    outputCapChars: SUPERVISED_PI_OUTPUT_CAP_CHARS,
+    extraArgs: SUPERVISED_PI_EXTRA_ARGS,
+  },
+});
 const activeRuns = new Map();
 
 function isoNow() {

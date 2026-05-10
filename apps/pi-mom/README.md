@@ -145,10 +145,24 @@ Agent Run Card behavior:
 
 - `agent:` posts a Block Kit confirmation card with **Start Run** and **Cancel** buttons before any runner executes.
 - `PI_MOM_AGENT_ROUTE_ENABLED=false` is the emergency flag: it disables new `agent:` cards and disables existing Start/Cancel button execution.
-- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
+- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps; `supervised-pi` launches Pi with fixed argv, `shell: false`, a `0600` prompt temp file, scrubbed environment, timeout, and capped/redacted output.
 - Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
 - Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
 - Default trusted internal speed mode keeps Pi tools/extensions enabled (`PI_MOM_ALLOW_PI_TOOLS=true`). Set `PI_MOM_ALLOW_PI_TOOLS=false` for restricted/safe-mode diagnostics.
+
+Supervised Pi speed-mode knobs (keep `PI_MOM_AGENT_ROUTE_ENABLED=false` to disable new cards and button execution):
+
+```bash
+export PI_MOM_AGENT_RUNNER=supervised-pi
+export PI_MOM_SUPERVISED_PI_COMMAND=pi
+export PI_MOM_SUPERVISED_PI_PROFILE=covent-speed-operator
+export PI_MOM_SUPERVISED_PI_WORKDIR=/home/jfloyd/covent-agent-os
+export PI_MOM_SUPERVISED_PI_TIMEOUT_MS=300000
+export PI_MOM_SUPERVISED_PI_OUTPUT_CAP_CHARS=20000
+export PI_MOM_SUPERVISED_PI_EXTRA_ARGS=
+```
+
+`PI_MOM_SUPERVISED_PI_EXTRA_ARGS` is split on whitespace only; it is not shell-expanded or evaluated. The final Pi argv is fixed as extra args followed by `--profile <profile> --no-session -p @<0600 prompt file>`. Slack/Linear/OpenAI/provider token-like environment variables are stripped from the child by default.
 
 Local diagnostic smoke test (no Pi invocation):
 

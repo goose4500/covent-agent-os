@@ -55,7 +55,7 @@ export function buildAgentRunCard(run) {
       { type: "section", fields: runFields(run) },
       ...(run.sourceUrl ? [{ type: "section", text: { type: "mrkdwn", text: `*Source*\n<${run.sourceUrl}|Slack thread>` } }] : []),
       { type: "section", text: { type: "mrkdwn", text: `*Prompt*\n>${truncate(run.prompt || "(empty)").replace(/\n/g, "\n>")}` } },
-      { type: "context", elements: [{ type: "mrkdwn", text: "Safety: no repo writes in MVP. Runner mode is bounded to `fake`, `repo-health`, or `supervised-pi`; Pi command execution stays default-off/not yet wired." }] },
+      { type: "context", elements: [{ type: "mrkdwn", text: "Safety: runner mode is bounded to `fake`, `repo-health`, or `supervised-pi`; supervised Pi uses fixed argv, shell disabled, scrubbed env, timeout, and output caps." }] },
       {
         type: "actions",
         elements: [
@@ -103,7 +103,7 @@ export function buildAgentRunUpdate(run) {
       { type: "header", text: { type: "plain_text", text: "Agent run update", emoji: true } },
       { type: "section", fields: runFields(run) },
       { type: "section", text: { type: "mrkdwn", text: `*Recent events*\n${eventLines(run)}${resultText}${errorText}${canvasText}` } },
-      { type: "context", elements: [{ type: "mrkdwn", text: "Bounded Agent Run Card MVP. Repo-health uses fixed read-only command tuples with shell disabled; supervised-pi is represented but not yet wired to execute Pi commands." }] },
+      { type: "context", elements: [{ type: "mrkdwn", text: "Bounded Agent Run Card. Repo-health uses fixed read-only command tuples; supervised-pi launches Pi with fixed argv, shell disabled, scrubbed env, timeout, and output caps." }] },
     ],
   };
 }
