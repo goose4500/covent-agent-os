@@ -21,7 +21,7 @@ jobs:
     name: Check (lint, validators, typecheck, secrets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # gitleaks-action needs full history to scan beyond the diff
           fetch-depth: 0
@@ -51,7 +51,7 @@ jobs:
     name: Test packages/pi-ext-covent-aws (bun)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
