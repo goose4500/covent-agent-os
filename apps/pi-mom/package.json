@@ -14,7 +14,9 @@
     "check": "node --check index.mjs && node --check doctor.mjs"
   },
   "dependencies": {
+    "@linear/sdk": "^53.0.0",
     "@mariozechner/pi-coding-agent": "^0.73.1",
-    "@slack/bolt": "^4.6.0"
+    "@slack/bolt": "^4.6.0",
+    "posthog-node": "^4.18.0"
   }
 }

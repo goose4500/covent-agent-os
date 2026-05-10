@@ -36,6 +36,7 @@
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "latest",
     "@types/node": "^22.15.3",
+    "js-yaml": "^4.1.0",
     "typebox": "latest",
     "typescript": "^5.9.3"
   },

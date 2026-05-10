@@ -1,11 +1,14 @@
 import { App, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
+import { LinearClient } from "@linear/sdk";
+import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { posthogEnabled, track, trackAIGeneration, shutdownPostHog } from "./lib/posthog.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -64,7 +67,7 @@ const ROUTES = {
   },
   linear: {
     label: "Create Linear issue",
-    instruction: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.",
+    instruction: "Create a Linear-ready issue spec from the current Slack thread. Output ONLY a single JSON object with this exact shape: {\"title\": \"<concise issue title under 240 chars>\", \"description\": \"<full issue description as a Markdown string>\"}. The description must include problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. Do not wrap the JSON in markdown fences. Do not include any prose before or after the JSON object. The bridge will parse this JSON and create the Linear issue.",
   },
   agenda: {
     label: "Meeting agenda",
@@ -94,10 +97,41 @@ function boundedIntegerEnv(name, fallback, { min, max }) {
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
+// Contract Pi must follow for the linear: route. The runtime guard in
+// extractLinearIssuePayload validates against this shape.
+const LinearIssueSchema = Type.Object({
+  title: Type.String({ minLength: 1, maxLength: 240 }),
+  description: Type.String({ minLength: 1 }),
+});
+
+let linearClient;
+function getLinearClient() {
+  const apiKey = process.env.LINEAR_API_KEY;
+  if (!apiKey) {
+    throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");
+  }
+  if (!linearClient) {
+    linearClient = new LinearClient({ apiKey });
+  }
+  return linearClient;
+}
+
+function posthogGroupsFor({ route } = {}) {
+  const groups = {};
+  if (AUTH_TEAM_ID) groups.slack_team = AUTH_TEAM_ID;
+  if (route) groups.pi_route = route;
+  return Object.keys(groups).length ? groups : undefined;
+}
+
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
   const entry = { ts: new Date().toISOString(), event: eventName, ...data };
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
+
+  if (posthogEnabled()) {
+    const distinctId = data.user || data.requestId || undefined;
+    track(eventName, data, { distinctId, groups: posthogGroupsFor({ route: data.route }) });
+  }
 }
 
 function isAllowedChannel(channel) {
@@ -307,89 +341,69 @@ function stripWrappingMarkdownFence(text = "") {
 
 function extractLinearIssuePayload(piOutput = "") {
   const cleaned = stripWrappingMarkdownFence(cleanPiOutput(piOutput));
-  const lines = cleaned.split(/\r?\n/);
-  const titleLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i.test(line));
 
-  if (titleLineIndex >= 0) {
-    const title = lines[titleLineIndex].replace(/^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i, "").trim();
-    const description = stripWrappingMarkdownFence(lines.filter((_, index) => index !== titleLineIndex).join("\n")) || cleaned;
-    return { title: clampLinearTitle(title), description };
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) {
+      const preview = cleaned.slice(0, 200).replace(/\s+/g, " ");
+      throw new Error(`Pi did not return JSON for linear route. First 200 chars: ${preview}`);
+    }
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch (innerError) {
+      throw new Error(`Could not parse JSON object from Pi output: ${innerError.message}`);
+    }
   }
 
-  const headingLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*#{1,3}\s+\S+/.test(line));
-  if (headingLineIndex >= 0) {
-    const title = lines[headingLineIndex].replace(/^\s*#{1,3}\s+/, "").trim();
-    return { title: clampLinearTitle(title), description: cleaned };
+  // Runtime guard for LinearIssueSchema (declared above). Kept inline so we don't
+  // depend on typebox/value, which is a separate subpath import that varies by version.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Pi linear output must be a JSON object.");
+  }
+  if (typeof parsed.title !== "string" || parsed.title.trim().length === 0) {
+    throw new Error("Pi linear output is missing required `title` (non-empty string).");
+  }
+  if (parsed.title.length > LinearIssueSchema.properties.title.maxLength) {
+    throw new Error(`Pi linear output \`title\` exceeds ${LinearIssueSchema.properties.title.maxLength} chars (got ${parsed.title.length}).`);
+  }
+  if (typeof parsed.description !== "string" || parsed.description.trim().length === 0) {
+    throw new Error("Pi linear output is missing required `description` (non-empty string).");
   }
 
-  const firstUsefulLine = lines.find((line) => line.trim()) || "Slack thread spec";
-  return { title: clampLinearTitle(firstUsefulLine.replace(/^\*+|\*+$/g, "")), description: cleaned };
+  return {
+    title: clampLinearTitle(parsed.title),
+    description: parsed.description.trim(),
+  };
 }
 
 async function createLinearIssue({ title, description, slackUrl, requestId }) {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");
-  }
-
   const fullDescription = `${description.trim()}\n\n---\n\nSource Slack thread: ${slackUrl || "unavailable"}\nCreated by Covent Pi request: ${requestId}`;
-  const query = `
-    mutation IssueCreate($input: IssueCreateInput!) {
-      issueCreate(input: $input) {
-        success
-        issue { id identifier title url }
-      }
-    }
-  `;
 
-  const response = await fetch(LINEAR_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: {
-        input: {
-          teamId: LINEAR_TEAM_ID,
-          projectId: LINEAR_PROJECT_ID,
-          stateId: LINEAR_STATE_ID,
-          title: clampLinearTitle(title),
-          description: fullDescription,
-        },
-      },
-    }),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.errors?.length) {
-    const message = payload.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`;
-    throw new Error(`Linear issueCreate failed: ${message}`);
-  }
-  if (!payload.data?.issueCreate?.success || !payload.data?.issueCreate?.issue) {
-    throw new Error("Linear issueCreate did not return a created issue.");
-  }
-
-  return payload.data.issueCreate.issue;
-}
-
-async function createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }) {
-  const sourceUrl = await getSlackPermalink(client, channel, threadTs);
-  const { title, description } = extractLinearIssuePayload(result);
-
-  trace("linear.issue_create_requested", {
-    requestId,
-    titleLength: title.length,
-    descriptionLength: description.length,
+  const payload = await getLinearClient().createIssue({
     teamId: LINEAR_TEAM_ID,
     projectId: LINEAR_PROJECT_ID,
     stateId: LINEAR_STATE_ID,
+    title: clampLinearTitle(title),
+    description: fullDescription,
   });
 
-  const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
-  trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
-  return issue;
+  if (!payload.success) {
+    throw new Error("Linear issueCreate did not succeed.");
+  }
+  const issue = await payload.issue;
+  if (!issue) {
+    throw new Error("Linear issueCreate did not return a created issue.");
+  }
+
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    title: issue.title,
+    url: issue.url,
+  };
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -608,19 +622,55 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
       skippedImages: collected.skippedImageFiles,
     });
 
-    const result = await createOpenAIImage({
-      action,
-      prompt,
-      imageDataUrls: collected.inputs.map((input) => input.imageUrl),
-      model: IMAGE_MODEL,
-      size: IMAGE_SIZE,
-      quality: IMAGE_QUALITY,
-      outputFormat: IMAGE_OUTPUT_FORMAT,
-      background: IMAGE_BACKGROUND,
-      outputDir: IMAGE_OUTPUT_DIR,
-      prefix: `slack-${requestId}`,
-      user: user ? `slack:${user}` : undefined,
-    });
+    const aiGroups = posthogGroupsFor({ route: "image" });
+    const openaiStart = Date.now();
+    let result;
+    try {
+      result = await createOpenAIImage({
+        action,
+        prompt,
+        imageDataUrls: collected.inputs.map((input) => input.imageUrl),
+        model: IMAGE_MODEL,
+        size: IMAGE_SIZE,
+        quality: IMAGE_QUALITY,
+        outputFormat: IMAGE_OUTPUT_FORMAT,
+        background: IMAGE_BACKGROUND,
+        outputDir: IMAGE_OUTPUT_DIR,
+        prefix: `slack-${requestId}`,
+        user: user ? `slack:${user}` : undefined,
+      });
+      trackAIGeneration({
+        distinctId: user,
+        groups: aiGroups,
+        provider: "openai",
+        model: result.model || IMAGE_MODEL,
+        input: prompt,
+        latencyMs: Date.now() - openaiStart,
+        traceId: requestId,
+        extraProperties: {
+          route: "image",
+          action: result.action,
+          n_files: result.files.length,
+          size: IMAGE_SIZE,
+          quality: IMAGE_QUALITY,
+          input_images: collected.inputs.length,
+        },
+      });
+    } catch (openaiError) {
+      trackAIGeneration({
+        distinctId: user,
+        groups: aiGroups,
+        provider: "openai",
+        model: IMAGE_MODEL,
+        input: prompt,
+        latencyMs: Date.now() - openaiStart,
+        traceId: requestId,
+        isError: true,
+        errorMessage: openaiError?.message,
+        extraProperties: { route: "image", action, input_images: collected.inputs.length },
+      });
+      throw openaiError;
+    }
 
     const comment = formatImageSlackComment(result, { prompt, inputCount: collected.inputs.length });
     const uploaded = await uploadImageResultToSlack(client, channel, threadTs, result, requestId, comment);
@@ -970,27 +1020,41 @@ async function handleRequest({ client, event, mode }) {
     });
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
-    if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
-      trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-      if (command.kind === "route" && command.routeKey === "linear") {
-        try {
-          const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-        } catch (error) {
-          const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-          trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-          });
-        }
+    // The linear route requires JSON output; never stream raw JSON tokens to Slack.
+    const streamingForRoute = STREAMING_ENABLED && command.routeKey !== "linear";
+    const aiGroups = posthogGroupsFor({ route: command.routeKey });
+    const piStart = Date.now();
+    let result;
+
+    if (streamingForRoute) {
+      try {
+        result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
+        trackAIGeneration({
+          distinctId: user,
+          groups: aiGroups,
+          provider: "pi",
+          model: PI_COMMAND,
+          input: prompt,
+          output: result,
+          latencyMs: Date.now() - piStart,
+          traceId: requestId,
+          extraProperties: { route: command.routeKey, stream: true },
+        });
+        trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+      } catch (error) {
+        trackAIGeneration({
+          distinctId: user,
+          groups: aiGroups,
+          provider: "pi",
+          model: PI_COMMAND,
+          input: prompt,
+          latencyMs: Date.now() - piStart,
+          traceId: requestId,
+          isError: true,
+          errorMessage: error?.message,
+          extraProperties: { route: command.routeKey, stream: true },
+        });
+        throw error;
       }
       return;
     }
@@ -1001,12 +1065,74 @@ async function handleRequest({ client, event, mode }) {
       text: `👀 Covent Pi is thinking… (req: ${requestId})`,
     });
 
-    const result = await runPi(prompt);
-    await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
-    trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+    try {
+      result = await runPi(prompt);
+      trackAIGeneration({
+        distinctId: user,
+        groups: aiGroups,
+        provider: "pi",
+        model: PI_COMMAND,
+        input: prompt,
+        output: result,
+        latencyMs: Date.now() - piStart,
+        traceId: requestId,
+        extraProperties: { route: command.routeKey, stream: false },
+      });
+    } catch (error) {
+      trackAIGeneration({
+        distinctId: user,
+        groups: aiGroups,
+        provider: "pi",
+        model: PI_COMMAND,
+        input: prompt,
+        latencyMs: Date.now() - piStart,
+        traceId: requestId,
+        isError: true,
+        errorMessage: error?.message,
+        extraProperties: { route: command.routeKey, stream: false },
+      });
+      throw error;
+    }
+
     if (command.kind === "route" && command.routeKey === "linear") {
+      let parsed;
       try {
-        const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+        parsed = extractLinearIssuePayload(result);
+      } catch (parseError) {
+        const message = redactSensitiveText(parseError?.message || String(parseError)).slice(0, 1200);
+        trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
+        await client.chat.update({
+          channel,
+          ts: thinking.ts,
+          text: truncateForSlack(`Pi did not return a valid Linear issue payload (req: ${requestId}). Reason: ${message}\n\nRaw Pi output:\n${result}`),
+        });
+        return;
+      }
+
+      await client.chat.update({
+        channel,
+        ts: thinking.ts,
+        text: truncateForSlack(`*${parsed.title}*\n\n${parsed.description}`),
+      });
+      trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+
+      try {
+        const sourceUrl = await getSlackPermalink(client, channel, threadTs);
+        trace("linear.issue_create_requested", {
+          requestId,
+          titleLength: parsed.title.length,
+          descriptionLength: parsed.description.length,
+          teamId: LINEAR_TEAM_ID,
+          projectId: LINEAR_PROJECT_ID,
+          stateId: LINEAR_STATE_ID,
+        });
+        const issue = await createLinearIssue({
+          title: parsed.title,
+          description: parsed.description,
+          slackUrl: sourceUrl,
+          requestId,
+        });
+        trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
         await client.chat.postMessage({
           channel,
           thread_ts: threadTs,
@@ -1022,7 +1148,11 @@ async function handleRequest({ client, event, mode }) {
           text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
         });
       }
+      return;
     }
+
+    await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
+    trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
   } catch (error) {
     trace("error", { requestId, error: error.message, durationMs: Date.now() - start });
     console.error(`[pi-mom] ${requestId} error:`, error);
@@ -1107,6 +1237,21 @@ app.message(async ({ message, client }) => {
   await handleRequest({ client, event: message, mode: "direct_message" });
 });
 
+let shuttingDown = false;
+async function gracefulShutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[pi-mom] shutdown (${reason}); flushing telemetry…`);
+  try {
+    await shutdownPostHog();
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
 (async () => {
   try {
     await preflight();
@@ -1118,6 +1263,7 @@ app.message(async ({ message, client }) => {
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
+    console.log(`📈 PostHog: ${posthogEnabled() ? "enabled" : "disabled (set POSTHOG_API_KEY to enable)"}`);
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);
     process.exit(1);
