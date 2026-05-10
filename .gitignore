@@ -32,6 +32,9 @@ logs/
 generated-images/
 pi-session-audit/
 
+# Personal Pi workflow (user-level, never committed)
+.pi/
+
 # MCP/browser local state
 mcp.json
 mcp-cache.json

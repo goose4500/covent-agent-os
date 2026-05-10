@@ -30,7 +30,7 @@
       "./extensions/slack-mcp-guard.ts"
     ],
     "skills": ["./skills"],
-    "agents": ["./.pi/agents", "./agents"],
+    "agents": ["./agents"],
     "prompts": ["./prompts"]
   },
   "devDependencies": {
