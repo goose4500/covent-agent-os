@@ -82,6 +82,7 @@ settings:
     bot_events:
     - app_mention
     - message.im
+    - message.channels
   interactivity:
     is_enabled: true
   is_mcp_enabled: false

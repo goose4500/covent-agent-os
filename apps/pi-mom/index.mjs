@@ -6,6 +6,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { INSIGHTS_CONFIG, insightsMisconfiguration, logInsightsStartup } from "./lib/insights/config.mjs";
+import { extractSupportedUrls } from "./lib/insights/url-classifier.mjs";
+import { analyzeUrl } from "./lib/insights/analyze.mjs";
+import { createDedupeStore } from "./lib/insights/dedupe.mjs";
+import { formatMisconfigReply } from "./lib/insights/format.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -700,7 +705,7 @@ function piSubprocessEnv() {
   return env;
 }
 
-async function runPi(prompt, { onOutput } = {}) {
+async function runPi(prompt, { onOutput, extraArgs = [] } = {}) {
   const promptDir = await mkdtemp(join(tmpdir(), "pi-mom-prompt-"));
   const promptPath = join(promptDir, "prompt.md");
   await writeFile(promptPath, prompt, { mode: 0o600 });
@@ -708,7 +713,7 @@ async function runPi(prompt, { onOutput } = {}) {
   try {
     return await new Promise((resolve, reject) => {
       const safeRuntimeArgs = process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? [] : ["--no-tools", "--no-extensions"];
-      const args = [...PI_EXTRA_ARGS, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
+      const args = [...PI_EXTRA_ARGS, ...extraArgs, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
       const child = spawn(PI_COMMAND, args, {
         env: piSubprocessEnv(),
         cwd: process.env.PI_WORKDIR || process.env.HOME || process.cwd(),
@@ -1107,6 +1112,78 @@ app.message(async ({ message, client }) => {
   await handleRequest({ client, event: message, mode: "direct_message" });
 });
 
+const insightsDedupe = createDedupeStore({ ttlMs: INSIGHTS_CONFIG.dedupeTtlMs });
+
+app.message(async ({ message, client }) => {
+  if (!INSIGHTS_CONFIG.enabled) return;
+  if (message.subtype || message.bot_id) return;
+  if (message.channel_type !== "channel") return;
+  if (message.channel !== INSIGHTS_CONFIG.channelId) return;
+  if (message.thread_ts && message.thread_ts !== message.ts) return;
+  if (!message.text) return;
+
+  const links = extractSupportedUrls(message.text);
+  if (links.length === 0) {
+    trace("insights.no_urls", { channel: message.channel, ts: message.ts });
+    return;
+  }
+
+  const requestId = `ins_${Date.now().toString(36)}`;
+  const channel = message.channel;
+  const threadTs = message.ts;
+
+  trace("insights.received", { requestId, channel, ts: message.ts, linkCount: links.length });
+
+  const misconfig = insightsMisconfiguration();
+  if (misconfig) {
+    trace("insights.misconfigured", { requestId, reason: misconfig });
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: truncateForSlack(redactSensitiveText(formatMisconfigReply({ url: links[0].url, reason: misconfig, requestId }))),
+    });
+    return;
+  }
+
+  for (const link of links) {
+    const start = Date.now();
+    let result;
+    try {
+      result = await analyzeUrl({
+        link,
+        config: INSIGHTS_CONFIG,
+        requestId,
+        runPi,
+        dedupe: insightsDedupe,
+        trace,
+      });
+    } catch (error) {
+      trace("insights.unexpected_error", { requestId, error: error.message });
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: truncateForSlack(redactSensitiveText(`:warning: Insights bot hit an unexpected error on <${link.url}> (req: ${requestId}).`)),
+      });
+      continue;
+    }
+
+    if (!result.text) continue;
+
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: truncateForSlack(redactSensitiveText(result.text)),
+    });
+    trace("insights.replied", {
+      requestId,
+      kind: link.kind,
+      url: link.normalizedUrl,
+      ok: result.ok,
+      durationMs: Date.now() - start,
+    });
+  }
+});
+
 (async () => {
   try {
     await preflight();
@@ -1117,6 +1194,7 @@ app.message(async ({ message, client }) => {
     console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
+    logInsightsStartup();
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);
