@@ -10,108 +10,54 @@ import { createRunStore } from "./lib/agent-run-store.mjs";
 import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { readConfig } from "./lib/config.mjs";
+import { ROUTES, stripBotMentions, parseSlackRequestCommand, parseSlackThreadReference, redactSensitiveText, cleanPiOutput, extractLinearIssuePayload, clampLinearTitle } from "./lib/routes.mjs";
+import { findExistingLinearIssueConfirmation, formatExistingLinearIssueMessage } from "./lib/linear-guard.mjs";
 
-const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    console.error(`Missing ${key}.`);
-    process.exit(1);
-  }
+const CONFIG = readConfig(process.env);
+for (const warning of CONFIG.warnings) {
+  console.warn(warning);
+}
+if (CONFIG.errors.length) {
+  for (const error of CONFIG.errors) console.error(error);
+  process.exit(1);
 }
 
-const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
-const ALLOWED_CHANNEL_ID = process.env.SLACK_ALLOWED_CHANNEL_ID || "";
-const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
-const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
-if (!["echo", "pi"].includes(MODE)) {
-  console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
-  process.exit(1);
-}
-const STREAMING_ENV = process.env.PI_MOM_STREAMING || "true";
-if (!["true", "false"].includes(STREAMING_ENV)) {
-  console.error(`Invalid PI_MOM_STREAMING=${STREAMING_ENV}. Expected true or false.`);
-  process.exit(1);
-}
-const STREAMING_ENABLED = STREAMING_ENV === "true";
-const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
-const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
-if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
-  console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
-  process.exit(1);
-}
-const PI_COMMAND = process.env.PI_COMMAND || "pi";
-const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS || "").split(/\s+/).filter(Boolean);
-const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
-const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
-const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
-const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
-const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
-const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
-const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
-const IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
-const IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
-const IMAGE_BACKGROUND = process.env.OPENAI_IMAGE_BACKGROUND || "auto";
-const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 0, max: 16 });
-const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
-const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
-const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
-if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
-  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake or repo-health.`);
-  process.exit(1);
-}
-const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
-const AGENT_MAX_CONCURRENT = boundedIntegerEnv("PI_MOM_AGENT_MAX_CONCURRENT", 1, { min: 1, max: 3 });
-const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT_MS", 60000, { min: 1000, max: 300000 });
-const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
-const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
-const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
-const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
-const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
-const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
+const TEST_CHANNEL_NAME = CONFIG.testChannelName;
+const ALLOWED_CHANNEL_ID = CONFIG.allowedChannelId;
+const EXPECTED_SLACK_BOT_USER = CONFIG.expectedSlackBotUser;
+const MODE = CONFIG.mode;
+const STREAMING_ENABLED = CONFIG.streamingEnabled;
+const STREAM_APPEND_CHARS = CONFIG.streamAppendChars;
+const STREAM_BUFFER_CHARS = CONFIG.streamBufferChars;
+const PI_COMMAND = CONFIG.piCommand;
+const PI_EXTRA_ARGS = CONFIG.piExtraArgs;
+const MAX_SLACK_TEXT = CONFIG.maxSlackText;
+const PI_TIMEOUT_MS = CONFIG.piTimeoutMs;
+const PI_OUTPUT_IDLE_MS = CONFIG.piOutputIdleMs;
+const TRACE_ENABLED = CONFIG.traceEnabled;
+const IMAGE_ROUTE_ENABLED = CONFIG.imageRouteEnabled;
+const IMAGE_OUTPUT_DIR = CONFIG.imageOutputDir;
+const IMAGE_MODEL = CONFIG.imageModel;
+const IMAGE_SIZE = CONFIG.imageSize;
+const IMAGE_QUALITY = CONFIG.imageQuality;
+const IMAGE_OUTPUT_FORMAT = CONFIG.imageOutputFormat;
+const IMAGE_BACKGROUND = CONFIG.imageBackground;
+const IMAGE_MAX_INPUTS = CONFIG.imageMaxInputs;
+const IMAGE_MAX_BYTES = CONFIG.imageMaxBytes;
+const AGENT_ROUTE_ENABLED = CONFIG.agentRouteEnabled;
+const AGENT_RUNNER_MODE = CONFIG.agentRunnerMode;
+const AGENT_CANVAS_ENABLED = CONFIG.agentCanvasEnabled;
+const AGENT_MAX_CONCURRENT = CONFIG.agentMaxConcurrent;
+const AGENT_COMMAND_TIMEOUT_MS = CONFIG.agentCommandTimeoutMs;
+const RUN_STATE_PATH = CONFIG.runStatePath;
+const REPO_HEALTH_WORKDIR = CONFIG.repoHealthWorkdir;
+const LINEAR_API_URL = CONFIG.linearApiUrl;
+const LINEAR_TEAM_ID = CONFIG.linearTeamId;
+const LINEAR_PROJECT_ID = CONFIG.linearProjectId;
+const LINEAR_STATE_ID = CONFIG.linearStateId;
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
-
-const ROUTES = {
-  summarize: {
-    label: "Thread summary",
-    instruction: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.",
-  },
-  linear: {
-    label: "Create Linear issue",
-    instruction: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.",
-  },
-  agenda: {
-    label: "Meeting agenda",
-    instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
-  },
-  escalation: {
-    label: "Escalation brief",
-    instruction: "Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply.",
-  },
-  spec: {
-    label: "Spec / PRD draft",
-    instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
-  },
-  digest: {
-    label: "Digest",
-    instruction: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.",
-  },
-  image: {
-    label: "GPT Image generation/edit",
-    instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
-  },
-  agent: {
-    label: "Agent Run Card",
-    instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
-  },
-};
-
-function boundedIntegerEnv(name, fallback, { min, max }) {
-  const parsed = Number(process.env[name]);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
 
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
@@ -121,14 +67,7 @@ function trace(eventName, data = {}) {
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
-  return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
-}
-
-function stripBotMentions(text = "") {
-  return text
-    .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>\s*/g, "")
-    .replace(/^@?(?:covent[-\s]?agent|covent\s+pi)\s*/i, "")
-    .trim();
+  return CONFIG.allowAnyChannel;
 }
 
 function truncateForSlack(text) {
@@ -136,107 +75,6 @@ function truncateForSlack(text) {
   if (!safeText) return "I did not get a response from Pi.";
   if (safeText.length <= MAX_SLACK_TEXT) return safeText;
   return `${safeText.slice(0, MAX_SLACK_TEXT - 200)}\n\n...truncated by pi-mom because Slack messages have length limits.`;
-}
-
-function parseCommand(text = "") {
-  const trimmed = text.trim();
-  const lower = trimmed.toLowerCase();
-  if (["help", "help:", "?"].includes(lower)) return { kind: "help" };
-  if (["status", "status:"].includes(lower)) return { kind: "status" };
-
-  const match = trimmed.match(/^([a-z][a-z0-9_-]*)\s*:\s*([\s\S]*)$/i);
-  if (!match) return { kind: "plain", text: trimmed };
-
-  const routeKey = match[1].toLowerCase();
-  if (!ROUTES[routeKey]) return { kind: "plain", text: trimmed };
-  return {
-    kind: "route",
-    routeKey,
-    route: ROUTES[routeKey],
-    text: match[2].trim() || `(No extra instructions after ${routeKey}:; use the Slack thread context.)`,
-  };
-}
-
-function parseThreadSpecIntent(text = "") {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-
-  const patterns = [
-    /\b(?:draft|write|create|make|generate)\s+(?:a\s+|an\s+)?(?:spec|prd|product\s+requirements?(?:\s+doc(?:ument)?)?|requirements?\s+doc(?:ument)?)\b/i,
-    /\b(?:turn|convert)\s+(?:this|thread|it)\s+into\s+(?:a\s+|an\s+)?(?:spec|prd|product\s+requirements?(?:\s+doc(?:ument)?)?|requirements?\s+doc(?:ument)?)\b/i,
-    /\b(?:spec|prd)\s+(?:this|thread|it)\b/i,
-  ];
-
-  const pattern = patterns.find((candidate) => candidate.test(trimmed));
-  if (!pattern) return undefined;
-
-  const focus = trimmed.replace(pattern, "").replace(/^[\s:;,.\-–—]+/, "").trim();
-  return {
-    kind: "route",
-    routeKey: "spec",
-    route: ROUTES.spec,
-    text: focus || "Turn this Slack thread into a concise PRD/spec draft.",
-    naturalIntent: "thread_spec",
-    requiresThread: true,
-  };
-}
-
-function parseLinearCreateIntent(text = "") {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-
-  const pattern = /\b(?:create|file|open|make)\s+(?:a\s+|an\s+)?(?:linear\s+)?(?:issue|ticket)\b|\b(?:linear\s+)?(?:issue|ticket)\s+(?:this|thread|it)\b/i;
-  if (!pattern.test(trimmed)) return undefined;
-
-  const focus = trimmed.replace(pattern, "").replace(/^[\s:;,\.\-–—]+/, "").trim();
-  return {
-    kind: "route",
-    routeKey: "linear",
-    route: ROUTES.linear,
-    text: focus || "Create a Linear issue from this Slack thread.",
-    naturalIntent: "linear_issue_create",
-    requiresThread: true,
-  };
-}
-
-function parseSlackRequestCommand(text = "", { mode } = {}) {
-  const command = parseCommand(text);
-  if (command.kind !== "plain") return command;
-  if (mode === "app_mention") return parseLinearCreateIntent(command.text || text) || parseThreadSpecIntent(command.text || text) || command;
-  return command;
-}
-
-function normalizeSlackTs(value = "") {
-  const raw = String(value || "").trim().replace(/^p/i, "");
-  if (/^\d{10}\.\d{6}$/.test(raw)) return raw;
-  if (/^\d{16}$/.test(raw)) return `${raw.slice(0, 10)}.${raw.slice(10)}`;
-  return "";
-}
-
-function parseSlackThreadReference(text = "") {
-  const rawText = String(text || "");
-  const match = rawText.match(/<?(https?:\/\/[^\s>|]+\/archives\/([A-Z0-9]+)\/p(\d{16})(?:\?[^\s>|]+)?)>?/i);
-  if (!match) return undefined;
-
-  const urlText = match[1];
-  let url;
-  try {
-    url = new URL(urlText);
-  } catch {
-    return undefined;
-  }
-
-  const messageTs = normalizeSlackTs(match[3]);
-  const threadTs = normalizeSlackTs(url.searchParams.get("thread_ts") || "") || messageTs;
-  if (!messageTs || !threadTs) return undefined;
-
-  return {
-    url: urlText,
-    channel: match[2],
-    messageTs,
-    threadTs,
-    remainingText: rawText.replace(match[0], "").trim(),
-  };
 }
 
 function formatHelp() {
@@ -286,14 +124,21 @@ async function formatStatus(client) {
     `• routes: \`${Object.keys(ROUTES).join(", ")}\``;
 }
 
-async function getThreadMessages(client, channel, rootTs) {
-  const res = await client.conversations.replies({ channel, ts: rootTs, limit: 12 });
-  return res.messages || [];
+async function getThreadMessages(client, channel, rootTs, { limit = 12, maxPages = 1 } = {}) {
+  const messages = [];
+  let cursor;
+  for (let page = 0; page < maxPages; page += 1) {
+    const res = await client.conversations.replies({ channel, ts: rootTs, limit, cursor });
+    messages.push(...(res.messages || []));
+    cursor = res.response_metadata?.next_cursor;
+    if (!cursor) break;
+  }
+  return messages;
 }
 
 async function getThreadContext(client, channel, rootTs) {
   try {
-    const messages = await getThreadMessages(client, channel, rootTs);
+    const messages = await getThreadMessages(client, channel, rootTs, { limit: 12, maxPages: 1 });
     return messages
       .map((m) => `${m.user ? `<@${m.user}>` : m.username || "unknown"} [${m.ts}]: ${m.text || ""}`)
       .join("\n");
@@ -310,41 +155,6 @@ async function getSlackPermalink(client, channel, messageTs) {
     trace("slack.permalink_failed", { error: error?.data?.error || error.message });
     return "";
   }
-}
-
-function clampLinearTitle(title = "") {
-  const singleLine = String(title || "").replace(/\s+/g, " ").trim();
-  if (!singleLine) return "Slack thread spec";
-  return singleLine.length <= 240 ? singleLine : `${singleLine.slice(0, 237)}...`;
-}
-
-function stripWrappingMarkdownFence(text = "") {
-  return String(text || "")
-    .trim()
-    .replace(/^```(?:markdown|md|text)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function extractLinearIssuePayload(piOutput = "") {
-  const cleaned = stripWrappingMarkdownFence(cleanPiOutput(piOutput));
-  const lines = cleaned.split(/\r?\n/);
-  const titleLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i.test(line));
-
-  if (titleLineIndex >= 0) {
-    const title = lines[titleLineIndex].replace(/^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i, "").trim();
-    const description = stripWrappingMarkdownFence(lines.filter((_, index) => index !== titleLineIndex).join("\n")) || cleaned;
-    return { title: clampLinearTitle(title), description };
-  }
-
-  const headingLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*#{1,3}\s+\S+/.test(line));
-  if (headingLineIndex >= 0) {
-    const title = lines[headingLineIndex].replace(/^\s*#{1,3}\s+/, "").trim();
-    return { title: clampLinearTitle(title), description: cleaned };
-  }
-
-  const firstUsefulLine = lines.find((line) => line.trim()) || "Slack thread spec";
-  return { title: clampLinearTitle(firstUsefulLine.replace(/^\*+|\*+$/g, "")), description: cleaned };
 }
 
 async function createLinearIssue({ title, description, slackUrl, requestId }) {
@@ -411,6 +221,32 @@ async function createLinearIssueFromPiOutput({ client, channel, threadTs, reques
   const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
   trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
   return issue;
+}
+
+async function replyWithLinearIssueOrExisting({ client, channel, threadTs, requestId, result, start }) {
+  const messages = await getThreadMessages(client, channel, threadTs, { limit: 200, maxPages: 10 }).catch((error) => {
+    trace("linear.duplicate_guard_unavailable", { requestId, error: error?.data?.error || error.message });
+    return [];
+  });
+  const existing = findExistingLinearIssueConfirmation(messages);
+  if (existing) {
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: formatExistingLinearIssueMessage(existing),
+    });
+    trace("linear.issue_create_skipped_duplicate", { requestId, identifier: existing.identifier, durationMs: Date.now() - start });
+    return { status: "duplicate", existing };
+  }
+
+  const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+  await client.chat.postMessage({
+    channel,
+    thread_ts: threadTs,
+    text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
+  });
+  trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
+  return { status: "created", issue };
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -662,32 +498,6 @@ async function handleImageRequest({ client, event, channel, threadTs, user, text
       text: `Image generation failed (req: ${requestId}). Check the pi-mom terminal/logs for details.`,
     });
   }
-}
-
-function redactSensitiveText(text = "") {
-  return text
-    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "xox[REDACTED]")
-    .replace(/xapp-[A-Za-z0-9-]+/g, "xapp-[REDACTED]")
-    .replace(/xoxe[.-][A-Za-z0-9.-]+/g, "xoxe[REDACTED]")
-    .replace(/sk-proj-[A-Za-z0-9_-]+/g, "sk-proj-[REDACTED]")
-    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-[REDACTED]")
-    .replace(/Authorization:\s*Bearer\s+[^\s'"`]+/gi, "Authorization: Bearer [REDACTED]")
-    .replace(/Authorization:\s+lin_api_[^\s'"`]+/gi, "Authorization: lin_api_[REDACTED]")
-    .replace(/lin_api_[A-Za-z0-9_-]+/g, "lin_api_[REDACTED]")
-    .replace(/slackauthticket\s+[A-Za-z0-9._-]+/gi, "slackauthticket [REDACTED]")
-    .replace(/((?:SLACK|OPENAI|LINEAR)_[A-Z0-9_]*(?:TOKEN|SECRET|KEY)[A-Z0-9_]*\s*=\s*)(['"]?)[^\s'"]+/gi, "$1$2[REDACTED]");
-}
-
-function cleanTerminalSequences(text = "") {
-  return text
-    // Strip OSC terminal notifications like: ESC ] 777 ; notify ; ... BEL
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-    // Strip common ANSI escape sequences.
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function cleanPiOutput(text = "") {
-  return redactSensitiveText(cleanTerminalSequences(text));
 }
 
 function stripTerminalSequences(text) {
@@ -1045,13 +855,7 @@ async function handleRequest({ client, event, mode }) {
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
-          const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
+          await replyWithLinearIssueOrExisting({ client, channel, threadTs, requestId, result, start });
         } catch (error) {
           const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
           trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
@@ -1076,13 +880,7 @@ async function handleRequest({ client, event, mode }) {
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
-        const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-        });
-        trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
+        await replyWithLinearIssueOrExisting({ client, channel, threadTs, requestId, result, start });
       } catch (error) {
         const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
         trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });

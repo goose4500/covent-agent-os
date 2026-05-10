@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check test-agent-run-card.mjs && node test-agent-run-card.mjs"
+    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/config.mjs && node --check lib/routes.mjs && node --check lib/linear-guard.mjs && node --check test-agent-run-card.mjs && node --check test-routes.mjs && node --check test-config.mjs && node --check test-linear-guard.mjs && node test-agent-run-card.mjs && node --test test-routes.mjs test-config.mjs test-linear-guard.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",

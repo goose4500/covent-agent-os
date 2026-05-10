@@ -1,17 +1,21 @@
 import { spawnSync } from "node:child_process";
 import { WebClient } from "@slack/web-api";
+import { readConfig } from "./lib/config.mjs";
 
-const required = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
+const config = readConfig(process.env);
 let ok = true;
-for (const key of required) {
-  if (!process.env[key]) {
-    console.error(`✗ ${key} is not set`);
-    ok = false;
-  } else {
-    const value = process.env[key];
-    const prefix = key === "SLACK_BOT_TOKEN" ? "xoxb-" : "xapp-";
-    console.log(`${value.startsWith(prefix) ? "✓" : "!"} ${key} is set${value.startsWith(prefix) ? "" : ` but does not start with ${prefix}`}`);
-  }
+for (const error of config.errors) {
+  console.error(`✗ ${error}`);
+  ok = false;
+}
+for (const warning of config.warnings) {
+  console.log(`! ${warning}`);
+}
+for (const key of ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]) {
+  if (!process.env[key]) continue;
+  const value = process.env[key];
+  const prefix = key === "SLACK_BOT_TOKEN" ? "xoxb-" : "xapp-";
+  console.log(`${value.startsWith(prefix) ? "✓" : "!"} ${key} is set${value.startsWith(prefix) ? "" : ` but does not start with ${prefix}`}`);
 }
 
 if (process.env.SLACK_BOT_TOKEN) {
@@ -19,7 +23,7 @@ if (process.env.SLACK_BOT_TOKEN) {
     const client = new WebClient(process.env.SLACK_BOT_TOKEN);
     const auth = await client.auth.test();
     console.log(`✓ Slack bot auth: ${auth.user} (${auth.user_id}) on ${auth.team}`);
-    const expected = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
+    const expected = config.expectedSlackBotUser;
     if (auth.user !== expected) {
       console.error(`✗ Wrong Slack bot token loaded. Expected ${expected}, got ${auth.user}.`);
       ok = false;
@@ -42,15 +46,15 @@ if (process.env.LINEAR_API_KEY) {
   console.log(`! LINEAR_API_KEY is not set; @Covent Pi linear: route will draft but cannot create Linear issues`);
 }
 
-console.log(`Linear target team: ${process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"}`);
-console.log(`Linear target project: ${process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"}`);
-console.log(`Linear target state: ${process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"}`);
+console.log(`Linear target team: ${config.linearTeamId}`);
+console.log(`Linear target project: ${config.linearProjectId}`);
+console.log(`Linear target state: ${config.linearStateId}`);
 
-console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ? "disabled" : "enabled"}`);
-console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
-console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
+console.log(`Image route: ${config.imageRouteEnabled ? "enabled" : "disabled"}`);
+console.log(`Image model: ${config.imageModel}`);
+console.log(`Image quality/size: ${config.imageQuality}/${config.imageSize}`);
 
-const piCommand = process.env.PI_COMMAND || "pi";
+const piCommand = config.piCommand;
 const pi = spawnSync(piCommand, ["--version"], { encoding: "utf8" });
 if (pi.error) {
   console.error(`✗ Could not run ${piCommand}: ${pi.error.message}`);
@@ -59,7 +63,7 @@ if (pi.error) {
   console.log(`✓ ${piCommand} is available${pi.stdout ? `: ${pi.stdout.trim()}` : ""}`);
 }
 
-console.log(`Test channel name: #${process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs"}`);
-console.log(`Allowed channel ID: ${process.env.SLACK_ALLOWED_CHANNEL_ID || "not restricted yet"}`);
+console.log(`Test channel name: #${config.testChannelName}`);
+console.log(`Allowed channel ID: ${config.allowedChannelId || "not restricted yet"}`);
 
 process.exit(ok ? 0 : 1);
