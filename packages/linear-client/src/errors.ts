@@ -57,3 +57,20 @@ export class WebhookVerificationError extends Error {
 		this.code = code;
 	}
 }
+
+/**
+ * Thrown when a Linear mutation returns a `success: false` payload. The SDK's
+ * mutation payloads (IssuePayload, CommentPayload, AttachmentPayload, …) all
+ * expose a boolean `success` field; per PRD principle 8, partial-success is
+ * treated as failure.
+ */
+export class LinearWriteError extends Error {
+	readonly operation: string;
+	readonly payload?: unknown;
+	constructor(message: string, operation: string, payload?: unknown) {
+		super(message);
+		this.name = "LinearWriteError";
+		this.operation = operation;
+		this.payload = payload;
+	}
+}
