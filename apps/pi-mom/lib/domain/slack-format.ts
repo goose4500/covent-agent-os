@@ -1,6 +1,6 @@
-import { isImageMime } from "../openai-image-client.mjs";
-import { redactSensitiveText } from "./redact.mjs";
-import { ROUTES } from "./routes.mjs";
+import { isImageMime } from "../openai-image-client.ts";
+import { redactSensitiveText } from "./redact.ts";
+import { ROUTES } from "./routes.ts";
 
 export function truncateForSlack(text, maxChars) {
   const safeText = redactSensitiveText(text || "");

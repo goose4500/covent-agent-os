@@ -1,4 +1,4 @@
-import { cleanPiOutput } from "./redact.mjs";
+import { cleanPiOutput } from "./redact.ts";
 
 export function clampLinearTitle(title = "") {
   const singleLine = String(title || "").replace(/\s+/g, " ").trim();

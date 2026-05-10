@@ -1,6 +1,15 @@
-import { clampLinearTitle, extractLinearIssuePayload } from "../domain/linear-payload.mjs";
+import { clampLinearTitle, extractLinearIssuePayload } from "../domain/linear-payload.ts";
+import type { Config } from "../config.ts";
+import type { Trace } from "../trace.ts";
+import type { createSlackAdapter } from "./slack.ts";
 
-export function createLinearAdapter({ config, trace, slack }) {
+export type LinearAdapterDeps = {
+  config: Config;
+  trace: Trace;
+  slack: ReturnType<typeof createSlackAdapter>;
+};
+
+export function createLinearAdapter({ config, trace, slack }: LinearAdapterDeps) {
   async function createLinearIssue({ title, description, slackUrl, requestId }) {
     if (!config.linear.apiKey) {
       throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");

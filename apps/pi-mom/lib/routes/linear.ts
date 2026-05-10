@@ -1,7 +1,21 @@
-import { redactSensitiveText } from "../domain/redact.mjs";
+import { redactSensitiveText } from "../domain/redact.ts";
+import type { Trace } from "../trace.ts";
+import type { createLinearAdapter } from "../adapters/linear.ts";
 
-export function createLinearPostProcess({ trace, linear }) {
-  return async function linearPostProcess({ client, channel, threadTs, requestId, start, result }) {
+export type LinearRouteDeps = {
+  trace: Trace;
+  linear: ReturnType<typeof createLinearAdapter>;
+};
+
+export function createLinearPostProcess({ trace, linear }: LinearRouteDeps) {
+  return async function linearPostProcess({ client, channel, threadTs, requestId, start, result }: {
+    client: any;
+    channel: string;
+    threadTs: string;
+    requestId: string;
+    start: number;
+    result: string;
+  }) {
     try {
       const issue = await linear.createLinearIssueFromPiOutput({
         client,

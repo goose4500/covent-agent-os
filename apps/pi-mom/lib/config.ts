@@ -1,26 +1,77 @@
 import { join } from "node:path";
 
-const REQUIRED_KEYS = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
+const REQUIRED_KEYS = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"] as const;
 
-function boundedInt(value, fallback, { min, max }) {
+export type Config = Readonly<{
+  startedAt: Date;
+  slack: Readonly<{
+    botToken: string;
+    appToken: string;
+    testChannelName: string;
+    allowedChannelId: string;
+    allowAnyChannel: boolean;
+    expectedBotUser: string;
+    initialTeamId: string;
+    maxTextChars: number;
+    debug: boolean;
+  }>;
+  pi: Readonly<{
+    mode: "echo" | "pi";
+    streamingEnabled: boolean;
+    streamAppendChars: number;
+    streamBufferChars: number;
+    command: string;
+    extraArgs: string[];
+    timeoutMs: number;
+    outputIdleMs: number;
+    workdir: string;
+    allowTools: boolean;
+    traceEnabled: boolean;
+  }>;
+  image: Readonly<{
+    routeEnabled: boolean;
+    outputDir: string;
+    model: string;
+    size: string;
+    quality: string;
+    outputFormat: string;
+    background: string;
+    maxInputs: number;
+    maxBytes: number;
+    apiKey: string;
+  }>;
+  linear: Readonly<{
+    apiUrl: string;
+    teamId: string;
+    projectId: string;
+    stateId: string;
+    apiKey: string;
+  }>;
+}>;
+
+function boundedInt(
+  value: string | undefined,
+  fallback: number,
+  { min, max }: { min: number; max: number },
+): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
-function readNumber(value, fallback) {
+function readNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export function loadConfig(env = process.env) {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const missing = REQUIRED_KEYS.filter((key) => !env[key]);
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.join(", ")}`);
   }
 
-  const mode = env.PI_MOM_MODE || "echo";
-  if (!["echo", "pi"].includes(mode)) {
+  const mode = (env.PI_MOM_MODE || "echo") as "echo" | "pi";
+  if (mode !== "echo" && mode !== "pi") {
     throw new Error(`Invalid PI_MOM_MODE=${mode}. Expected echo or pi.`);
   }
 
@@ -42,8 +93,8 @@ export function loadConfig(env = process.env) {
   return Object.freeze({
     startedAt: new Date(),
     slack: Object.freeze({
-      botToken: env.SLACK_BOT_TOKEN,
-      appToken: env.SLACK_APP_TOKEN,
+      botToken: env.SLACK_BOT_TOKEN as string,
+      appToken: env.SLACK_APP_TOKEN as string,
       testChannelName: env.SLACK_TEST_CHANNEL_NAME || "idea-specs",
       allowedChannelId,
       allowAnyChannel,

@@ -1,8 +1,16 @@
 import { createReadStream } from "node:fs";
-import { bufferToDataUrl, detectImageMime } from "../openai-image-client.mjs";
-import { slackFileLooksLikeImage, slackImageMime } from "../domain/slack-format.mjs";
+import { bufferToDataUrl, detectImageMime } from "../openai-image-client.ts";
+import { slackFileLooksLikeImage, slackImageMime } from "../domain/slack-format.ts";
+import type { Config } from "../config.ts";
+import type { Trace } from "../trace.ts";
 
-export function createSlackAdapter({ config, trace, getAuthTeamId }) {
+export type SlackAdapterDeps = {
+  config: Config;
+  trace: Trace;
+  getAuthTeamId: () => string;
+};
+
+export function createSlackAdapter({ config, trace, getAuthTeamId }: SlackAdapterDeps) {
   async function getThreadMessages(client, channel, rootTs) {
     const res = await client.conversations.replies({ channel, ts: rootTs, limit: 12 });
     return res.messages || [];

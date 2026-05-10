@@ -2,8 +2,17 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanPiOutput, stripTerminalSequences } from "../domain/redact.mjs";
-import { splitForSlackStream } from "../domain/slack-format.mjs";
+import { cleanPiOutput, stripTerminalSequences } from "../domain/redact.ts";
+import { splitForSlackStream } from "../domain/slack-format.ts";
+import type { Config } from "../config.ts";
+import type { Trace } from "../trace.ts";
+import type { createSlackAdapter } from "./slack.ts";
+
+export type PiRunnerDeps = {
+  config: Config;
+  trace: Trace;
+  slack: ReturnType<typeof createSlackAdapter>;
+};
 
 function piSubprocessEnv() {
   const env = { ...process.env };
@@ -15,8 +24,8 @@ function piSubprocessEnv() {
   return env;
 }
 
-export function createPiRunner({ config, trace, slack }) {
-  async function runPi(prompt, { onOutput } = {}) {
+export function createPiRunner({ config, trace, slack }: PiRunnerDeps) {
+  async function runPi(prompt: string, { onOutput }: { onOutput?: (delta: string) => void } = {}) {
     const promptDir = await mkdtemp(join(tmpdir(), "pi-mom-prompt-"));
     const promptPath = join(promptDir, "prompt.md");
     await writeFile(promptPath, prompt, { mode: 0o600 });

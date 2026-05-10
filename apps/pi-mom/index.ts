@@ -1,19 +1,19 @@
 import { App, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
-import { loadConfig } from "./lib/config.mjs";
-import { createTrace } from "./lib/trace.mjs";
-import { createSlackAdapter } from "./lib/adapters/slack.mjs";
-import { createLinearAdapter } from "./lib/adapters/linear.mjs";
-import { createPiRunner } from "./lib/adapters/pi-runner.mjs";
-import { createRoutes } from "./lib/routes/index.mjs";
+import { loadConfig } from "./lib/config.ts";
+import { createTrace } from "./lib/trace.ts";
+import { createSlackAdapter } from "./lib/adapters/slack.ts";
+import { createLinearAdapter } from "./lib/adapters/linear.ts";
+import { createPiRunner } from "./lib/adapters/pi-runner.ts";
+import { createRoutes } from "./lib/routes/index.ts";
 import {
   parseSlackRequestCommand,
   parseSlackThreadReference,
   stripBotMentions,
-} from "./lib/domain/commands.mjs";
-import { ROUTES } from "./lib/domain/routes.mjs";
-import { formatHelp, truncateForSlack } from "./lib/domain/slack-format.mjs";
-import { buildPiPrompt } from "./lib/domain/prompt.mjs";
+} from "./lib/domain/commands.ts";
+import { ROUTES } from "./lib/domain/routes.ts";
+import { formatHelp, truncateForSlack } from "./lib/domain/slack-format.ts";
+import { buildPiPrompt } from "./lib/domain/prompt.ts";
 
 let config;
 try {

@@ -1,9 +1,18 @@
-import { createOpenAIImage } from "../openai-image-client.mjs";
-import { parseImageRequest } from "../domain/commands.mjs";
-import { redactSensitiveText } from "../domain/redact.mjs";
-import { truncateForSlack } from "../domain/slack-format.mjs";
+import { createOpenAIImage } from "../openai-image-client.ts";
+import { parseImageRequest } from "../domain/commands.ts";
+import { redactSensitiveText } from "../domain/redact.ts";
+import { truncateForSlack } from "../domain/slack-format.ts";
+import type { Config } from "../config.ts";
+import type { Trace } from "../trace.ts";
+import type { createSlackAdapter } from "../adapters/slack.ts";
 
-function formatImageSlackComment(result, { prompt, inputCount, maxTextChars }) {
+export type ImageRouteDeps = {
+  config: Config;
+  trace: Trace;
+  slack: ReturnType<typeof createSlackAdapter>;
+};
+
+function formatImageSlackComment(result: any, { prompt, inputCount, maxTextChars }: { prompt: string; inputCount: number; maxTextChars: number }) {
   const actionLabel = result.action === "edit" ? "edited/reference image" : "generated image";
   const safePrompt = truncateForSlack(prompt, maxTextChars).slice(0, 1200);
   const localFiles = result.files.map((file) => `• ${file.filename}`).join("\n");
@@ -19,8 +28,17 @@ function formatImageSlackComment(result, { prompt, inputCount, maxTextChars }) {
     `*Saved locally*\n${localFiles}`;
 }
 
-export function createImageRoute({ config, trace, slack }) {
-  return async function imageHandle({ client, event, channel, threadTs, user, text, requestId, start }) {
+export function createImageRoute({ config, trace, slack }: ImageRouteDeps) {
+  return async function imageHandle({ client, event, channel, threadTs, user, text, requestId, start }: {
+    client: any;
+    event: any;
+    channel: string;
+    threadTs: string;
+    user: string;
+    text: string;
+    requestId: string;
+    start: number;
+  }) {
     if (!config.image.routeEnabled) {
       await client.chat.postMessage({
         channel,

@@ -5,13 +5,13 @@
   "type": "module",
   "description": "Socket Mode Slack bridge for routing Covent Slack requests into Pi agents.",
   "engines": {
-    "node": ">=22 <25",
+    "node": ">=22.6 <25",
     "npm": ">=10"
   },
   "scripts": {
-    "start": "node index.mjs",
-    "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs"
+    "start": "node --experimental-strip-types --no-warnings index.ts",
+    "doctor": "node --experimental-strip-types --no-warnings doctor.ts",
+    "check": "node --check --experimental-strip-types index.ts && node --check --experimental-strip-types doctor.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",

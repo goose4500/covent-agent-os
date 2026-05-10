@@ -1,4 +1,6 @@
-export const ROUTES = Object.freeze({
+export type RouteData = Readonly<{ label: string; instruction: string }>;
+
+export const ROUTES: Readonly<Record<string, RouteData>> = Object.freeze({
   summarize: {
     label: "Thread summary",
     instruction: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.",

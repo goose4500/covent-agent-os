@@ -11,12 +11,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "allowImportingTsExtensions": true
   },
   "include": [
     "extensions/**/*.ts",
     "packages/**/*.ts",
-    "lib/**/*.mjs"
+    "lib/**/*.mjs",
+    "apps/pi-mom/**/*.ts"
   ],
   "exclude": [
     "node_modules",

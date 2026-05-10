@@ -1,13 +1,34 @@
-import { ROUTES } from "./routes.mjs";
+import { ROUTES, type RouteData } from "./routes.ts";
 
-export function stripBotMentions(text = "") {
+export type Command =
+  | { kind: "help" }
+  | { kind: "status" }
+  | { kind: "plain"; text: string }
+  | {
+      kind: "route";
+      routeKey: string;
+      route: RouteData;
+      text: string;
+      naturalIntent?: "thread_spec" | "linear_issue_create";
+      requiresThread?: boolean;
+    };
+
+export type SlackThreadReference = {
+  url: string;
+  channel: string;
+  messageTs: string;
+  threadTs: string;
+  remainingText: string;
+};
+
+export function stripBotMentions(text = ""): string {
   return text
     .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>\s*/g, "")
     .replace(/^@?(?:covent[-\s]?agent|covent\s+pi)\s*/i, "")
     .trim();
 }
 
-export function parseCommand(text = "") {
+export function parseCommand(text = ""): Command {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   if (["help", "help:", "?"].includes(lower)) return { kind: "help" };
@@ -17,16 +38,17 @@ export function parseCommand(text = "") {
   if (!match) return { kind: "plain", text: trimmed };
 
   const routeKey = match[1].toLowerCase();
-  if (!ROUTES[routeKey]) return { kind: "plain", text: trimmed };
+  const routeData = ROUTES[routeKey as keyof typeof ROUTES];
+  if (!routeData) return { kind: "plain", text: trimmed };
   return {
     kind: "route",
     routeKey,
-    route: ROUTES[routeKey],
+    route: routeData,
     text: match[2].trim() || `(No extra instructions after ${routeKey}:; use the Slack thread context.)`,
   };
 }
 
-export function parseThreadSpecIntent(text = "") {
+export function parseThreadSpecIntent(text = ""): Command | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
 
@@ -50,7 +72,7 @@ export function parseThreadSpecIntent(text = "") {
   };
 }
 
-export function parseLinearCreateIntent(text = "") {
+export function parseLinearCreateIntent(text = ""): Command | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
 
@@ -68,19 +90,23 @@ export function parseLinearCreateIntent(text = "") {
   };
 }
 
-export function parseSlackRequestCommand(text = "", { mode } = {}) {
+export function parseSlackRequestCommand(text = "", { mode }: { mode?: string } = {}): Command {
   const command = parseCommand(text);
   if (command.kind !== "plain") return command;
-  if (mode === "app_mention") return parseLinearCreateIntent(command.text || text) || parseThreadSpecIntent(command.text || text) || command;
+  if (mode === "app_mention") {
+    return parseLinearCreateIntent(command.text || text)
+      || parseThreadSpecIntent(command.text || text)
+      || command;
+  }
   return command;
 }
 
-export function parseImageRequest(text = "") {
+export function parseImageRequest(text = ""): { prompt: string; requestedAction?: "edit" | "generate" } {
   let prompt = String(text || "").trim();
   if (prompt.startsWith("(No extra instructions after")) prompt = "";
 
   const subcommand = prompt.match(/^(generate|draw|create|new|edit|reference|img2img|image-to-image)\s*:?[ \t\n]*/i);
-  let requestedAction;
+  let requestedAction: "edit" | "generate" | undefined;
   if (subcommand) {
     const verb = subcommand[1].toLowerCase();
     requestedAction = ["edit", "reference", "img2img", "image-to-image"].includes(verb) ? "edit" : "generate";
@@ -90,20 +116,20 @@ export function parseImageRequest(text = "") {
   return { prompt, requestedAction };
 }
 
-export function normalizeSlackTs(value = "") {
+export function normalizeSlackTs(value = ""): string {
   const raw = String(value || "").trim().replace(/^p/i, "");
   if (/^\d{10}\.\d{6}$/.test(raw)) return raw;
   if (/^\d{16}$/.test(raw)) return `${raw.slice(0, 10)}.${raw.slice(10)}`;
   return "";
 }
 
-export function parseSlackThreadReference(text = "") {
+export function parseSlackThreadReference(text = ""): SlackThreadReference | undefined {
   const rawText = String(text || "");
   const match = rawText.match(/<?(https?:\/\/[^\s>|]+\/archives\/([A-Z0-9]+)\/p(\d{16})(?:\?[^\s>|]+)?)>?/i);
   if (!match) return undefined;
 
   const urlText = match[1];
-  let url;
+  let url: URL;
   try {
     url = new URL(urlText);
   } catch {
