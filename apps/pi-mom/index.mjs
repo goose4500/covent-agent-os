@@ -5,7 +5,12 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
+import { createRunStore } from "./lib/agent-run-store.mjs";
+import { createAgentRunner } from "./lib/agent-runners.mjs";
+import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -50,6 +55,17 @@ const IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
 const IMAGE_BACKGROUND = process.env.OPENAI_IMAGE_BACKGROUND || "auto";
 const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 0, max: 16 });
 const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
+const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
+const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
+if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
+  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake or repo-health.`);
+  process.exit(1);
+}
+const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
+const AGENT_MAX_CONCURRENT = boundedIntegerEnv("PI_MOM_AGENT_MAX_CONCURRENT", 1, { min: 1, max: 3 });
+const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT_MS", 60000, { min: 1000, max: 300000 });
+const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
+const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
@@ -85,6 +101,10 @@ const ROUTES = {
   image: {
     label: "GPT Image generation/edit",
     instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
+  },
+  agent: {
+    label: "Agent Run Card",
+    instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
   },
 };
 
@@ -259,6 +279,8 @@ async function formatStatus(client) {
     `• pi command: \`${PI_COMMAND}\`\n` +
     `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
     `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
+    `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
+    `• agent run state: \`${RUN_STATE_PATH}\`\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
@@ -390,6 +412,36 @@ async function createLinearIssueFromPiOutput({ client, channel, threadTs, reques
   const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
   trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
   return issue;
+}
+
+async function getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId }) {
+  try {
+    const messages = await getThreadMessages(client, channel, threadTs);
+    const existing = findPriorLinearIssueConfirmation(messages);
+    trace("linear.duplicate_scan", { requestId, messageCount: messages.length, duplicate: Boolean(existing), identifier: existing?.identifier || "" });
+    return { messages, existing };
+  } catch (error) {
+    trace("linear.duplicate_scan_failed", { requestId, error: error?.data?.error || error.message });
+    return { messages: [], existing: undefined };
+  }
+}
+
+async function postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }) {
+  await client.chat.postMessage({
+    channel,
+    thread_ts: threadTs,
+    text: duplicateLinearIssueReply(existing),
+  });
+  trace("slack.replied_linear_duplicate", { requestId, identifier: existing?.identifier || "", messageTs: existing?.messageTs || "" });
+}
+
+async function createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result }) {
+  const { messages } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
+  return createLinearIssueUnlessDuplicate({
+    messages,
+    createIssue: () => createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }),
+    postDuplicateReply: (existing) => postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }),
+  });
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -884,6 +936,22 @@ const app = new App({
   logLevel: process.env.PI_MOM_DEBUG === "true" ? LogLevel.DEBUG : LogLevel.INFO,
 });
 
+const runStore = createRunStore({ path: RUN_STATE_PATH, trace });
+const agentRunner = createAgentRunner({ mode: AGENT_RUNNER_MODE, trace, workdir: REPO_HEALTH_WORKDIR, timeoutMs: AGENT_COMMAND_TIMEOUT_MS });
+const activeRuns = new Map();
+
+function isoNow() {
+  return new Date().toISOString();
+}
+
+function appendRunEvent(run, event) {
+  return [...(Array.isArray(run.events) ? run.events : []), { ts: isoNow(), ...event }].slice(-50);
+}
+
+function runId() {
+  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 app.error(async (error) => {
   console.error("[pi-mom] Bolt error", error);
 });
@@ -937,6 +1005,39 @@ async function handleRequest({ client, event, mode }) {
     return;
   }
 
+  if (command.kind === "route" && command.routeKey === "agent") {
+    if (!AGENT_ROUTE_ENABLED) {
+      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "The `agent:` route is disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`." });
+      trace("agent.route_disabled", { requestId });
+      return;
+    }
+
+    const parsed = parseAgentRequest(text);
+    if (!parsed?.prompt) {
+      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "Usage: `@Covent Pi agent: <bounded task>`" });
+      trace("agent.replied_usage", { requestId });
+      return;
+    }
+
+    const sourceUrl = await getSlackPermalink(client, channel, threadTs);
+    let run = await runStore.create({
+      id: runId(),
+      status: "pending_confirmation",
+      runnerMode: AGENT_RUNNER_MODE,
+      prompt: parsed.prompt,
+      channel,
+      threadTs,
+      user,
+      team: event.team || event.team_id || AUTH_TEAM_ID,
+      sourceUrl,
+      events: [{ ts: isoNow(), type: "created", text: "Awaiting Slack confirmation" }],
+    });
+    const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run) });
+    run = await runStore.update(run.id, { messageTs: message.ts });
+    trace("agent.confirmation_posted", { requestId, runId: run.id, runnerMode: AGENT_RUNNER_MODE });
+    return;
+  }
+
   if (MODE === "echo") {
     await client.chat.postMessage({
       channel,
@@ -950,6 +1051,14 @@ async function handleRequest({ client, event, mode }) {
   if (command.kind === "route" && command.routeKey === "image") {
     await handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start });
     return;
+  }
+
+  if (command.kind === "route" && command.routeKey === "linear") {
+    const { existing } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
+    if (existing) {
+      await postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing });
+      return;
+    }
   }
 
   let thinking;
@@ -975,7 +1084,9 @@ async function handleRequest({ client, event, mode }) {
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
-          const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+          const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
+          if (outcome.status === "duplicate") return;
+          const issue = outcome.issue;
           await client.chat.postMessage({
             channel,
             thread_ts: threadTs,
@@ -1006,7 +1117,9 @@ async function handleRequest({ client, event, mode }) {
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
-        const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+        const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
+        if (outcome.status === "duplicate") return;
+        const issue = outcome.issue;
         await client.chat.postMessage({
           channel,
           thread_ts: threadTs,
@@ -1097,6 +1210,131 @@ app.command("/thread-spec", async ({ command, ack, client, respond }) => {
   await handleThreadSpecSlashCommand({ command, client, respond });
 });
 
+async function postAgentActionNotice(client, body, text) {
+  const channel = body.channel?.id || body.container?.channel_id;
+  const user = body.user?.id;
+  if (!channel || !user) return;
+  try {
+    await client.chat.postEphemeral({ channel, user, text });
+  } catch (error) {
+    trace("agent.ephemeral_failed", { error: error?.data?.error || error.message });
+  }
+}
+
+app.action("agent_run_start", async ({ ack, body, action, client }) => {
+  await ack();
+  if (!AGENT_ROUTE_ENABLED) {
+    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
+    trace("agent.start_blocked_disabled", { runId: action.value });
+    return;
+  }
+
+  const id = action.value;
+  let run = await runStore.get(id);
+  if (!run) {
+    await postAgentActionNotice(client, body, "Agent run not found; it may have been pruned or created by another environment.");
+    return;
+  }
+  if (!isAllowedChannel(run.channel)) {
+    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
+    trace("agent.start_blocked_channel", { runId: id, channel: run.channel });
+    return;
+  }
+  if (run.status !== "pending_confirmation") {
+    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    return;
+  }
+  if (activeRuns.size >= AGENT_MAX_CONCURRENT) {
+    await postAgentActionNotice(client, body, "Another agent run is active; wait for it to finish or cancel it first.");
+    return;
+  }
+
+  const controller = new AbortController();
+  activeRuns.set(id, controller);
+  run = await runStore.update(id, {
+    status: "running",
+    startedAt: isoNow(),
+    approvedBy: body.user?.id,
+    events: appendRunEvent(run, { type: "started", text: `Started by <@${body.user?.id || "unknown"}>` }),
+  });
+  await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+
+  try {
+    const result = await agentRunner.run({
+      run,
+      signal: controller.signal,
+      onEvent: async (event) => {
+        run = await runStore.update(id, { events: appendRunEvent(run, event) });
+        await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+      },
+    });
+    let canvas;
+    if (AGENT_CANVAS_ENABLED) {
+      canvas = await createRunCanvas({ client, run, markdown: result.markdown, channel: run.channel, trace });
+    }
+    run = await runStore.update(id, {
+      status: "succeeded",
+      finishedAt: isoNow(),
+      result,
+      canvas,
+      events: appendRunEvent(run, { type: "succeeded", text: "Agent run completed" }),
+    });
+    trace("agent.succeeded", { runId: id });
+  } catch (error) {
+    const status = controller.signal.aborted ? "canceled" : "failed";
+    run = await runStore.update(id, {
+      status,
+      finishedAt: isoNow(),
+      error: redactSensitiveText(error?.message || String(error)).slice(0, 2000),
+      events: appendRunEvent(run, { type: status, text: status === "canceled" ? "Agent run canceled" : "Agent run failed" }),
+    });
+    trace("agent.finished_with_error", { runId: id, status, error: run.error });
+  } finally {
+    activeRuns.delete(id);
+    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+  }
+});
+
+app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
+  await ack();
+  if (!AGENT_ROUTE_ENABLED) {
+    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
+    trace("agent.cancel_blocked_disabled", { runId: action.value });
+    return;
+  }
+
+  const id = action.value;
+  let run = await runStore.get(id);
+  if (!run) return;
+  if (!isAllowedChannel(run.channel)) {
+    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
+    trace("agent.cancel_blocked_channel", { runId: id, channel: run.channel });
+    return;
+  }
+
+  const active = activeRuns.get(id);
+  if (active) {
+    active.abort();
+    run = await runStore.update(id, {
+      events: appendRunEvent(run, { type: "cancel_requested", text: `Cancel requested by <@${body.user?.id || "unknown"}>` }),
+    });
+    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    return;
+  }
+
+  if (run.status === "pending_confirmation") {
+    run = await runStore.update(id, {
+      status: "canceled",
+      canceledBy: body.user?.id,
+      finishedAt: isoNow(),
+      events: appendRunEvent(run, { type: "canceled", text: `Canceled before start by <@${body.user?.id || "unknown"}>` }),
+    });
+    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+  } else {
+    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+  }
+});
+
 app.event("app_mention", async ({ event, client }) => {
   await handleRequest({ client, event, mode: "app_mention" });
 });
@@ -1110,11 +1348,14 @@ app.message(async ({ message, client }) => {
 (async () => {
   try {
     await preflight();
+    await runStore.load();
     await app.start();
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
     console.log(`Slack streaming: ${STREAMING_ENABLED ? "enabled" : "disabled"}`);
     console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
+    console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
+    console.log(`Agent run state: ${RUN_STATE_PATH}`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);

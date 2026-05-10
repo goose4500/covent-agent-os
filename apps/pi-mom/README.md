@@ -137,6 +137,27 @@ Routed workflow prefixes:
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
+Agent Run Card behavior:
+
+- `agent:` posts a Block Kit confirmation card with **Start Run** and **Cancel** buttons before any runner executes.
+- `PI_MOM_AGENT_ROUTE_ENABLED=false` is the emergency flag: it disables new `agent:` cards and disables existing Start/Cancel button execution.
+- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
+- Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
+- Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
+- Keep `PI_MOM_ALLOW_PI_TOOLS=false`; Agent Run Card does not require globally enabling Pi tools.
+
+Local smoke test:
+
+```bash
+export PI_MOM_MODE=echo
+export PI_MOM_AGENT_ROUTE_ENABLED=true
+export PI_MOM_AGENT_RUNNER=fake
+export PI_MOM_RUN_STATE_PATH=/tmp/pi-mom-runs.json
+npm run dev:pi-mom
+```
+
+Then in the allowed Slack test channel: `@Covent Pi agent: repo health smoke test`, click Cancel once, then create another card and click Start.
+
 Linear route behavior in `PI_MOM_MODE=pi`:
 
 - `linear:` / `create Linear issue` first asks Pi to write a Linear-ready issue spec from the Slack thread.
