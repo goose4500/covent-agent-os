@@ -10,6 +10,7 @@ import { createRunStore } from "./lib/agent-run-store.mjs";
 import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -411,6 +412,36 @@ async function createLinearIssueFromPiOutput({ client, channel, threadTs, reques
   const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
   trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
   return issue;
+}
+
+async function getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId }) {
+  try {
+    const messages = await getThreadMessages(client, channel, threadTs);
+    const existing = findPriorLinearIssueConfirmation(messages);
+    trace("linear.duplicate_scan", { requestId, messageCount: messages.length, duplicate: Boolean(existing), identifier: existing?.identifier || "" });
+    return { messages, existing };
+  } catch (error) {
+    trace("linear.duplicate_scan_failed", { requestId, error: error?.data?.error || error.message });
+    return { messages: [], existing: undefined };
+  }
+}
+
+async function postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }) {
+  await client.chat.postMessage({
+    channel,
+    thread_ts: threadTs,
+    text: duplicateLinearIssueReply(existing),
+  });
+  trace("slack.replied_linear_duplicate", { requestId, identifier: existing?.identifier || "", messageTs: existing?.messageTs || "" });
+}
+
+async function createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result }) {
+  const { messages } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
+  return createLinearIssueUnlessDuplicate({
+    messages,
+    createIssue: () => createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }),
+    postDuplicateReply: (existing) => postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }),
+  });
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -1022,6 +1053,14 @@ async function handleRequest({ client, event, mode }) {
     return;
   }
 
+  if (command.kind === "route" && command.routeKey === "linear") {
+    const { existing } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
+    if (existing) {
+      await postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing });
+      return;
+    }
+  }
+
   let thinking;
 
   try {
@@ -1045,7 +1084,9 @@ async function handleRequest({ client, event, mode }) {
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
-          const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+          const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
+          if (outcome.status === "duplicate") return;
+          const issue = outcome.issue;
           await client.chat.postMessage({
             channel,
             thread_ts: threadTs,
@@ -1076,7 +1117,9 @@ async function handleRequest({ client, event, mode }) {
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
-        const issue = await createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result });
+        const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
+        if (outcome.status === "duplicate") return;
+        const issue = outcome.issue;
         await client.chat.postMessage({
           channel,
           thread_ts: threadTs,
