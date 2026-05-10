@@ -9,11 +9,13 @@
     "npm": ">=10"
   },
   "scripts": {
+    "prestart": "npm --prefix ../../packages/linear-client run build",
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
     "check": "node --check index.mjs && node --check doctor.mjs"
   },
   "dependencies": {
+    "@covent/linear-client": "*",
     "@mariozechner/pi-coding-agent": "^0.73.1",
     "@slack/bolt": "^4.6.0"
   }
