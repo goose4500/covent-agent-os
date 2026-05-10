@@ -12,7 +12,8 @@
     "prestart": "npm --prefix ../../packages/linear-client run build",
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs"
+    "check": "node --check index.mjs && node --check doctor.mjs",
+    "test:webhook": "node --test test-webhook-integration.mjs"
   },
   "dependencies": {
     "@covent/linear-client": "*",
