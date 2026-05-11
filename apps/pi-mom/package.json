@@ -16,6 +16,7 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@slack/bolt": "^4.6.0",
+    "pi-subagents": "^0.24.2",
     "yaml": "^2.8.4"
   }
 }

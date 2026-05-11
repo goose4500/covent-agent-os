@@ -17,7 +17,8 @@
 //   - session.bindExtensions({ uiContext })
 //   - session.prompt(text), .followUp(text), .subscribe(listener), .abort(), .dispose()
 
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 
 import {
   AuthStorage,
@@ -34,16 +35,33 @@ import { slackUI } from "./slack-ui-context.mjs";
 // REPO_ROOT resolves from apps/pi-mom/lib up to the workspace root.
 const REPO_ROOT = resolve(process.cwd(), "..", "..");
 
+const require_ = createRequire(import.meta.url);
+
+// Resolve a pi-package node_module to its extension entrypoint at runtime.
+// pi-subagents has no `exports`/`main`, so we anchor on its package.json and
+// derive the path from `pi.extensions[0]` (or a fallback subpath).
+function resolveNodeModuleExtension(packageName, subpath) {
+  const pkgJsonPath = require_.resolve(`${packageName}/package.json`);
+  const pkgRoot = dirname(pkgJsonPath);
+  const pkg = require_(`${packageName}/package.json`);
+  const declared = subpath ?? pkg?.pi?.extensions?.[0];
+  if (!declared) {
+    throw new Error(`resolveNodeModuleExtension: ${packageName} has no pi.extensions[0] and no fallback subpath`);
+  }
+  return resolve(pkgRoot, declared);
+}
+
 const EXTENSION_PATHS = [
-  "./extensions/browser-use-tools.ts",
-  "./extensions/env-guard.ts",
-  "./extensions/git-checkpoint.ts",
-  "./extensions/linear-mcp-guard.ts",
-  "./extensions/openai-image-tools.ts",
-  "./extensions/permission-gate.ts",
-  "./extensions/slack-mcp-guard.ts",
-  "./packages/pi-ext-covent-aws/src/index.ts",
-].map((p) => resolve(REPO_ROOT, p));
+  resolve(REPO_ROOT, "./extensions/browser-use-tools.ts"),
+  resolve(REPO_ROOT, "./extensions/env-guard.ts"),
+  resolve(REPO_ROOT, "./extensions/git-checkpoint.ts"),
+  resolve(REPO_ROOT, "./extensions/linear-mcp-guard.ts"),
+  resolve(REPO_ROOT, "./extensions/openai-image-tools.ts"),
+  resolve(REPO_ROOT, "./extensions/permission-gate.ts"),
+  resolve(REPO_ROOT, "./extensions/slack-mcp-guard.ts"),
+  resolve(REPO_ROOT, "./packages/pi-ext-covent-aws/src/index.ts"),
+  resolveNodeModuleExtension("pi-subagents"),
+];
 
 const SKILL_PATHS = [resolve(REPO_ROOT, "./skills")];
 const PROMPT_PATHS = [resolve(REPO_ROOT, "./prompts")];
