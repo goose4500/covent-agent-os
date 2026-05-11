@@ -61,6 +61,25 @@ try {
     `${ext?.extensions?.length} extensions`,
   );
 
+  // Each LoadedExtension exposes a `tools` Map (types.d.ts:1157). Most of our
+  // extensions are pure event hooks (permission-gate, env-guard, mcp-guards,
+  // git-checkpoint) — they gate tool calls but register no tools of their
+  // own. The tool-registering extensions in this repo are:
+  //   - browser-use-tools.ts:    browser_use_run (1)
+  //   - openai-image-tools.ts:   gpt_image_generate, gpt_image_edit (2)
+  // We assert >= 3 to catch silent failure-to-register without pinning a
+  // brittle exact count. pi-subagents (installed by a later commit) adds
+  // additional tools beyond this floor.
+  const toolCount = (ext?.extensions ?? []).reduce(
+    (n, e) => n + (e?.tools?.size ?? 0),
+    0,
+  );
+  check(
+    "extensions register >= 3 tools in aggregate",
+    toolCount >= 3,
+    `${toolCount} tools registered`,
+  );
+
   const skills = resourceLoader.getSkills();
   check(
     "resourceLoader loads >= 1 skill",

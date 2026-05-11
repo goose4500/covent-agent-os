@@ -42,7 +42,6 @@ const EXTENSION_PATHS = [
   "./extensions/openai-image-tools.ts",
   "./extensions/permission-gate.ts",
   "./extensions/slack-mcp-guard.ts",
-  "./extensions/action-router.ts",
   "./packages/pi-ext-covent-aws/src/index.ts",
 ].map((p) => resolve(REPO_ROOT, p));
 
@@ -90,34 +89,6 @@ export function getPendingApprovals() {
   return pendingApprovals;
 }
 
-// Probe a SessionManager / session pair for the on-disk session file path. The
-// SDK docs don't pin down a single accessor name; we try the most plausible
-// surfaces in order and fall back to undefined (caller treats absent as "no
-// resume possible this turn"). When the SDK formalises this we can drop the
-// scan.
-function resolveSessionPath({ sessionManager, session }) {
-  const candidates = [
-    () => sessionManager?.path,
-    () => sessionManager?.sessionPath,
-    () => sessionManager?.filePath,
-    () => sessionManager?.location,
-    () => (typeof sessionManager?.getPath === "function" ? sessionManager.getPath() : undefined),
-    () => session?.sessionPath,
-    () => session?.path,
-  ];
-  for (const fn of candidates) {
-    try {
-      const value = fn();
-      if (typeof value === "string" && value.length > 0) return value;
-    } catch {
-      // ignore — try the next probe
-    }
-  }
-  // TODO(pi-sdk): once the SDK exposes a stable accessor for the session file
-  // path, replace the probe above with a direct read.
-  return undefined;
-}
-
 export async function createSlackSession({ threadTs, channel, client, sessionFilePath, runStore } = {}) {
   if (!threadTs) throw new Error("createSlackSession: threadTs is required");
   if (!channel) throw new Error("createSlackSession: channel is required");
@@ -154,13 +125,17 @@ export async function createSlackSession({ threadTs, channel, client, sessionFil
   // For freshly-created sessions, persist the resolved path back to the run
   // store so the next message on this thread can resume.
   if (!isFollowUp && runStore && typeof runStore.setSessionPathForThread === "function") {
-    const newPath = resolveSessionPath({ sessionManager, session });
+    const newPath = sessionManager.getSessionFile();
     if (newPath) {
       try {
         await runStore.setSessionPathForThread(threadTs, newPath);
       } catch {
         // best-effort — failing to persist the session path doesn't block the run
       }
+    } else {
+      console.warn(
+        `[pi-runtime] sessionManager.getSessionFile() returned undefined; thread ${threadTs} will not resume.`,
+      );
     }
   }
 
