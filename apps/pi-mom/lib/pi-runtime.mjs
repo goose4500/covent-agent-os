@@ -89,7 +89,7 @@ export function getPendingApprovals() {
   return pendingApprovals;
 }
 
-export async function createSlackSession({ threadTs, channel, client, sessionFilePath, runStore } = {}) {
+export async function createSlackSession({ threadTs, channel, client, sessionFilePath, runStore, tools } = {}) {
   if (!threadTs) throw new Error("createSlackSession: threadTs is required");
   if (!channel) throw new Error("createSlackSession: channel is required");
   if (!client) throw new Error("createSlackSession: client is required");
@@ -121,6 +121,20 @@ export async function createSlackSession({ threadTs, channel, client, sessionFil
   session.bindExtensions({
     uiContext: slackUI({ client, channel, threadTs, pendingApprovals }),
   });
+
+  // Per-Action tool gating. Pi's default is to expose every tool registered
+  // by the loaded extensions; when the dispatcher restricts an Action to a
+  // subset (registry.yaml `tools:` array), we apply it here so the host
+  // never has to recreate the session between turns.
+  if (Array.isArray(tools) && tools.length > 0 && typeof session.setActiveToolsByName === "function") {
+    try {
+      session.setActiveToolsByName(tools);
+    } catch (error) {
+      console.warn(
+        `[pi-runtime] setActiveToolsByName failed for thread ${threadTs}: ${error?.message ?? error}`,
+      );
+    }
+  }
 
   // For freshly-created sessions, persist the resolved path back to the run
   // store so the next message on this thread can resume.

@@ -852,13 +852,14 @@ async function runPi(prompt, { onOutput } = {}) {
 // the entire subprocess-and-chat.update-loop pipeline used by runPi() +
 // runPiWithSlackStream(). Dynamic import keeps the file parseable without the
 // SDK installed — the path is only exercised when PI_MOM_USE_SDK=true.
-async function runPiViaSdk(prompt, { threadTs, channel, client } = {}) {
+async function runPiViaSdk(prompt, { threadTs, channel, client, tools } = {}) {
   const { createSlackSession, runActionInSlack } = await import("./lib/pi-runtime.mjs");
   const { session, isFollowUp } = await createSlackSession({
     threadTs,
     channel,
     client,
     runStore,
+    tools,
   });
   try {
     return await runActionInSlack({
@@ -874,14 +875,14 @@ async function runPiViaSdk(prompt, { threadTs, channel, client } = {}) {
   }
 }
 
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId }) {
+async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, tools }) {
   // SDK path: runActionInSlack owns chat.startStream/appendStream/stopStream end-to-end.
   // We bypass the legacy `client.chatStream(...)` wrapper entirely so we don't
   // open two streams against the same message.
   if (USE_SDK) {
     trace("slack.sdk_stream_started", { requestId });
     try {
-      const result = await runPiViaSdk(prompt, { threadTs, channel, client });
+      const result = await runPiViaSdk(prompt, { threadTs, channel, client, tools });
       trace("slack.sdk_stream_stopped", { requestId, resultLength: result.length });
       return result;
     } catch (error) {
@@ -1130,7 +1131,16 @@ async function handleRequest({ client, event, mode }) {
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
     if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
+      const result = await runPiWithSlackStream({
+        client,
+        event,
+        channel,
+        threadTs,
+        user,
+        prompt,
+        requestId,
+        tools: Array.isArray(command.route?.tools) ? command.route.tools : undefined,
+      });
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
