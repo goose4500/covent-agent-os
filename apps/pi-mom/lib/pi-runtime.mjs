@@ -190,11 +190,8 @@ function toolEndMarkdown({ isError }) {
 }
 
 // runActionInSlack drives a single Pi turn end-to-end against Slack's native
-// streaming API (chat.startStream / appendStream / stopStream). Falls back to
-// the legacy `client.chatStream({...})` helper when the new methods aren't
-// available on the installed @slack/web-api.
-//
-// Returns the accumulated assistant text, mirroring the existing runPi contract.
+// streaming API (chat.startStream / appendStream / stopStream). Returns the
+// accumulated assistant text.
 export async function runActionInSlack({
   session,
   channel,
@@ -210,40 +207,18 @@ export async function runActionInSlack({
   if (!client) throw new Error("runActionInSlack: client is required");
   if (typeof prompt !== "string" || !prompt) throw new Error("runActionInSlack: prompt is required");
 
-  const hasNativeStream =
-    client?.chat &&
-    typeof client.chat.startStream === "function" &&
-    typeof client.chat.appendStream === "function" &&
-    typeof client.chat.stopStream === "function";
-
-  // Slack stream handle. With the new API we hold the `ts` and call append/stop
-  // against it directly. With the legacy fallback we hold the stream object.
-  let streamTs;
-  let legacyStream;
-
-  if (hasNativeStream) {
-    const started = await client.chat.startStream({ channel, thread_ts: threadTs });
-    streamTs = started?.ts;
-    if (!streamTs) throw new Error("runActionInSlack: chat.startStream did not return a ts");
-  } else if (typeof client.chatStream === "function") {
-    legacyStream = client.chatStream({ channel, thread_ts: threadTs });
-  } else {
-    throw new Error("runActionInSlack: neither chat.startStream nor chatStream is available on the Slack client");
-  }
+  const started = await client.chat.startStream({ channel, thread_ts: threadTs });
+  const streamTs = started?.ts;
+  if (!streamTs) throw new Error("runActionInSlack: chat.startStream did not return a ts");
 
   // Sequence all Slack writes through a single promise chain to honor rate
-  // limits (mirrors the streamChain pattern in index.mjs).
+  // limits.
   let streamChain = Promise.resolve();
   let streamError = null;
 
   const queueAppend = (payload) => {
     streamChain = streamChain
-      .then(() => {
-        if (hasNativeStream) {
-          return client.chat.appendStream({ channel, ts: streamTs, ...payload });
-        }
-        return legacyStream.append(payload);
-      })
+      .then(() => client.chat.appendStream({ channel, ts: streamTs, ...payload }))
       .catch((error) => {
         streamError = streamError || error;
       });
@@ -251,12 +226,7 @@ export async function runActionInSlack({
   };
 
   const stopStream = async () => {
-    if (hasNativeStream) {
-      if (!streamTs) return;
-      await client.chat.stopStream({ channel, ts: streamTs });
-    } else if (legacyStream) {
-      await legacyStream.stop();
-    }
+    await client.chat.stopStream({ channel, ts: streamTs });
   };
 
   let accumulated = "";
