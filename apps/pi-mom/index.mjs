@@ -10,6 +10,7 @@ import { createRunStore } from "./lib/agent-run-store.mjs";
 import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
+import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -119,6 +120,19 @@ function trace(eventName, data = {}) {
   const entry = { ts: new Date().toISOString(), event: eventName, ...data };
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
 }
+
+function loadAgentActionMetadata() {
+  try {
+    return loadActionMetadata("run-action");
+  } catch (error) {
+    const message = error?.message || String(error);
+    console.warn(`Agent action registry unavailable; using default action metadata. ${message}`);
+    trace("agent.registry_fallback", { error: message });
+    return DEFAULT_ACTION_METADATA;
+  }
+}
+
+const AGENT_ACTION_METADATA = loadAgentActionMetadata();
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
@@ -1032,7 +1046,7 @@ async function handleRequest({ client, event, mode }) {
       sourceUrl,
       events: [{ ts: isoNow(), type: "created", text: "Awaiting Slack confirmation" }],
     });
-    const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run) });
+    const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run, AGENT_ACTION_METADATA) });
     run = await runStore.update(run.id, { messageTs: message.ts });
     trace("agent.confirmation_posted", { requestId, runId: run.id, runnerMode: AGENT_RUNNER_MODE });
     return;

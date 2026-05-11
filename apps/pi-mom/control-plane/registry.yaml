@@ -1,0 +1,137 @@
+# Agent Actions registry (Slice 1)
+#
+# This file is the team-facing inventory for pi-mom Actions. It is intentionally
+# a single YAML file so future AI agents can read and edit the control-plane
+# surface without chasing multiple sources.
+#
+# How to add an Action:
+# 1. Add one entry under `actions` with a stable kebab-case `key`.
+# 2. Use `status: planned` until the runtime wiring and tests exist.
+# 3. Use `status: active` only when the action is available in the control-plane
+#    runtime concept. Active actions must include `runtime` metadata.
+# 4. Keep legacy Slack handlers listed under `legacyRoutes` until they are
+#    deliberately migrated or retired. Slice 2 wires action metadata into the
+#    Agent Run Card without changing execution behavior.
+
+version: 1
+
+actions:
+  - key: run-action
+    name: Run Action
+    description: Confirm and run a bounded agent Action from the control plane.
+    status: active
+    riskLevel: bounded
+    approvalMode: Slack confirmation required before start
+    artifacts:
+      - Slack thread updates
+      - Optional Slack canvas result
+    sourceLinks:
+      - Slack source thread
+    runtime:
+      type: control-plane
+      entrypoint: run-action
+      notes: "Existing agent: route maps to this active Action; execution behavior stays bounded by the configured runner."
+
+  - key: repo-health
+    name: Repo Health
+    description: Inspect a configured repository worktree and summarize health signals.
+    status: planned
+    riskLevel: read-only
+    approvalMode: Slack confirmation required before start
+    artifacts:
+      - Repository health summary
+      - Slack thread updates
+    sourceLinks:
+      - Configured local worktree
+    runtime:
+      type: pi-mom-agent-runner
+      entrypoint: repo-health
+      notes: Existing legacy runner mode exists, but this Action is not active in the registry/runtime concept yet.
+
+legacyRoutes:
+  - name: help
+    triggers:
+      - "Slack app mention or DM text: help, help:, ?"
+    status: legacy-active
+    notes: Replies with the hard-coded Covent Pi command menu from index.mjs.
+
+  - name: status
+    triggers:
+      - "Slack app mention or DM text: status, status:"
+    status: legacy-active
+    notes: Replies with bridge health/config from index.mjs.
+
+  - name: summarize
+    triggers:
+      - "Slack app mention or DM prefix: summarize:"
+    status: legacy-active
+    notes: Pi prompt route for thread summary.
+
+  - name: linear
+    triggers:
+      - "Slack app mention or DM prefix: linear:"
+      - "Natural-language app mention asking to create/file/open a Linear issue or ticket"
+    status: legacy-active
+    notes: Pi prompt route that can create a Linear-ready issue spec and then create the Linear issue when configured.
+
+  - name: agenda
+    triggers:
+      - "Slack app mention or DM prefix: agenda:"
+    status: legacy-active
+    notes: Pi prompt route for meeting agendas.
+
+  - name: escalation
+    triggers:
+      - "Slack app mention or DM prefix: escalation:"
+    status: legacy-active
+    notes: Pi prompt route for escalation briefs.
+
+  - name: spec
+    triggers:
+      - "Slack app mention or DM prefix: spec:"
+      - "Natural-language app mention asking to draft/write/create/make/generate a spec or PRD"
+      - "Slash command: /thread-spec <Slack message/thread URL> [optional focus]"
+    status: legacy-active
+    notes: Pi prompt route for PRD/spec drafts; natural intent requires a thread.
+
+  - name: digest
+    triggers:
+      - "Slack app mention or DM prefix: digest:"
+    status: legacy-active
+    notes: Pi prompt route for compact digests.
+
+  - name: image
+    triggers:
+      - "Slack app mention or DM prefix: image:"
+    status: legacy-active
+    notes: Direct OpenAI image generation/edit route handled by the Slack bridge.
+
+  - name: agent
+    triggers:
+      - "Slack app mention or DM prefix: agent:"
+    status: legacy-active
+    notes: Shows an Agent Run Card for bounded fake or repo-health runner tasks; controlled by PI_MOM_AGENT_ROUTE_ENABLED.
+
+  - name: agent_run_start
+    triggers:
+      - "Slack block action: agent_run_start"
+    status: legacy-active
+    notes: Button action that starts a pending Agent Run Card task.
+
+  - name: agent_run_cancel
+    triggers:
+      - "Slack block action: agent_run_cancel"
+    status: legacy-active
+    notes: Button action that cancels a pending/running Agent Run Card task.
+
+  - name: app_mention
+    triggers:
+      - "Slack event: app_mention"
+    status: legacy-active
+    notes: Main public-channel entrypoint; dispatches help/status/prefix routes/natural intents/plain Pi requests.
+
+  - name: direct_message
+    triggers:
+      - "Slack message event where channel_type is im and message is not a bot/subtype"
+    status: legacy-active
+    notes: DM entrypoint; dispatches help/status/prefix routes/plain Pi requests.

@@ -11,10 +11,11 @@
   "scripts": {
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/linear-idempotency.mjs && node --check test-agent-run-card.mjs && node --check test-linear-idempotency.mjs && node test-agent-run-card.mjs && node test-linear-idempotency.mjs"
+    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/control-plane/registry-loader.mjs && node --check lib/linear-idempotency.mjs && node --check test-agent-run-card.mjs && node --check test-control-plane-registry.mjs && node --check test-linear-idempotency.mjs && node test-agent-run-card.mjs && node test-control-plane-registry.mjs && node test-linear-idempotency.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",
-    "@slack/bolt": "^4.6.0"
+    "@slack/bolt": "^4.6.0",
+    "yaml": "^2.8.4"
   }
 }

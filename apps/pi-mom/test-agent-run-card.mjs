@@ -21,11 +21,22 @@ const sampleRun = {
 assert.deepEqual(parseAgentRequest("repo health please"), { prompt: "repo health please" });
 assert.equal(parseAgentRequest("   "), undefined);
 
-const card = buildAgentRunCard(sampleRun);
+const card = buildAgentRunCard(sampleRun, {
+  key: "run-action",
+  name: "Run Action",
+  riskLevel: "bounded",
+  approvalMode: "Slack confirmation required before start",
+  artifacts: ["Slack thread updates"],
+  sourceLinks: ["Slack source thread"],
+});
 const encoded = JSON.stringify(card);
 assert.match(encoded, /agent_run_start/);
 assert.match(encoded, /agent_run_cancel/);
 assert.match(encoded, /run_test/);
+assert.match(encoded, /Run Action/);
+assert.match(encoded, /Risk/);
+assert.match(encoded, /Slack confirmation required before start/);
+assert.match(encoded, /returns results to this Slack thread/);
 
 const dir = await mkdtemp(join(tmpdir(), "pi-mom-agent-test-"));
 try {

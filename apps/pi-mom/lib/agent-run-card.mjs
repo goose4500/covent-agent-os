@@ -47,12 +47,40 @@ function eventLines(run) {
   return events.map((event) => `• ${event.ts || ""} ${event.text || event.type || "event"}`.trim()).join("\n");
 }
 
-export function buildAgentRunCard(run) {
+function metadataValue(value, fallback = "Not specified") {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : fallback;
+  return String(value || "").trim() || fallback;
+}
+
+function actionMetadataFields(action = {}) {
+  return [
+    field(`*Action*\n${metadataValue(action.name || action.key, "Run Action")}`),
+    field(`*Risk*\n${metadataValue(action.riskLevel, "bounded")}`),
+    field(`*Approval*\n${metadataValue(action.approvalMode, "Slack confirmation required")}`),
+    field(`*Artifacts / Source*\n${metadataValue(action.artifacts, "Slack thread updates")} / ${metadataValue(action.sourceLinks, "Slack source thread")}`),
+  ];
+}
+
+function friendlyActionSentence(action = {}) {
+  const risk = metadataValue(action.riskLevel, "bounded").toLowerCase();
+  const approval = metadataValue(action.approvalMode, "Slack confirmation required before start");
+  if (risk.includes("read-only")) {
+    return "This is read-only, starts after Slack confirmation, and returns results to this Slack thread.";
+  }
+  if (approval.toLowerCase().includes("confirmation")) {
+    return "This bounded Action starts only after Slack confirmation, and returns results to this Slack thread.";
+  }
+  return `This bounded Action uses ${approval} and returns results to this Slack thread.`;
+}
+
+export function buildAgentRunCard(run, actionMetadata = {}) {
   return {
     text: formatRunSummary(run),
     blocks: [
       { type: "header", text: { type: "plain_text", text: "Agent run confirmation", emoji: true } },
       { type: "section", fields: runFields(run) },
+      { type: "section", fields: actionMetadataFields(actionMetadata) },
+      { type: "context", elements: [{ type: "mrkdwn", text: friendlyActionSentence(actionMetadata) }] },
       ...(run.sourceUrl ? [{ type: "section", text: { type: "mrkdwn", text: `*Source*\n<${run.sourceUrl}|Slack thread>` } }] : []),
       { type: "section", text: { type: "mrkdwn", text: `*Prompt*\n>${truncate(run.prompt || "(empty)").replace(/\n/g, "\n>")}` } },
       { type: "context", elements: [{ type: "mrkdwn", text: "Safety: no repo writes in MVP. Runner mode is bounded to `fake` or `repo-health`; Pi tools stay default-off." }] },

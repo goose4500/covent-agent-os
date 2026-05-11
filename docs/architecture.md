@@ -10,13 +10,31 @@ Slack cockpit
   → optional declared-route + current-approval mutation into Linear/GitHub/Slack/Whimsical
 ```
 
+## Team-facing primitive: Actions
+
+The engineering team should not have to understand Pi internals to use internal AI.
+
+Use **Actions** as the product primitive:
+
+```text
+Action = a bounded, named thing Covent Agent can do for an engineer
+Run = one execution of an Action
+Artifact = the source-linked result of a Run
+Approval = a human gate before risky execution
+```
+
+Implementation terms such as routes, skills, agents, extensions, runners, and policies stay behind the curtain. Slack UX should say things like “Run Action”, “Action running”, and “Action complete”.
+
+This mirrors Pi’s core design: small harness, discoverable capabilities, progressive disclosure, and file-based extensibility.
+
 ## Layers
 
 1. **Apps** — concrete runtimes such as `apps/pi-mom`.
-2. **Skills/agents** — reusable reasoning workflows and specialist subagents.
-3. **Extensions/lib** — bounded tools and shared implementation code.
-4. **Packages** — installable Pi packages, e.g. Chrome browser access.
-5. **Docs/specs/runbooks** — source-linked operating knowledge.
+2. **Actions/registry** — agent-readable catalog of team-facing AI actions and their policy/runner bindings.
+3. **Skills/agents** — reusable reasoning workflows and specialist subagents behind actions.
+4. **Extensions/lib** — bounded tools and shared implementation code.
+5. **Packages** — installable Pi packages, e.g. Chrome browser access.
+6. **Docs/specs/runbooks** — source-linked operating knowledge.
 
 ## Current POC priorities
 

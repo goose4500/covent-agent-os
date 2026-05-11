@@ -21,6 +21,34 @@ npm run check
 npm run doctor
 ```
 
+## Agent Actions mental model
+
+Covent Agent OS should expose internal AI as **Actions**, not as agents, skills, extensions, routes, or runners.
+
+Team-facing model:
+
+```text
+Covent Agent = the Slack app engineers use
+Actions = bounded things it can do
+Runs = one execution of an Action
+Approvals = human gates before risky steps
+Artifacts = source-linked results in Slack, GitHub, Linear, or docs
+```
+
+Principles:
+
+- Engineers should ask for outcomes, not choose tools.
+- Every Action should be explicit, bounded, visible, and source-linked.
+- Slack is the cockpit for asking, watching, and approving.
+- Pi skills/agents/extensions are implementation details behind the Action.
+- The registry should be easy for future AI agents to read and edit in one pass.
+
+Core loop:
+
+```text
+Engineer intent → Action → Run card → optional approval → artifact/source links
+```
+
 ## System map
 
 Start with:
