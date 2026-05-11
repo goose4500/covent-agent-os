@@ -1,17 +1,31 @@
-# Agent Actions registry (Slice 1)
+# Agent Actions registry (pi-mom control plane)
 #
-# This file is the team-facing inventory for pi-mom Actions. It is intentionally
-# a single YAML file so future AI agents can read and edit the control-plane
-# surface without chasing multiple sources.
+# This file is the single source of truth for pi-mom Actions. The Slack
+# dispatcher in apps/pi-mom/index.mjs resolves an inbound message to an
+# Action key, then passes that key as `metadata.action` to `session.prompt`.
+# The `extensions/action-router.ts` extension reads `event.metadata.action`
+# in `before_agent_start` and applies the entry's `tools:` and
+# `systemPromptSuffix:` from this registry.
 #
-# How to add an Action:
-# 1. Add one entry under `actions` with a stable kebab-case `key`.
-# 2. Use `status: planned` until the runtime wiring and tests exist.
-# 3. Use `status: active` only when the action is available in the control-plane
-#    runtime concept. Active actions must include `runtime` metadata.
-# 4. Keep legacy Slack handlers listed under `legacyRoutes` until they are
-#    deliberately migrated or retired. Slice 2 wires action metadata into the
-#    Agent Run Card without changing execution behavior.
+# To add or change an Action, edit the `actions:` section below. The schema
+# is enforced by `apps/pi-mom/lib/control-plane/registry-loader.mjs` and
+# `apps/pi-mom/lib/action-resolver.mjs`. The legacy `legacyRoutes:` block
+# that previously documented Slack-side handlers has been folded into the
+# `actions:` entries below as of PR 2 of the pi-mom SDK migration.
+#
+# Fields per action:
+#   key:                  stable kebab/lower-case identifier; matched
+#                         against event.metadata.action
+#   name:                 short human label
+#   description:          one-sentence summary
+#   status:               active | planned (active = dispatchable today)
+#   riskLevel:            read-only | bounded | creative
+#   approvalMode:         optional, human-readable
+#   tools:                optional Pi tool allow-list (empty = host defaults)
+#   systemPromptSuffix:   appended verbatim to the agent's system prompt
+#   canvas:               whether to render a Slack canvas with the result
+#   artifacts / sourceLinks: optional human-facing metadata
+#   runtime:              required for active actions; type/entrypoint
 
 version: 1
 
@@ -48,90 +62,110 @@ actions:
       entrypoint: repo-health
       notes: Existing legacy runner mode exists, but this Action is not active in the registry/runtime concept yet.
 
-legacyRoutes:
-  - name: help
-    triggers:
-      - "Slack app mention or DM text: help, help:, ?"
-    status: legacy-active
-    notes: Replies with the hard-coded Covent Pi command menu from index.mjs.
+  - key: summarize
+    name: Thread summary
+    description: Summarize the current Slack thread into decisions, questions, owners, risks, and next actions.
+    status: active
+    riskLevel: read-only
+    tools: []
+    canvas: true
+    runtime:
+      type: pi-prompt
+      entrypoint: summarize
+    systemPromptSuffix: |
+      Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.
 
-  - name: status
-    triggers:
-      - "Slack app mention or DM text: status, status:"
-    status: legacy-active
-    notes: Replies with bridge health/config from index.mjs.
+  - key: linear
+    name: Create Linear issue
+    description: Draft a Linear-ready issue spec from the current Slack thread; the bridge creates the issue afterwards.
+    status: active
+    riskLevel: bounded
+    tools:
+      - read
+      - linear_*
+    canvas: true
+    runtime:
+      type: pi-prompt
+      entrypoint: linear
+    systemPromptSuffix: |
+      Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.
 
-  - name: summarize
-    triggers:
-      - "Slack app mention or DM prefix: summarize:"
-    status: legacy-active
-    notes: Pi prompt route for thread summary.
+  - key: agenda
+    name: Meeting agenda
+    description: Turn the current Slack context into a structured meeting agenda.
+    status: active
+    riskLevel: read-only
+    tools: []
+    canvas: false
+    runtime:
+      type: pi-prompt
+      entrypoint: agenda
+    systemPromptSuffix: |
+      Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.
 
-  - name: linear
-    triggers:
-      - "Slack app mention or DM prefix: linear:"
-      - "Natural-language app mention asking to create/file/open a Linear issue or ticket"
-    status: legacy-active
-    notes: Pi prompt route that can create a Linear-ready issue spec and then create the Linear issue when configured.
+  - key: escalation
+    name: Escalation brief
+    description: Produce an escalation brief from the current Slack thread.
+    status: active
+    riskLevel: read-only
+    tools: []
+    canvas: true
+    runtime:
+      type: pi-prompt
+      entrypoint: escalation
+    systemPromptSuffix: |
+      Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply.
 
-  - name: agenda
-    triggers:
-      - "Slack app mention or DM prefix: agenda:"
-    status: legacy-active
-    notes: Pi prompt route for meeting agendas.
+  - key: spec
+    name: Spec / PRD draft
+    description: Convert a Slack idea or context into a concise spec/PRD draft.
+    status: active
+    riskLevel: bounded
+    tools: []
+    canvas: true
+    runtime:
+      type: pi-prompt
+      entrypoint: spec
+    systemPromptSuffix: |
+      Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.
 
-  - name: escalation
-    triggers:
-      - "Slack app mention or DM prefix: escalation:"
-    status: legacy-active
-    notes: Pi prompt route for escalation briefs.
+  - key: digest
+    name: Digest
+    description: Compact digest of important updates, decisions, asks, blockers, and follow-ups from Slack context.
+    status: active
+    riskLevel: read-only
+    tools: []
+    canvas: true
+    runtime:
+      type: pi-prompt
+      entrypoint: digest
+    systemPromptSuffix: |
+      Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.
 
-  - name: spec
-    triggers:
-      - "Slack app mention or DM prefix: spec:"
-      - "Natural-language app mention asking to draft/write/create/make/generate a spec or PRD"
-      - "Slash command: /thread-spec <Slack message/thread URL> [optional focus]"
-    status: legacy-active
-    notes: Pi prompt route for PRD/spec drafts; natural intent requires a thread.
+  - key: image
+    name: GPT Image generation/edit
+    description: Generate or edit an image with OpenAI GPT Image; the Slack bridge uploads the file back to the thread.
+    status: active
+    riskLevel: creative
+    tools:
+      - gpt_image_generate
+      - gpt_image_edit
+    canvas: false
+    runtime:
+      type: pi-prompt
+      entrypoint: image
+    systemPromptSuffix: |
+      Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.
 
-  - name: digest
-    triggers:
-      - "Slack app mention or DM prefix: digest:"
-    status: legacy-active
-    notes: Pi prompt route for compact digests.
-
-  - name: image
-    triggers:
-      - "Slack app mention or DM prefix: image:"
-    status: legacy-active
-    notes: Direct OpenAI image generation/edit route handled by the Slack bridge.
-
-  - name: agent
-    triggers:
-      - "Slack app mention or DM prefix: agent:"
-    status: legacy-active
-    notes: Shows an Agent Run Card for bounded fake or repo-health runner tasks; controlled by PI_MOM_AGENT_ROUTE_ENABLED.
-
-  - name: agent_run_start
-    triggers:
-      - "Slack block action: agent_run_start"
-    status: legacy-active
-    notes: Button action that starts a pending Agent Run Card task.
-
-  - name: agent_run_cancel
-    triggers:
-      - "Slack block action: agent_run_cancel"
-    status: legacy-active
-    notes: Button action that cancels a pending/running Agent Run Card task.
-
-  - name: app_mention
-    triggers:
-      - "Slack event: app_mention"
-    status: legacy-active
-    notes: Main public-channel entrypoint; dispatches help/status/prefix routes/natural intents/plain Pi requests.
-
-  - name: direct_message
-    triggers:
-      - "Slack message event where channel_type is im and message is not a bot/subtype"
-    status: legacy-active
-    notes: DM entrypoint; dispatches help/status/prefix routes/plain Pi requests.
+  - key: agent
+    name: Agent Run Card
+    description: Show a Slack confirmation card before running a bounded fake or repo-health agent task.
+    status: active
+    riskLevel: bounded
+    tools: []
+    canvas: false
+    runtime:
+      type: pi-prompt
+      entrypoint: agent
+    systemPromptSuffix: |
+      Show a Slack confirmation card before running a bounded fake or repo-health agent task.

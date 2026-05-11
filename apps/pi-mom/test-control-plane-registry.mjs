@@ -27,22 +27,11 @@ assert.equal(repoHealth.status, "planned");
 assert.equal(repoHealth.riskLevel, "read-only");
 assert.equal(repoHealth.approvalMode, "Slack confirmation required before start");
 
-assert.ok(Array.isArray(registry.legacyRoutes), "legacyRoutes should be present");
-assert.ok(registry.legacyRoutes.length >= 14, "legacy routes should document current Slack routes and handlers");
-for (const route of registry.legacyRoutes) {
-  assert.equal(typeof route.name, "string");
-  assert.ok(route.name.length > 0);
-  assert.ok(Array.isArray(route.triggers), `${route.name} should document triggers`);
-  assert.ok(route.triggers.length > 0, `${route.name} should have at least one trigger`);
-  assert.equal(typeof route.status, "string");
-  assert.equal(typeof route.notes, "string");
-  assert.ok(route.notes.length > 0, `${route.name} should have notes`);
-}
-
-const legacyRouteNames = new Set(registry.legacyRoutes.map((route) => route.name));
+// The previous `legacyRoutes:` block has been folded into `actions:` entries
+// as of PR 2 of the pi-mom SDK migration. The 8 Slack prompt routes now live
+// in the registry as first-class active Actions.
+const actionKeys = new Set(registry.actions.map((action) => action.key));
 for (const expected of [
-  "help",
-  "status",
   "summarize",
   "linear",
   "agenda",
@@ -51,12 +40,12 @@ for (const expected of [
   "digest",
   "image",
   "agent",
-  "agent_run_start",
-  "agent_run_cancel",
-  "app_mention",
-  "direct_message",
 ]) {
-  assert.ok(legacyRouteNames.has(expected), `legacy route ${expected} should be documented`);
+  assert.ok(actionKeys.has(expected), `migrated action ${expected} should be registered`);
+  const action = registry.actions.find((entry) => entry.key === expected);
+  assert.equal(action.status, "active", `${expected} should be active`);
+  assert.equal(typeof action.systemPromptSuffix, "string", `${expected} must define systemPromptSuffix`);
+  assert.ok(action.systemPromptSuffix.length > 0, `${expected} must have a non-empty systemPromptSuffix`);
 }
 
 assert.throws(
