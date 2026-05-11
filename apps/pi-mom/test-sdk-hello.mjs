@@ -38,44 +38,42 @@ function check(name, ok, detail) {
 try {
   const { getSharedRuntime } = await import("./lib/pi-runtime.mjs");
 
-  const { authStorage, modelRegistry, resourceLoader, repoRoot } = getSharedRuntime();
+  const { authStorage, modelRegistry, resourceLoader, repoRoot } = await getSharedRuntime();
   check("authStorage constructed", Boolean(authStorage));
   check("modelRegistry constructed", Boolean(modelRegistry));
   check("resourceLoader constructed", Boolean(resourceLoader));
   check("repoRoot resolves to covent-agent-os", repoRoot.endsWith("covent-agent-os"), repoRoot);
 
   // Singleton check — second call returns the same object.
-  const second = getSharedRuntime();
+  const second = await getSharedRuntime();
   check("getSharedRuntime is memoized", second.authStorage === authStorage);
 
-  // ResourceLoader surface — best-effort discovery checks. The SDK API may
-  // expose these via different method names; we probe a few and accept any.
-  const probe = async (name, fn) => {
-    try {
-      const result = await fn();
-      check(name, Array.isArray(result) && result.length > 0, `${result?.length} items`);
-    } catch (err) {
-      console.log(`SKIP ${name} — ${err.message ?? err}`);
-    }
-  };
+  // Real ResourceLoader surface from @earendil-works/pi-coding-agent 0.74:
+  //   getExtensions() -> LoadExtensionsResult { extensions, errors, runtime }
+  //   getSkills()     -> { skills, diagnostics }
+  //   getPrompts()    -> { prompts, diagnostics }
+  //   getAgentsFiles()-> { agentsFiles }
+  // We assert non-zero counts on the resources this repo loads explicitly.
+  const ext = resourceLoader.getExtensions();
+  check(
+    "resourceLoader loads >= 7 extensions",
+    Array.isArray(ext?.extensions) && ext.extensions.length >= 7,
+    `${ext?.extensions?.length} extensions`,
+  );
 
-  await probe("resourceLoader discovers extensions", async () => {
-    const m = resourceLoader.discoverExtensions ?? resourceLoader.loadExtensions ?? resourceLoader.listExtensions;
-    if (typeof m !== "function") throw new Error("no discover method on loader");
-    return await m.call(resourceLoader);
-  });
+  const skills = resourceLoader.getSkills();
+  check(
+    "resourceLoader loads >= 1 skill",
+    Array.isArray(skills?.skills) && skills.skills.length >= 1,
+    `${skills?.skills?.length} skills`,
+  );
 
-  await probe("resourceLoader discovers skills", async () => {
-    const m = resourceLoader.discoverSkills ?? resourceLoader.loadSkills ?? resourceLoader.listSkills;
-    if (typeof m !== "function") throw new Error("no discover method on loader");
-    return await m.call(resourceLoader);
-  });
-
-  await probe("resourceLoader discovers agents", async () => {
-    const m = resourceLoader.discoverAgents ?? resourceLoader.loadAgents ?? resourceLoader.listAgents;
-    if (typeof m !== "function") throw new Error("no discover method on loader");
-    return await m.call(resourceLoader);
-  });
+  const agentsFiles = resourceLoader.getAgentsFiles();
+  check(
+    "resourceLoader loads agent files",
+    Array.isArray(agentsFiles?.agentsFiles),
+    `${agentsFiles?.agentsFiles?.length ?? 0} agent files`,
+  );
 
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail === 0 ? 0 : 1);
