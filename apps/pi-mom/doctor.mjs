@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { WebClient } from "@slack/web-api";
 
 const required = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -50,13 +50,23 @@ console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ?
 console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
 console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
 
-const piCommand = process.env.PI_COMMAND || "pi";
-const pi = spawnSync(piCommand, ["--version"], { encoding: "utf8" });
-if (pi.error) {
-  console.error(`✗ Could not run ${piCommand}: ${pi.error.message}`);
+try {
+  const auth = await AuthStorage.create();
+  const registry = ModelRegistry.create(auth);
+  const modelId = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
+  const slash = modelId.indexOf("/");
+  const provider = slash >= 0 ? modelId.slice(0, slash) : modelId;
+  const id = slash >= 0 ? modelId.slice(slash + 1) : "";
+  const model = registry.find(provider, id);
+  if (model) {
+    console.log(`✓ Pi SDK model resolved: ${modelId} (thinking: ${process.env.PI_MOM_THINKING_LEVEL || "high"})`);
+  } else {
+    console.error(`✗ Pi SDK model not found: ${modelId}. Provider key missing or model id wrong?`);
+    ok = false;
+  }
+} catch (error) {
+  console.error(`✗ Pi SDK probe failed: ${error?.message || error}`);
   ok = false;
-} else {
-  console.log(`✓ ${piCommand} is available${pi.stdout ? `: ${pi.stdout.trim()}` : ""}`);
 }
 
 console.log(`Test channel name: #${process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs"}`);

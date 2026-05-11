@@ -165,18 +165,18 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 - The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
 - Default target is Frontend Engineering / `Distribution` / `Backlog`.
 - Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
-- Linear environment variables are stripped from the Pi subprocess environment.
+- Pi is embedded in-process via the `@earendil-works/pi-coding-agent` SDK (no subprocess); the prompt is passed directly via `session.prompt(text)`.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
-- Default: `PI_MOM_STREAMING=true` streams Pi stdout into Slack with Slack `chat.*Stream` APIs.
+- Default: `PI_MOM_STREAMING=true` streams Pi `text_delta` events into Slack via Slack `chat.*Stream` APIs.
 - Buffering: `PI_MOM_STREAM_BUFFER_CHARS=1` starts/flushes quickly for live testing; raise it if rate limits become a problem.
-- Safety: Slack-related environment variables are stripped from the Pi subprocess env, token-like output is redacted before posting, the prompt is passed via a temporary `0600` file instead of argv, and Pi tools/extensions are disabled unless `PI_MOM_ALLOW_PI_TOOLS=true`.
+- Safety: Pi runs with `noTools: "all"` and a `DefaultResourceLoader` configured with `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles` unless `PI_MOM_ALLOW_PI_TOOLS=true`. Token-like output is redacted before posting. The Pi session is `SessionManager.inMemory()` (ephemeral).
 - Fallback: set `PI_MOM_STREAMING=false` to use the older `chat.postMessage` thinking message + final `chat.update` behavior.
 
 Image route behavior in `PI_MOM_MODE=pi`:
 
-- `image:` is handled directly by the bridge, not by an unrestricted Pi subprocess.
+- `image:` is handled directly by the bridge, not by the Pi SDK runner.
 - Requires `OPENAI_API_KEY` in the pi-mom environment.
 - `image:` / `image: generate ...` calls text-to-image generation. `image: edit ...` explicitly uses Slack image files in the current thread as references.
 - Generated files are uploaded back to the same Slack thread and saved locally under `PI_MOM_IMAGE_OUTPUT_DIR` or `~/.pi/agent/generated-images/slack`.
@@ -190,7 +190,7 @@ Tracing is enabled by default. Every request logs structured JSON lines prefixed
 - `slack.received` — incoming mention/DM
 - `slack.thread_context` — how much context was pulled from the thread
 - `pi.prompt_built` — prompt size sent to Pi, including detected route when present
-- `pi.output_ready` — Pi stdout close/idle/timeout behavior
+- `pi.output_ready` — Pi run completion (SDK agent_end or timeout)
 - `slack.stream_started` / `slack.stream_stopped` / `slack.replied_pi_stream` — streaming response lifecycle
 - `slack.replied_echo` / `slack.replied_pi` / `slack.replied_help` / `slack.replied_status` — bridge response type
 - `error` — any failures
@@ -213,7 +213,7 @@ As of 2026-05-03, the Covent Pi bridge has a working bare-bones path:
   → Socket Mode app_mention event
   → local bridge
   → Slack thread acknowledgement
-  → Pi subprocess in pi mode
+  → in-process Pi SDK session (createAgentSession)
 ```
 
 Known-good non-secret values:
@@ -224,13 +224,13 @@ Known-good non-secret values:
 - Test channel ID: `C0B05VBGJKF`
 - Default mode for proof: `PI_MOM_MODE=echo`
 - Full mode: `PI_MOM_MODE=pi`
-- Pi model when `PI_EXTRA_ARGS=""`: Pi default `openai-codex/gpt-5.5` with high thinking
+- Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
 
 Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 
 ## Notes
 
-- In Pi mode, the bot streams Pi stdout into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
-- Pi is launched with `--no-session --no-tools --no-extensions` by default so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Set `PI_MOM_ALLOW_PI_TOOLS=true` only for deliberate local experiments.
+- In Pi mode, the bot streams Pi `text_delta` events into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
+- Pi runs in-process with an in-memory session, `noTools: "all"`, and a `DefaultResourceLoader` that disables extensions/skills/prompts/themes/context-files — so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Set `PI_MOM_ALLOW_PI_TOOLS=true` only for deliberate local experiments.
 - The bridge uses Slack Web API only for the current thread context and final reply.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.
