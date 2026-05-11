@@ -11,6 +11,14 @@ import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
+import {
+  findAction,
+  loadAgentConfig,
+  matchActionByText,
+  resolveLinearTarget,
+  stripMatchedTrigger,
+} from "./lib/agent-config.mjs";
+import { describeHandler } from "./lib/agent-handlers.mjs";
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -68,9 +76,16 @@ const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT
 const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
 const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
-const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
-const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
-const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
+
+// agent.yaml is the source of truth for routing + Linear target. Loader throws
+// on invalid config, so a startup misconfiguration fails fast instead of
+// drifting at runtime.
+const AGENT_CONFIG = loadAgentConfig();
+const LINEAR_ACTION = findAction(AGENT_CONFIG, "create-linear-issue");
+const LINEAR_TARGET = resolveLinearTarget(LINEAR_ACTION, process.env) || {};
+const LINEAR_TEAM_ID = LINEAR_TARGET.teamId || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
+const LINEAR_PROJECT_ID = LINEAR_TARGET.projectId || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
+const LINEAR_STATE_ID = LINEAR_TARGET.stateId || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
@@ -153,12 +168,36 @@ function truncateForSlack(text) {
   return `${safeText.slice(0, MAX_SLACK_TEXT - 200)}\n\n...truncated by pi-mom because Slack messages have length limits.`;
 }
 
+function commandFromYamlAction(action, originalText) {
+  const handler = describeHandler(action?.handler);
+  if (!action || !handler) return undefined;
+  const focus = stripMatchedTrigger(originalText, action);
+  return {
+    kind: "route",
+    routeKey: handler.routeKey,
+    route: ROUTES[handler.routeKey],
+    text: focus || `(No extra instructions; use the Slack thread context.)`,
+    naturalIntent: action.key,
+    requiresThread: handler.requiresThread === true,
+    actionKey: action.key,
+  };
+}
+
 function parseCommand(text = "") {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   if (["help", "help:", "?"].includes(lower)) return { kind: "help" };
   if (["status", "status:"].includes(lower)) return { kind: "status" };
 
+  // YAML-driven prefix detection runs first so agent.yaml is the source of
+  // truth for explicit routes (e.g. `linear:`).
+  const yamlMatch = matchActionByText(AGENT_CONFIG, trimmed, { includePrefixes: true, includeIntents: false });
+  const yamlCommand = commandFromYamlAction(yamlMatch, trimmed);
+  if (yamlCommand) return yamlCommand;
+
+  // Fallback: legacy ROUTES table for prefixes the YAML does not declare yet
+  // (summarize, agenda, escalation, spec, digest, image, agent, …). These
+  // migrate to YAML in follow-up commits.
   const match = trimmed.match(/^([a-z][a-z0-9_-]*)\s*:\s*([\s\S]*)$/i);
   if (!match) return { kind: "plain", text: trimmed };
 
@@ -199,18 +238,22 @@ function parseThreadSpecIntent(text = "") {
 function parseLinearCreateIntent(text = "") {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
-
-  const pattern = /\b(?:create|file|open|make)\s+(?:a\s+|an\s+)?(?:linear\s+)?(?:issue|ticket)\b|\b(?:linear\s+)?(?:issue|ticket)\s+(?:this|thread|it)\b/i;
-  if (!pattern.test(trimmed)) return undefined;
-
-  const focus = trimmed.replace(pattern, "").replace(/^[\s:;,\.\-–—]+/, "").trim();
+  // Intent detection is now declarative — see `actions[].triggers` in
+  // apps/pi-mom/agent.yaml. Only YAML actions whose handler resolves to the
+  // `linear` route are considered here so this stays scoped to the legacy
+  // app-mention intent path.
+  const action = matchActionByText(AGENT_CONFIG, trimmed, { includePrefixes: false, includeIntents: true });
+  const handler = describeHandler(action?.handler);
+  if (!action || handler?.routeKey !== "linear") return undefined;
+  const focus = stripMatchedTrigger(trimmed, action);
   return {
     kind: "route",
-    routeKey: "linear",
-    route: ROUTES.linear,
+    routeKey: handler.routeKey,
+    route: ROUTES[handler.routeKey],
     text: focus || "Create a Linear issue from this Slack thread.",
-    naturalIntent: "linear_issue_create",
-    requiresThread: true,
+    naturalIntent: action.key,
+    requiresThread: handler.requiresThread === true,
+    actionKey: action.key,
   };
 }
 

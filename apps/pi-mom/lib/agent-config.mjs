@@ -74,9 +74,17 @@ function validateTriggers(action, basePath) {
   const triggers = action.triggers;
   if (!isObject(triggers)) fail(`${basePath}.triggers must be an object`);
   const intents = requireStringArray(triggers.mentionIntents, `${basePath}.triggers.mentionIntents`);
+  const patterns = requireStringArray(triggers.mentionPatterns, `${basePath}.triggers.mentionPatterns`);
+  for (const [i, source] of patterns.entries()) {
+    try {
+      new RegExp(source, "i");
+    } catch (error) {
+      fail(`${basePath}.triggers.mentionPatterns[${i}] is not a valid regex: ${error.message}`);
+    }
+  }
   const prefixes = requireStringArray(triggers.prefixes, `${basePath}.triggers.prefixes`);
-  if (intents.length === 0 && prefixes.length === 0) {
-    fail(`${basePath}.triggers must declare mentionIntents or prefixes`);
+  if (intents.length === 0 && patterns.length === 0 && prefixes.length === 0) {
+    fail(`${basePath}.triggers must declare mentionIntents, mentionPatterns, or prefixes`);
   }
 }
 
@@ -221,19 +229,69 @@ export function findProfile(config, name) {
   return config?.profiles?.[name];
 }
 
-export function matchActionByText(config, text = "") {
+export function matchActionByText(
+  config,
+  text = "",
+  { includePrefixes = true, includeIntents = true } = {},
+) {
   const value = String(text || "").trim();
   if (!value) return undefined;
   const lower = value.toLowerCase();
   for (const action of config?.actions ?? []) {
-    const prefixes = action.triggers?.prefixes ?? [];
-    if (prefixes.some((prefix) => lower.startsWith(String(prefix).toLowerCase()))) {
-      return action;
+    if (includePrefixes) {
+      const prefixes = action.triggers?.prefixes ?? [];
+      if (prefixes.some((prefix) => lower.startsWith(String(prefix).toLowerCase()))) {
+        return action;
+      }
     }
-    const intents = action.triggers?.mentionIntents ?? [];
-    if (intents.some((intent) => lower.includes(String(intent).toLowerCase()))) {
-      return action;
+    if (includeIntents) {
+      const intents = action.triggers?.mentionIntents ?? [];
+      if (intents.some((intent) => lower.includes(String(intent).toLowerCase()))) {
+        return action;
+      }
+      const patterns = action.triggers?.mentionPatterns ?? [];
+      for (const source of patterns) {
+        try {
+          if (new RegExp(source, "i").test(value)) return action;
+        } catch {
+          // Loader already validated patterns at boot; swallow to be safe at runtime.
+        }
+      }
     }
   }
   return undefined;
+}
+
+export function stripMatchedTrigger(text = "", action) {
+  const original = String(text || "");
+  if (!action) return original.trim();
+  const lower = original.toLowerCase();
+
+  for (const prefix of action.triggers?.prefixes ?? []) {
+    if (lower.startsWith(String(prefix).toLowerCase())) {
+      return original.slice(prefix.length).replace(/^[\s:;,.\-–—]+/, "").trim();
+    }
+  }
+  for (const intent of action.triggers?.mentionIntents ?? []) {
+    const idx = lower.indexOf(String(intent).toLowerCase());
+    if (idx !== -1) {
+      return `${original.slice(0, idx)}${original.slice(idx + intent.length)}`
+        .replace(/^[\s:;,.\-–—]+/, "")
+        .trim();
+    }
+  }
+  for (const source of action.triggers?.mentionPatterns ?? []) {
+    try {
+      const regex = new RegExp(source, "i");
+      const match = regex.exec(original);
+      if (match) {
+        return `${original.slice(0, match.index)}${original.slice(match.index + match[0].length)}`
+          .replace(/^[\s:;,.\-–—]+/, "")
+          .trim();
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return original.trim();
 }

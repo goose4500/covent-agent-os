@@ -49,6 +49,11 @@ actions:
         - open linear issue
         - file ticket
         - open ticket
+      mentionPatterns:
+        # Mirrors the legacy parseLinearCreateIntent regex coverage: lets the
+        # YAML take over natural-language detection in app mentions and DMs.
+        - "\\b(?:create|file|open|make)\\s+(?:a\\s+|an\\s+)?(?:linear\\s+)?(?:issue|ticket)\\b"
+        - "\\b(?:linear\\s+)?(?:issue|ticket)\\s+(?:this|thread|it)\\b"
       prefixes:
         - "linear:"
     target:

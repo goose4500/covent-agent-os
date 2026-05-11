@@ -76,16 +76,25 @@
       "additionalProperties": false,
       "anyOf": [
         { "required": ["mentionIntents"] },
+        { "required": ["mentionPatterns"] },
         { "required": ["prefixes"] }
       ],
       "properties": {
         "mentionIntents": {
           "type": "array",
+          "description": "Literal substrings the agent watches for in mentions and DMs.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "mentionPatterns": {
+          "type": "array",
+          "description": "JavaScript regular-expression source strings (matched case-insensitively) for natural-language intents that need more flexibility than literal substrings.",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "prefixes": {
           "type": "array",
+          "description": "Explicit colon-prefixed routes (e.g. `linear:`).",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         }
