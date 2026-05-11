@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://covent.app/schemas/pi-mom-agent.schema.json",
+  "title": "Covent Pi agent spine",
+  "description": "Single source of truth for what the Covent Pi Slack agent does, where, and with what authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "profiles", "actions"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Bump on breaking changes."
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Reusable agent postures keyed by profile name.",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/profile" }
+    },
+    "actions": {
+      "type": "array",
+      "description": "Team-facing inventory of Actions the agent can take.",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/action" }
+    },
+    "channels": {
+      "type": "array",
+      "description": "Slack channels where the agent listens.",
+      "items": { "$ref": "#/definitions/channel" }
+    },
+    "runtime": { "$ref": "#/definitions/runtime" }
+  },
+  "definitions": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "skills": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "extensions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "tools": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "writeTargets": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["linear", "github", "slack"] },
+          "uniqueItems": true
+        },
+        "approval": {
+          "type": "string",
+          "enum": ["none", "explicit-intent", "button-confirm", "double-confirm"]
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name", "description", "profile", "handler", "triggers"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "minLength": 1 },
+        "handler": { "type": "string", "minLength": 1 },
+        "triggers": { "$ref": "#/definitions/triggers" },
+        "target": { "$ref": "#/definitions/target" },
+        "idempotency": {
+          "type": "string",
+          "enum": ["none", "scan-thread-for-prior-success", "external-hash"]
+        },
+        "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 600000 }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["mentionIntents"] },
+        { "required": ["prefixes"] }
+      ],
+      "properties": {
+        "mentionIntents": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "prefixes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "linear": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["teamIdEnv", "projectIdEnv", "stateIdEnv"],
+          "properties": {
+            "teamIdEnv": { "type": "string", "minLength": 1 },
+            "projectIdEnv": { "type": "string", "minLength": 1 },
+            "stateIdEnv": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "oneOf": [
+        { "required": ["id"] },
+        { "required": ["idEnv"] }
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[CDG][A-Z0-9]+$" },
+        "idEnv": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "nameEnv": { "type": "string", "minLength": 1 },
+        "profile": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pi": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1 },
+            "extraArgsEnv": { "type": "string", "minLength": 1 },
+            "timeoutMs": { "type": "integer", "minimum": 1000 },
+            "outputIdleMs": { "type": "integer", "minimum": 100 },
+            "streaming": { "type": "boolean" }
+          }
+        },
+        "slack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxTextChars": { "type": "integer", "minimum": 1000, "maximum": 40000 },
+            "streamAppendChars": { "type": "integer", "minimum": 100 }
+          }
+        }
+      }
+    }
+  }
+}

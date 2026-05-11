@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=./agent.schema.json
+#
+# Covent Pi agent spine — single source of truth for what the Slack agent does,
+# where it does it, and with what authority. Edit here, not in index.mjs.
+#
+# Migration status:
+#   - This spine is live and validated by `npm run validate:agent`.
+#   - index.mjs still hardcodes route dispatch; the next commit wires routing
+#     through `lib/agent-config.mjs` so YAML actually drives behavior.
+#   - Until then, agent.yaml must stay in sync with index.mjs by convention.
+#
+# First-principles rules:
+#   - YAML declares names, bindings, posture. TypeScript / JavaScript implements.
+#   - Adding an Action = one YAML row + one handler function. No new dispatch
+#     code in index.mjs once migration lands.
+#   - Approval, write targets, and idempotency live next to the Action so the
+#     BOUNDARY contract is machine-enforceable.
+
+version: 1
+
+# Profiles bundle reusable posture (skills, extensions, write authority, approval
+# mode) so multiple Actions can share the same lane without restating it.
+profiles:
+  slack-thread-to-linear:
+    description: Slack thread → Pi-drafted spec → one Linear issue.
+    skills:
+      - linear-covent
+      - covent-project-context-primer
+    extensions:
+      - env-guard
+    tools: []
+    writeTargets:
+      - linear
+    approval: explicit-intent
+
+# Actions are the team-facing inventory of what the agent will do. Each Action
+# names a handler key that the runtime resolves to a TypeScript / JavaScript
+# function at boot.
+actions:
+  - key: create-linear-issue
+    name: Create Linear issue from thread
+    description: Draft a Linear-ready spec from the current Slack thread and create one issue.
+    profile: slack-thread-to-linear
+    handler: linearFromThread
+    triggers:
+      mentionIntents:
+        - create linear issue
+        - file linear issue
+        - open linear issue
+        - file ticket
+        - open ticket
+      prefixes:
+        - "linear:"
+    target:
+      linear:
+        teamIdEnv: LINEAR_TEAM_ID
+        projectIdEnv: LINEAR_PROJECT_ID
+        stateIdEnv: LINEAR_STATE_ID
+    idempotency: scan-thread-for-prior-success
+    timeoutMs: 180000
+
+# Channels declare where the agent listens. The runtime resolves idEnv / nameEnv
+# at boot so secret-managed channel IDs stay out of the YAML.
+channels:
+  - idEnv: SLACK_ALLOWED_CHANNEL_ID
+    nameEnv: SLACK_TEST_CHANNEL_NAME
+    profile: slack-thread-to-linear
+
+# Runtime defaults that used to live as scattered env-driven constants in
+# index.mjs. Keep these declarative so we have one place to tune behavior.
+runtime:
+  pi:
+    command: pi
+    extraArgsEnv: PI_EXTRA_ARGS
+    timeoutMs: 180000
+    outputIdleMs: 2000
+    streaming: true
+  slack:
+    maxTextChars: 38000
+    streamAppendChars: 8000

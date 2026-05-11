@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:pi-mom && npm run typecheck",
+    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run validate:agent && npm run check:pi-mom && npm run typecheck",
     "doctor": "npm run doctor:pi-mom",
     "dev:pi-mom": "npm --prefix apps/pi-mom start",
     "doctor:pi-mom": "npm --prefix apps/pi-mom run doctor",
@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "validate:skills": "node scripts/validate-skills.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",
+    "validate:agent": "node scripts/validate-agent.mjs",
     "agent:new": "node scripts/scaffold-agent.mjs",
     "secret-scan": "bash scripts/secret-scan.sh",
     "install:pi": "bash scripts/install-local.sh"
