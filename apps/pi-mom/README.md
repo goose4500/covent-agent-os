@@ -144,7 +144,6 @@ Agent Run Card behavior:
 - Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
 - Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
 - Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
-- Keep `PI_MOM_ALLOW_PI_TOOLS=false`; Agent Run Card does not require globally enabling Pi tools.
 
 Local smoke test:
 
@@ -165,14 +164,11 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 - The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
 - Default target is Frontend Engineering / `Distribution` / `Backlog`.
 - Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
-- Linear environment variables are stripped from the Pi subprocess environment.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
-- Default: `PI_MOM_STREAMING=true` streams Pi stdout into Slack with Slack `chat.*Stream` APIs.
-- Buffering: `PI_MOM_STREAM_BUFFER_CHARS=1` starts/flushes quickly for live testing; raise it if rate limits become a problem.
-- Safety: Slack-related environment variables are stripped from the Pi subprocess env, token-like output is redacted before posting, the prompt is passed via a temporary `0600` file instead of argv, and Pi tools/extensions are disabled unless `PI_MOM_ALLOW_PI_TOOLS=true`.
-- Fallback: set `PI_MOM_STREAMING=false` to use the older `chat.postMessage` thinking message + final `chat.update` behavior.
+- Pi runs embedded in-process via the `@earendil-works/pi-coding-agent` SDK. Each turn opens a Slack `chat.startStream` message; the SDK's `message_update` (`text_delta`) and `tool_execution_*` events are forwarded via `chat.appendStream`, then sealed with `chat.stopStream` on `agent_end`.
+- Token-like output is redacted before posting to Slack. Per-Action tool gating is driven by `control-plane/registry.yaml`: each Action's `tools:` array constrains the SDK session via `session.setActiveToolsByName(...)`.
 
 Image route behavior in `PI_MOM_MODE=pi`:
 
@@ -213,7 +209,7 @@ As of 2026-05-03, the Covent Pi bridge has a working bare-bones path:
   → Socket Mode app_mention event
   → local bridge
   → Slack thread acknowledgement
-  → Pi subprocess in pi mode
+  → Pi SDK session (embedded) in pi mode
 ```
 
 Known-good non-secret values:
@@ -224,13 +220,12 @@ Known-good non-secret values:
 - Test channel ID: `C0B05VBGJKF`
 - Default mode for proof: `PI_MOM_MODE=echo`
 - Full mode: `PI_MOM_MODE=pi`
-- Pi model when `PI_EXTRA_ARGS=""`: Pi default `openai-codex/gpt-5.5` with high thinking
+- Pi model: whatever the SDK resolves from `~/.pi/agent/settings.json` or env-provided keys (OPENAI_API_KEY, ANTHROPIC_API_KEY); no `PI_EXTRA_ARGS`.
 
 Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 
 ## Notes
 
-- In Pi mode, the bot streams Pi stdout into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
-- Pi is launched with `--no-session --no-tools --no-extensions` by default so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Set `PI_MOM_ALLOW_PI_TOOLS=true` only for deliberate local experiments.
+- Pi runs embedded as an SDK in-process (`@earendil-works/pi-coding-agent`). There is no `pi` subprocess and no `--no-tools` flag — per-Action tool restrictions come from `control-plane/registry.yaml` and are applied via `session.setActiveToolsByName(...)` on every turn.
 - The bridge uses Slack Web API only for the current thread context and final reply.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

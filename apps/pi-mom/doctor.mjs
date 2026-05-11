@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { WebClient } from "@slack/web-api";
 
 const required = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
@@ -50,13 +49,19 @@ console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ?
 console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
 console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
 
-const piCommand = process.env.PI_COMMAND || "pi";
-const pi = spawnSync(piCommand, ["--version"], { encoding: "utf8" });
-if (pi.error) {
-  console.error(`✗ Could not run ${piCommand}: ${pi.error.message}`);
+// Pi now runs embedded as the @earendil-works/pi-coding-agent SDK (not a
+// subprocess), so we sanity-check that the SDK package is resolvable rather
+// than that a `pi` binary is on PATH.
+try {
+  await import("@earendil-works/pi-coding-agent");
+  console.log("✓ @earendil-works/pi-coding-agent is installed");
+} catch (error) {
+  console.error(`✗ @earendil-works/pi-coding-agent is not installed: ${error?.message ?? error}`);
   ok = false;
-} else {
-  console.log(`✓ ${piCommand} is available${pi.stdout ? `: ${pi.stdout.trim()}` : ""}`);
+}
+
+if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+  console.log("! Neither OPENAI_API_KEY nor ANTHROPIC_API_KEY is set; Pi will refuse to start a session in pi mode.");
 }
 
 console.log(`Test channel name: #${process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs"}`);

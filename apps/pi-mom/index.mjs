@@ -1,9 +1,6 @@
 import { App, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
 import { createRunStore } from "./lib/agent-run-store.mjs";
@@ -31,28 +28,11 @@ if (!["echo", "pi"].includes(MODE)) {
   console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
   process.exit(1);
 }
-const STREAMING_ENV = process.env.PI_MOM_STREAMING || "true";
-if (!["true", "false"].includes(STREAMING_ENV)) {
-  console.error(`Invalid PI_MOM_STREAMING=${STREAMING_ENV}. Expected true or false.`);
-  process.exit(1);
-}
-const STREAMING_ENABLED = STREAMING_ENV === "true";
-// SDK migration flag (PR 1 of the 3-PR plan). Default OFF — when true, the
-// streaming Pi path routes through @earendil-works/pi-coding-agent embedded
-// in-process instead of `spawn("pi", ...)`. PR 2 cuts over to native
-// chat.startStream + bindExtensions; PR 3 deletes the subprocess path.
-const USE_SDK = process.env.PI_MOM_USE_SDK === "true";
-const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
-const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
 if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
   console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
   process.exit(1);
 }
-const PI_COMMAND = process.env.PI_COMMAND || "pi";
-const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS || "").split(/\s+/).filter(Boolean);
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
-const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
-const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
 const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
 const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
@@ -276,13 +256,10 @@ async function formatStatus(client) {
   const uptimeSeconds = Math.round((Date.now() - STARTED_AT.getTime()) / 1000);
   return `*Covent Pi status*\n` +
     `• mode: \`${MODE}\`\n` +
-    `• streaming: \`${STREAMING_ENABLED ? "on" : "off"}\`\n` +
     `• uptime: \`${uptimeSeconds}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
-    `• pi command: \`${PI_COMMAND}\`\n` +
-    `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
     `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
     `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
     `• agent run state: \`${RUN_STATE_PATH}\`\n` +
@@ -333,7 +310,7 @@ function stripWrappingMarkdownFence(text = "") {
 }
 
 function extractLinearIssuePayload(piOutput = "") {
-  const cleaned = stripWrappingMarkdownFence(cleanPiOutput(piOutput));
+  const cleaned = stripWrappingMarkdownFence(redactSensitiveText(piOutput));
   const lines = cleaned.split(/\r?\n/);
   const titleLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i.test(line));
 
@@ -717,141 +694,12 @@ function redactSensitiveText(text = "") {
     .replace(/((?:SLACK|OPENAI|LINEAR)_[A-Z0-9_]*(?:TOKEN|SECRET|KEY)[A-Z0-9_]*\s*=\s*)(['"]?)[^\s'"]+/gi, "$1$2[REDACTED]");
 }
 
-function cleanTerminalSequences(text = "") {
-  return text
-    // Strip OSC terminal notifications like: ESC ] 777 ; notify ; ... BEL
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-    // Strip common ANSI escape sequences.
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function cleanPiOutput(text = "") {
-  return redactSensitiveText(cleanTerminalSequences(text));
-}
-
-function stripTerminalSequences(text) {
-  return cleanPiOutput(text).trim();
-}
-
-function splitForSlackStream(text, maxLength = STREAM_APPEND_CHARS) {
-  if (!text) return [];
-  const chunks = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    chunks.push(text.slice(i, i + maxLength));
-  }
-  return chunks;
-}
-
-function streamArgsForEvent({ channel, threadTs, user, team }) {
-  const teamId = team || AUTH_TEAM_ID;
-  const args = { channel, thread_ts: threadTs, buffer_size: STREAM_BUFFER_CHARS };
-  if (user && teamId) {
-    args.recipient_user_id = user;
-    args.recipient_team_id = teamId;
-  }
-  return args;
-}
-
-function piSubprocessEnv() {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("SLACK_") || key.includes("SLACK") || key.startsWith("LINEAR_") || key.includes("LINEAR")) delete env[key];
-  }
-  return env;
-}
-
-async function runPi(prompt, { onOutput } = {}) {
-  const promptDir = await mkdtemp(join(tmpdir(), "pi-mom-prompt-"));
-  const promptPath = join(promptDir, "prompt.md");
-  await writeFile(promptPath, prompt, { mode: 0o600 });
-
-  try {
-    return await new Promise((resolve, reject) => {
-      const safeRuntimeArgs = process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? [] : ["--no-tools", "--no-extensions"];
-      const args = [...PI_EXTRA_ARGS, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
-      const child = spawn(PI_COMMAND, args, {
-        env: piSubprocessEnv(),
-        cwd: process.env.PI_WORKDIR || process.env.HOME || process.cwd(),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let idleTimer;
-    let emittedOutput = "";
-
-    const emitNewOutput = () => {
-      if (typeof onOutput !== "function") return;
-      const cleanedSoFar = cleanPiOutput(stdout);
-      if (cleanedSoFar === emittedOutput) return;
-
-      const delta = cleanedSoFar.startsWith(emittedOutput)
-        ? cleanedSoFar.slice(emittedOutput.length)
-        : cleanedSoFar;
-      emittedOutput = cleanedSoFar;
-
-      if (!delta) return;
-      try {
-        onOutput(delta);
-      } catch (error) {
-        trace("pi.output_stream_callback_error", { error: error.message });
-      }
-    };
-
-    const finish = (kind, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(idleTimer);
-      clearTimeout(timeoutTimer);
-
-      const cleaned = stripTerminalSequences(stdout);
-      if (error && kind !== "stdout_idle") {
-        const message = cleaned ? `${error.message}\n\nPartial stdout:\n${cleaned}` : error.message;
-        reject(new Error(message));
-        return;
-      }
-
-      if (cleaned) {
-        trace("pi.output_ready", { kind, outputLength: cleaned.length });
-        try { child.kill("SIGTERM"); } catch {}
-        resolve(cleaned);
-        return;
-      }
-
-      if (error) reject(error);
-      else reject(new Error(`${PI_COMMAND} produced no stdout. stderr: ${stripTerminalSequences(stderr)}`));
-    };
-
-    const timeoutTimer = setTimeout(() => {
-      try { child.kill("SIGTERM"); } catch {}
-      finish("timeout", new Error(`${PI_COMMAND} timed out after ${PI_TIMEOUT_MS}ms. stderr: ${stripTerminalSequences(stderr)}`));
-    }, PI_TIMEOUT_MS);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-      emitNewOutput();
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => finish("stdout_idle"), PI_OUTPUT_IDLE_MS);
-    });
-
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
-    child.on("error", (error) => finish("process_error", error));
-    child.on("close", (code, signal) => {
-      if (code === 0) finish("process_close");
-      else finish("process_close", new Error(`${PI_COMMAND} exited ${code ?? signal}. stderr: ${stripTerminalSequences(stderr)}`));
-    });
-    });
-  } finally {
-    await rm(promptDir, { recursive: true, force: true });
-  }
-}
-
-// SDK path: createSlackSession (with per-thread persistence via runStore) +
-// runActionInSlack (native chat.startStream/appendStream/stopStream). Replaces
-// the entire subprocess-and-chat.update-loop pipeline used by runPi() +
-// runPiWithSlackStream(). Dynamic import keeps the file parseable without the
-// SDK installed — the path is only exercised when PI_MOM_USE_SDK=true.
+// One Pi turn end-to-end against Slack's native chat.startStream /
+// appendStream / stopStream API, wired through createSlackSession (which
+// owns per-thread session persistence via runStore) and runActionInSlack
+// (which drives the SDK event stream → Slack chunks). Dynamic import keeps
+// this module parseable when the SDK isn't installed (e.g. fresh clone
+// before npm install).
 async function runPiViaSdk(prompt, { threadTs, channel, client, tools } = {}) {
   const { createSlackSession, runActionInSlack } = await import("./lib/pi-runtime.mjs");
   const { session, isFollowUp } = await createSlackSession({
@@ -875,84 +723,14 @@ async function runPiViaSdk(prompt, { threadTs, channel, client, tools } = {}) {
   }
 }
 
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, tools }) {
-  // SDK path: runActionInSlack owns chat.startStream/appendStream/stopStream end-to-end.
-  // We bypass the legacy `client.chatStream(...)` wrapper entirely so we don't
-  // open two streams against the same message.
-  if (USE_SDK) {
-    trace("slack.sdk_stream_started", { requestId });
-    try {
-      const result = await runPiViaSdk(prompt, { threadTs, channel, client, tools });
-      trace("slack.sdk_stream_stopped", { requestId, resultLength: result.length });
-      return result;
-    } catch (error) {
-      trace("slack.sdk_stream_error", { requestId, error: error?.message });
-      throw error;
-    }
-  }
-
-  if (typeof client.chatStream !== "function") {
-    throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
-  }
-
-  const streamArgs = streamArgsForEvent({
-    channel,
-    threadTs,
-    user,
-    team: event.team || event.team_id || event.context_team_id,
-  });
-  const stream = client.chatStream(streamArgs);
-  let streamChain = Promise.resolve();
-  let streamError = null;
-  let streamedLength = 0;
-  let streamVisible = false;
-
-  const queueAppend = (text) => {
-    for (const markdown_text of splitForSlackStream(text)) {
-      streamedLength += markdown_text.length;
-      streamChain = streamChain
-        .then(() => stream.append({ markdown_text }))
-        .catch((error) => {
-          streamError = streamError || error;
-          trace("slack.stream_append_error", {
-            requestId,
-            error: error?.data?.error || error.message,
-          });
-        });
-    }
-    return streamChain;
-  };
-
+async function runPiWithSlackStream({ client, channel, threadTs, prompt, requestId, tools }) {
+  trace("slack.sdk_stream_started", { requestId });
   try {
-    await queueAppend(`👀 Covent Pi is thinking… (req: ${requestId})\n\n`);
-    await streamChain;
-    if (streamError) throw streamError;
-    streamVisible = true;
-    trace("slack.stream_started", {
-      requestId,
-      hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
-    });
-
-    const result = await runPi(prompt, { onOutput: queueAppend });
-    await streamChain;
-    if (streamError) throw streamError;
-    await stream.stop();
-    trace("slack.stream_stopped", { requestId, streamedLength, resultLength: result.length });
+    const result = await runPiViaSdk(prompt, { threadTs, channel, client, tools });
+    trace("slack.sdk_stream_stopped", { requestId, resultLength: result.length });
     return result;
   } catch (error) {
-    if (streamVisible) {
-      try {
-        await queueAppend(`\n\nPi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`);
-        await streamChain;
-        await stream.stop();
-        error.slackStreamNotified = true;
-      } catch (stopError) {
-        trace("slack.stream_stop_error", {
-          requestId,
-          error: stopError?.data?.error || stopError.message,
-        });
-      }
-    }
+    trace("slack.sdk_stream_error", { requestId, error: error?.message });
     throw error;
   }
 }
@@ -1112,8 +890,6 @@ async function handleRequest({ client, event, mode }) {
     }
   }
 
-  let thinking;
-
   try {
     const threadContext = await getThreadContext(client, channel, threadTs);
     trace("slack.thread_context", { requestId, contextLength: threadContext.length });
@@ -1130,51 +906,15 @@ async function handleRequest({ client, event, mode }) {
     });
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
-    if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({
-        client,
-        event,
-        channel,
-        threadTs,
-        user,
-        prompt,
-        requestId,
-        tools: Array.isArray(command.route?.tools) ? command.route.tools : undefined,
-      });
-      trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-      if (command.kind === "route" && command.routeKey === "linear") {
-        try {
-          const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
-          if (outcome.status === "duplicate") return;
-          const issue = outcome.issue;
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-        } catch (error) {
-          const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-          trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-          });
-        }
-      }
-      return;
-    }
-
-    thinking = await client.chat.postMessage({
+    const result = await runPiWithSlackStream({
+      client,
       channel,
-      thread_ts: threadTs,
-      text: `👀 Covent Pi is thinking… (req: ${requestId})`,
+      threadTs,
+      prompt,
+      requestId,
+      tools: Array.isArray(command.route?.tools) ? command.route.tools : undefined,
     });
-
-    const result = await runPi(prompt);
-    await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
-    trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+    trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
         const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
@@ -1201,12 +941,11 @@ async function handleRequest({ client, event, mode }) {
     console.error(`[pi-mom] ${requestId} error:`, error);
     if (error.slackStreamNotified) return;
 
-    const errorText = `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`;
-    if (thinking?.ts) {
-      await client.chat.update({ channel, ts: thinking.ts, text: errorText });
-    } else {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: errorText });
-    }
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`,
+    });
   }
 }
 
@@ -1439,7 +1178,7 @@ app.message(async ({ message, client }) => {
     await app.start();
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
-    console.log(`Slack streaming: ${STREAMING_ENABLED ? "enabled" : "disabled"}`);
+    console.log("Slack streaming: enabled (SDK chat.startStream)");
     console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
     console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
     console.log(`Agent run state: ${RUN_STATE_PATH}`);
