@@ -3,7 +3,7 @@
 // runs without the Pi SDK installed.
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,6 @@ try {
   // --- Fresh store: load on missing file initialises empty sessions ---
   const store = createRunStore({ path: storePath });
   const initial = await store.load();
-  assert.deepEqual(initial.runs, [], "runs starts empty");
   assert.deepEqual(initial.sessions, {}, "sessions starts empty");
   assert.equal(await store.getSessionPathForThread("1700000000.000100"), undefined, "missing thread returns undefined");
 
@@ -47,24 +46,23 @@ try {
   assert.equal(loaded.sessions[threadA], undefined, "deleted entry didn't come back");
   assert.equal(await store2.getSessionPathForThread(threadB), pathB, "getter works after reload");
 
-  // --- Back-compat: a JSON file without a `sessions` key still loads ---
+  // --- Back-compat: a JSON file from the legacy bounded-runner schema (which
+  // had a `runs:` array alongside `sessions:`) still loads. The runs field is
+  // silently dropped; the sessions field works as expected. ---
   const legacyPath = join(tmpRoot, "legacy.json");
-  const legacyStore = createRunStore({ path: legacyPath });
-  await legacyStore.load(); // ENOENT path
-  // Seed a run to force a write, then strip the sessions key off disk.
-  await legacyStore.create({ id: "run-legacy", status: "queued" });
-  const raw = JSON.parse(await readFile(legacyPath, "utf8"));
-  delete raw.sessions;
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(legacyPath, JSON.stringify(raw, null, 2));
+  const legacyOnDisk = {
+    runs: [{ id: "run-legacy", status: "queued", events: [] }],
+    sessions: { "legacy-thread": "/tmp/legacy.session" },
+  };
+  await writeFile(legacyPath, JSON.stringify(legacyOnDisk, null, 2));
 
   const legacyReload = createRunStore({ path: legacyPath });
   const legacyState = await legacyReload.load();
-  assert.deepEqual(legacyState.sessions, {}, "legacy file without sessions key loads as empty map");
-  assert.equal(legacyState.runs.length, 1, "legacy file preserves runs");
-  // And we can still write a session into it.
-  await legacyReload.setSessionPathForThread("legacy-thread", "/tmp/legacy.session");
-  assert.equal(await legacyReload.getSessionPathForThread("legacy-thread"), "/tmp/legacy.session");
+  assert.deepEqual(Object.keys(legacyState), ["sessions"], "legacy `runs:` field is dropped on load");
+  assert.equal(await legacyReload.getSessionPathForThread("legacy-thread"), "/tmp/legacy.session", "legacy sessions field still readable");
+  // And we can still write a fresh session into it.
+  await legacyReload.setSessionPathForThread("legacy-thread-2", "/tmp/legacy2.session");
+  assert.equal(await legacyReload.getSessionPathForThread("legacy-thread-2"), "/tmp/legacy2.session");
 
   // --- Input validation ---
   await assert.rejects(() => legacyReload.setSessionPathForThread("", "/x"), /threadTs/, "empty threadTs rejected");

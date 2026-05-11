@@ -135,27 +135,11 @@ Routed workflow prefixes:
 @Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
 ```
 
-In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
+In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt and constrains the SDK session to the route's `tools:` allowlist from `control-plane/registry.yaml`.
 
-Agent Run Card behavior:
+Pre-action approval (default-deny on dangerous tools) flows through `extensions/permission-gate.ts` → `apps/pi-mom/lib/slack-ui-context.mjs`, which renders Slack `alert` blocks with Yes/No buttons. The bridge resolves the pending approval when a button is clicked.
 
-- `agent:` posts a Block Kit confirmation card with **Start Run** and **Cancel** buttons before any runner executes.
-- `PI_MOM_AGENT_ROUTE_ENABLED=false` is the emergency flag: it disables new `agent:` cards and disables existing Start/Cancel button execution.
-- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
-- Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
-- Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
-
-Local smoke test:
-
-```bash
-export PI_MOM_MODE=echo
-export PI_MOM_AGENT_ROUTE_ENABLED=true
-export PI_MOM_AGENT_RUNNER=fake
-export PI_MOM_RUN_STATE_PATH=/tmp/pi-mom-runs.json
-npm run dev:pi-mom
-```
-
-Then in the allowed Slack test channel: `@Covent Pi agent: repo health smoke test`, click Cancel once, then create another card and click Start.
+Per-thread session state lives at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`): a JSON map of Slack threadTs → on-disk Pi session file. Do not store secrets there.
 
 Linear route behavior in `PI_MOM_MODE=pi`:
 
