@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node index.mjs",
     "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/linear-idempotency.mjs && node --check test-agent-run-card.mjs && node --check test-linear-idempotency.mjs && node test-agent-run-card.mjs && node test-linear-idempotency.mjs"
+    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/config.mjs && node --check lib/trace.mjs && node --check lib/domain/routes.mjs && node --check lib/domain/commands.mjs && node --check lib/domain/prompt.mjs && node --check lib/domain/redact.mjs && node --check lib/domain/slack-format.mjs && node --check lib/domain/linear-payload.mjs && node --check lib/routes/index.mjs && node --check lib/interactions/index.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/linear-idempotency.mjs && node --check test-domain.mjs && node --check test-agent-run-card.mjs && node --check test-linear-idempotency.mjs && node test-domain.mjs && node test-agent-run-card.mjs && node test-linear-idempotency.mjs"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",
