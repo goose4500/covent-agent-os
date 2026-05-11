@@ -156,12 +156,8 @@ Streaming behavior in `PI_MOM_MODE=pi`:
 
 Image route behavior in `PI_MOM_MODE=pi`:
 
-- `image:` is handled directly by the bridge, not by an unrestricted Pi subprocess.
+- `image:` is now an SDK Action like any other. The `extensions/openai-image-tools.ts` Pi extension exposes `gpt_image_generate` and `gpt_image_edit`; the registry entry restricts the Action's tool allowlist to just those two. The bridge no longer owns the route directly.
 - Requires `OPENAI_API_KEY` in the pi-mom environment.
-- `image:` / `image: generate ...` calls text-to-image generation. `image: edit ...` explicitly uses Slack image files in the current thread as references.
-- Generated files are uploaded back to the same Slack thread and saved locally under `PI_MOM_IMAGE_OUTPUT_DIR` or `~/.pi/agent/generated-images/slack`.
-- Draft defaults are cheap/fast: `OPENAI_IMAGE_MODEL=gpt-image-1`, `OPENAI_IMAGE_QUALITY=low`, `OPENAI_IMAGE_SIZE=1024x1024`, `OPENAI_IMAGE_OUTPUT_FORMAT=png`.
-- Optional knobs: `PI_MOM_IMAGE_ROUTE_ENABLED=false`, `PI_MOM_IMAGE_MAX_INPUTS=4`, `PI_MOM_IMAGE_MAX_BYTES=20971520`, `OPENAI_IMAGE_MODEL_FALLBACKS=gpt-image-1.5,gpt-image-1`.
 
 ## Observability & Tracing (DX)
 
