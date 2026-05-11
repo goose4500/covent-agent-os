@@ -4,9 +4,8 @@
 // built once at process boot, and exposes `createSlackSession({ threadTs, ... })`
 // which is the only entry point the Slack handlers should use.
 //
-// The runtime is feature-flagged behind PI_MOM_USE_SDK; index.mjs falls back
-// to the subprocess `runPi()` when the flag is off, so this module is allowed
-// to throw at import time when the package is not installed.
+// Imported dynamically from index.mjs so the file remains parseable on a
+// fresh clone before `npm install` resolves @earendil-works/pi-coding-agent.
 //
 // API surface assumed (per pi.dev/docs/latest/sdk):
 //   - AuthStorage.create()

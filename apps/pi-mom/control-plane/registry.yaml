@@ -2,10 +2,13 @@
 #
 # This file is the single source of truth for pi-mom Actions. The Slack
 # dispatcher in apps/pi-mom/index.mjs resolves an inbound message to an
-# Action key, then passes that key as `metadata.action` to `session.prompt`.
-# The `extensions/action-router.ts` extension reads `event.metadata.action`
-# in `before_agent_start` and applies the entry's `tools:` and
-# `systemPromptSuffix:` from this registry.
+# Action key (`apps/pi-mom/lib/action-resolver.mjs#resolveAction`), then:
+#   - builds a prompt that embeds the Action's `systemPromptSuffix:`
+#     (`buildPiPrompt`) so the LLM sees the workflow-specific instruction.
+#   - applies the Action's `tools:` allowlist by calling
+#     `session.setActiveToolsByName(action.tools)` in
+#     `apps/pi-mom/lib/pi-runtime.mjs#createSlackSession`.
+# No extension-side metadata read is required.
 #
 # To add or change an Action, edit the `actions:` section below. The schema
 # is enforced by `apps/pi-mom/lib/control-plane/registry-loader.mjs` and
