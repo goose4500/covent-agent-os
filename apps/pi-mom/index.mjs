@@ -35,6 +35,11 @@ if (!["true", "false"].includes(STREAMING_ENV)) {
   process.exit(1);
 }
 const STREAMING_ENABLED = STREAMING_ENV === "true";
+// SDK migration flag (PR 1 of the 3-PR plan). Default OFF — when true, the
+// streaming Pi path routes through @earendil-works/pi-coding-agent embedded
+// in-process instead of `spawn("pi", ...)`. PR 2 cuts over to native
+// chat.startStream + bindExtensions; PR 3 deletes the subprocess path.
+const USE_SDK = process.env.PI_MOM_USE_SDK === "true";
 const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
 const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
 if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
@@ -853,6 +858,48 @@ async function runPi(prompt, { onOutput } = {}) {
   }
 }
 
+// PR 1 SDK path: minimal alternative to runPi() that uses createAgentSession +
+// session.subscribe to collect text deltas into the same onOutput contract.
+// Subscribes to message_update events, forwards `text_delta` payloads to
+// onOutput, and resolves with the full text when agent_end fires. Listener is
+// fire-and-forget per pi.dev/docs/latest/sdk; host owns Slack backpressure
+// (handled by the existing splitForSlackStream chunker in runPiWithSlackStream).
+async function runPiViaSdk(prompt, { onOutput, threadTs, channel, client } = {}) {
+  const { createSlackSession } = await import("./lib/pi-runtime.mjs");
+  const { session } = await createSlackSession({ threadTs, channel, client });
+
+  let accumulated = "";
+  const done = new Promise((resolveFn, rejectFn) => {
+    const unsubscribe = session.subscribe((evt) => {
+      try {
+        if (evt?.type === "message_update") {
+          const inner = evt.assistantMessageEvent;
+          if (inner?.type === "text_delta" && typeof inner.delta === "string") {
+            accumulated += inner.delta;
+            if (typeof onOutput === "function") onOutput(inner.delta);
+          }
+        } else if (evt?.type === "agent_end") {
+          unsubscribe?.();
+          resolveFn(accumulated);
+        } else if (evt?.type === "auto_retry_failed" || evt?.type === "error") {
+          unsubscribe?.();
+          rejectFn(new Error(evt?.error?.message || "Pi SDK reported an error"));
+        }
+      } catch (err) {
+        unsubscribe?.();
+        rejectFn(err);
+      }
+    });
+  });
+
+  try {
+    await session.prompt(prompt);
+    return await done;
+  } finally {
+    try { await session.dispose(); } catch { /* swallow per Pi semantics */ }
+  }
+}
+
 async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId }) {
   if (typeof client.chatStream !== "function") {
     throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
@@ -896,7 +943,9 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
     });
 
-    const result = await runPi(prompt, { onOutput: queueAppend });
+    const result = USE_SDK
+      ? await runPiViaSdk(prompt, { onOutput: queueAppend, threadTs, channel, client })
+      : await runPi(prompt, { onOutput: queueAppend });
     await streamChain;
     if (streamError) throw streamError;
     await stream.stop();
