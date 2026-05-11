@@ -3,7 +3,6 @@ import path from "node:path";
 
 const agentRoots = [
   path.resolve(".pi", "agents"), // canonical executable project subagents
-  path.resolve("agents"), // legacy/source agent definitions
 ];
 const skillRoot = path.resolve("skills");
 const strict = process.env.STRICT_AGENT_VALIDATION === "true";

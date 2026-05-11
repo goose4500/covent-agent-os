@@ -23,15 +23,17 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/browser-use-tools.ts",
       "./extensions/env-guard.ts",
       "./extensions/git-checkpoint.ts",
       "./extensions/linear-mcp-guard.ts",
+      "./extensions/openai-image-tools.ts",
       "./extensions/permission-gate.ts",
       "./extensions/slack-mcp-guard.ts",
       "./packages/pi-ext-covent-aws/src/index.ts"
     ],
     "skills": ["./skills"],
-    "agents": ["./.pi/agents", "./agents"],
+    "agents": ["./.pi/agents"],
     "prompts": ["./prompts"]
   },
   "devDependencies": {
