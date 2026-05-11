@@ -23,7 +23,7 @@
  *   - Audit hook ships every privileged tool call to a session entry invisible
  *     to the LLM (uses pi.appendEntry).
  */
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 import { CloudWatchLogsClient, PutLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";

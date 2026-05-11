@@ -35,7 +35,7 @@
     "prompts": ["./prompts"]
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "latest",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
     "@types/node": "^22.15.3",
     "typebox": "latest",
     "typescript": "^5.9.3"
