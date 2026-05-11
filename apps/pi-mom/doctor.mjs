@@ -32,7 +32,7 @@ if (process.env.SLACK_BOT_TOKEN) {
 if (process.env.OPENAI_API_KEY) {
   console.log(`✓ OPENAI_API_KEY is set (value hidden)`);
 } else {
-  console.log(`! OPENAI_API_KEY is not set; @Covent Pi image: route and OpenAI-backed models will not work`);
+  console.log(`! OPENAI_API_KEY is not set; OpenAI-backed Pi models will not authenticate`);
 }
 
 if (process.env.LINEAR_API_KEY) {

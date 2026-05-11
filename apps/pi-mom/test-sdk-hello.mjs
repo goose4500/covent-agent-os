@@ -56,8 +56,8 @@ try {
   // We assert non-zero counts on the resources this repo loads explicitly.
   const ext = resourceLoader.getExtensions();
   check(
-    "resourceLoader loads >= 7 extensions",
-    Array.isArray(ext?.extensions) && ext.extensions.length >= 7,
+    "resourceLoader loads >= 6 extensions",
+    Array.isArray(ext?.extensions) && ext.extensions.length >= 6,
     `${ext?.extensions?.length} extensions`,
   );
 
@@ -65,18 +65,17 @@ try {
   // extensions are pure event hooks (permission-gate, env-guard, mcp-guards,
   // git-checkpoint) — they gate tool calls but register no tools of their
   // own. The tool-registering extensions in this repo are:
-  //   - browser-use-tools.ts:    browser_use_run (1)
-  //   - openai-image-tools.ts:   gpt_image_generate, gpt_image_edit (2)
-  // We assert >= 3 to catch silent failure-to-register without pinning a
-  // brittle exact count. pi-subagents (installed by a later commit) adds
-  // additional tools beyond this floor.
+  //   - browser-use-tools.ts: browser_use_run (1)
+  //   - pi-subagents:         delegate / chain / parallel tools (1+)
+  // We assert >= 2 to catch silent failure-to-register without pinning a
+  // brittle exact count.
   const toolCount = (ext?.extensions ?? []).reduce(
     (n, e) => n + (e?.tools?.size ?? 0),
     0,
   );
   check(
-    "extensions register >= 3 tools in aggregate",
-    toolCount >= 3,
+    "extensions register >= 2 tools in aggregate",
+    toolCount >= 2,
     `${toolCount} tools registered`,
   );
 

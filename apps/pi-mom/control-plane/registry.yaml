@@ -65,19 +65,6 @@ actions:
       entrypoint: repo-health
       notes: Existing legacy runner mode exists, but this Action is not active in the registry/runtime concept yet.
 
-  - key: summarize
-    name: Thread summary
-    description: Summarize the current Slack thread into decisions, questions, owners, risks, and next actions.
-    status: active
-    riskLevel: read-only
-    tools: []
-    canvas: true
-    runtime:
-      type: pi-prompt
-      entrypoint: summarize
-    systemPromptSuffix: |
-      Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.
-
   - key: linear
     name: Create Linear issue
     description: Draft a Linear-ready issue spec from the current Slack thread; the bridge creates the issue afterwards.
@@ -144,21 +131,6 @@ actions:
       entrypoint: digest
     systemPromptSuffix: |
       Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.
-
-  - key: image
-    name: GPT Image generation/edit
-    description: Generate or edit an image with OpenAI GPT Image; the Slack bridge uploads the file back to the thread.
-    status: active
-    riskLevel: creative
-    tools:
-      - gpt_image_generate
-      - gpt_image_edit
-    canvas: false
-    runtime:
-      type: pi-prompt
-      entrypoint: image
-    systemPromptSuffix: |
-      Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.
 
   - key: agent
     name: Agent Run Card

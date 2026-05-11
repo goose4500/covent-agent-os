@@ -27,7 +27,6 @@
       "./extensions/env-guard.ts",
       "./extensions/git-checkpoint.ts",
       "./extensions/linear-mcp-guard.ts",
-      "./extensions/openai-image-tools.ts",
       "./extensions/permission-gate.ts",
       "./extensions/slack-mcp-guard.ts",
       "./packages/pi-ext-covent-aws/src/index.ts"

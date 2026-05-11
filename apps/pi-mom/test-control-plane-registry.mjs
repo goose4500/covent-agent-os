@@ -28,17 +28,16 @@ assert.equal(repoHealth.riskLevel, "read-only");
 assert.equal(repoHealth.approvalMode, "Slack confirmation required before start");
 
 // The previous `legacyRoutes:` block has been folded into `actions:` entries
-// as of PR 2 of the pi-mom SDK migration. The 8 Slack prompt routes now live
-// in the registry as first-class active Actions.
+// as of PR 2 of the pi-mom SDK migration. The remaining Slack prompt routes
+// live in the registry as first-class active Actions; `summarize` and `image`
+// were retired.
 const actionKeys = new Set(registry.actions.map((action) => action.key));
 for (const expected of [
-  "summarize",
   "linear",
   "agenda",
   "escalation",
   "spec",
   "digest",
-  "image",
   "agent",
 ]) {
   assert.ok(actionKeys.has(expected), `migrated action ${expected} should be registered`);
@@ -46,6 +45,11 @@ for (const expected of [
   assert.equal(action.status, "active", `${expected} should be active`);
   assert.equal(typeof action.systemPromptSuffix, "string", `${expected} must define systemPromptSuffix`);
   assert.ok(action.systemPromptSuffix.length > 0, `${expected} must have a non-empty systemPromptSuffix`);
+}
+
+// Guard against accidental re-introduction of the deleted actions.
+for (const removed of ["summarize", "image"]) {
+  assert.ok(!actionKeys.has(removed), `${removed} action was deleted and must not be registered`);
 }
 
 assert.throws(

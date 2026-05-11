@@ -124,15 +124,12 @@ Use this only as an operator/debug fallback; the bridge replies ephemerally with
 Routed workflow prefixes:
 
 ```text
-@Covent Pi summarize: decisions, open questions, and next actions
 @Covent Pi linear: create an issue from this thread
 @Covent Pi create Linear issue
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi escalation: brief this customer/problem escalation
 @Covent Pi spec: turn this idea into a safe implementation/spec draft
 @Covent Pi digest: create a compact digest from this context
-@Covent Pi image: create a clean Covent hero visual for active buyer intelligence
-@Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
 ```
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt and constrains the SDK session to the route's `tools:` allowlist from `control-plane/registry.yaml`.
@@ -153,11 +150,6 @@ Streaming behavior in `PI_MOM_MODE=pi`:
 
 - Pi runs embedded in-process via the `@earendil-works/pi-coding-agent` SDK. Each turn opens a Slack `chat.startStream` message; the SDK's `message_update` (`text_delta`) and `tool_execution_*` events are forwarded via `chat.appendStream`, then sealed with `chat.stopStream` on `agent_end`.
 - Token-like output is redacted before posting to Slack. Per-Action tool gating is driven by `control-plane/registry.yaml`: each Action's `tools:` array constrains the SDK session via `session.setActiveToolsByName(...)`.
-
-Image route behavior in `PI_MOM_MODE=pi`:
-
-- `image:` is now an SDK Action like any other. The `extensions/openai-image-tools.ts` Pi extension exposes `gpt_image_generate` and `gpt_image_edit`; the registry entry restricts the Action's tool allowlist to just those two. The bridge no longer owns the route directly.
-- Requires `OPENAI_API_KEY` in the pi-mom environment.
 
 ## Observability & Tracing (DX)
 

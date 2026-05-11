@@ -55,7 +55,6 @@ const EXTENSION_PATHS = [
   resolve(REPO_ROOT, "./extensions/env-guard.ts"),
   resolve(REPO_ROOT, "./extensions/git-checkpoint.ts"),
   resolve(REPO_ROOT, "./extensions/linear-mcp-guard.ts"),
-  resolve(REPO_ROOT, "./extensions/openai-image-tools.ts"),
   resolve(REPO_ROOT, "./extensions/permission-gate.ts"),
   resolve(REPO_ROOT, "./extensions/slack-mcp-guard.ts"),
   resolve(REPO_ROOT, "./packages/pi-ext-covent-aws/src/index.ts"),

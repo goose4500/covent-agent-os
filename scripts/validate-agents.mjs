@@ -19,8 +19,6 @@ const toolAllowlist = new Set([
   "fetch_content",
   "find",
   "get_search_content",
-  "gpt_image_edit",
-  "gpt_image_generate",
   "grep",
   "ls",
   "mcp",
