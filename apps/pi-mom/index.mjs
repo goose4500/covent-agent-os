@@ -12,6 +12,8 @@ import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
+import { listActiveActions, resolveAction } from "./lib/action-resolver.mjs";
+import { resolveSlackApproval } from "./lib/slack-ui-context.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -79,40 +81,20 @@ const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
-const ROUTES = {
-  summarize: {
-    label: "Thread summary",
-    instruction: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.",
-  },
-  linear: {
-    label: "Create Linear issue",
-    instruction: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.",
-  },
-  agenda: {
-    label: "Meeting agenda",
-    instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
-  },
-  escalation: {
-    label: "Escalation brief",
-    instruction: "Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply.",
-  },
-  spec: {
-    label: "Spec / PRD draft",
-    instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
-  },
-  digest: {
-    label: "Digest",
-    instruction: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.",
-  },
-  image: {
-    label: "GPT Image generation/edit",
-    instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
-  },
-  agent: {
-    label: "Agent Run Card",
-    instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
-  },
-};
+// Pi Action catalog now lives in `control-plane/registry.yaml`; resolve at
+// runtime via `lib/action-resolver.mjs` (resolveAction / listActiveActions).
+// The 8 routes that used to be hardcoded here are `actions:` entries with
+// `status: active` in that file. The `systemPromptSuffix:` on each Action is
+// the verbatim instruction text that this constant used to hold.
+//
+// Routes that are part of the team-facing Slack UI (and so should appear in
+// `help:` / `status:` output) are the subset of active actions that aren't
+// control-plane internals. Centralized here so adding a new internal Action
+// doesn't accidentally leak into the help text.
+const HIDDEN_ACTION_KEYS = new Set(["run-action", "repo-health"]);
+function publicActionKeys() {
+  return listActiveActions().filter((key) => !HIDDEN_ACTION_KEYS.has(key));
+}
 
 function boundedIntegerEnv(name, fallback, { min, max }) {
   const parsed = Number(process.env[name]);
@@ -168,11 +150,12 @@ function parseCommand(text = "") {
   if (!match) return { kind: "plain", text: trimmed };
 
   const routeKey = match[1].toLowerCase();
-  if (!ROUTES[routeKey]) return { kind: "plain", text: trimmed };
+  const action = resolveAction(routeKey);
+  if (!action || action.status !== "active" || HIDDEN_ACTION_KEYS.has(routeKey)) return { kind: "plain", text: trimmed };
   return {
     kind: "route",
     routeKey,
-    route: ROUTES[routeKey],
+    route: action,
     text: match[2].trim() || `(No extra instructions after ${routeKey}:; use the Slack thread context.)`,
   };
 }
@@ -194,7 +177,7 @@ function parseThreadSpecIntent(text = "") {
   return {
     kind: "route",
     routeKey: "spec",
-    route: ROUTES.spec,
+    route: resolveAction("spec"),
     text: focus || "Turn this Slack thread into a concise PRD/spec draft.",
     naturalIntent: "thread_spec",
     requiresThread: true,
@@ -212,7 +195,7 @@ function parseLinearCreateIntent(text = "") {
   return {
     kind: "route",
     routeKey: "linear",
-    route: ROUTES.linear,
+    route: resolveAction("linear"),
     text: focus || "Create a Linear issue from this Slack thread.",
     naturalIntent: "linear_issue_create",
     requiresThread: true,
@@ -260,8 +243,11 @@ function parseSlackThreadReference(text = "") {
 }
 
 function formatHelp() {
-  const routeLines = Object.entries(ROUTES)
-    .map(([key, route]) => `• \`${key}:\` ${route.label}`)
+  const routeLines = publicActionKeys()
+    .map((key) => {
+      const action = resolveAction(key);
+      return `• \`${key}:\` ${action?.name || key}`;
+    })
     .join("\n");
 
   return `*Covent Pi commands*\n\n` +
@@ -303,7 +289,7 @@ async function formatStatus(client) {
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
-    `• routes: \`${Object.keys(ROUTES).join(", ")}\``;
+    `• routes: \`${publicActionKeys().join(", ")}\``;
 }
 
 async function getThreadMessages(client, channel, rootTs) {
@@ -464,8 +450,11 @@ async function createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, t
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
+  // route is an Action shape from action-resolver: { key, name, status, riskLevel, tools, systemPromptSuffix, canvas }
+  // (Was a ROUTES entry with { label, instruction }; both names are kept in the
+  // routeBlock so the LLM-visible prompt copy is identical to the pre-migration version.)
   const routeBlock = route
-    ? `\nRouted workflow:\n- Prefix: ${routeKey}:\n- Workflow: ${route.label}\n- Workflow instruction: ${route.instruction}\n`
+    ? `\nRouted workflow:\n- Prefix: ${routeKey}:\n- Workflow: ${route.name || route.label || routeKey}\n- Workflow instruction: ${route.systemPromptSuffix || route.instruction || ""}\n`
     : "";
 
   return `You are Covent Pi, Jake's local Pi AI agent replying into Slack through a Socket Mode bridge.
@@ -858,49 +847,49 @@ async function runPi(prompt, { onOutput } = {}) {
   }
 }
 
-// PR 1 SDK path: minimal alternative to runPi() that uses createAgentSession +
-// session.subscribe to collect text deltas into the same onOutput contract.
-// Subscribes to message_update events, forwards `text_delta` payloads to
-// onOutput, and resolves with the full text when agent_end fires. Listener is
-// fire-and-forget per pi.dev/docs/latest/sdk; host owns Slack backpressure
-// (handled by the existing splitForSlackStream chunker in runPiWithSlackStream).
-async function runPiViaSdk(prompt, { onOutput, threadTs, channel, client } = {}) {
-  const { createSlackSession } = await import("./lib/pi-runtime.mjs");
-  const { session } = await createSlackSession({ threadTs, channel, client });
-
-  let accumulated = "";
-  const done = new Promise((resolveFn, rejectFn) => {
-    const unsubscribe = session.subscribe((evt) => {
-      try {
-        if (evt?.type === "message_update") {
-          const inner = evt.assistantMessageEvent;
-          if (inner?.type === "text_delta" && typeof inner.delta === "string") {
-            accumulated += inner.delta;
-            if (typeof onOutput === "function") onOutput(inner.delta);
-          }
-        } else if (evt?.type === "agent_end") {
-          unsubscribe?.();
-          resolveFn(accumulated);
-        } else if (evt?.type === "auto_retry_failed" || evt?.type === "error") {
-          unsubscribe?.();
-          rejectFn(new Error(evt?.error?.message || "Pi SDK reported an error"));
-        }
-      } catch (err) {
-        unsubscribe?.();
-        rejectFn(err);
-      }
-    });
+// SDK path: createSlackSession (with per-thread persistence via runStore) +
+// runActionInSlack (native chat.startStream/appendStream/stopStream). Replaces
+// the entire subprocess-and-chat.update-loop pipeline used by runPi() +
+// runPiWithSlackStream(). Dynamic import keeps the file parseable without the
+// SDK installed — the path is only exercised when PI_MOM_USE_SDK=true.
+async function runPiViaSdk(prompt, { threadTs, channel, client } = {}) {
+  const { createSlackSession, runActionInSlack } = await import("./lib/pi-runtime.mjs");
+  const { session, isFollowUp } = await createSlackSession({
+    threadTs,
+    channel,
+    client,
+    runStore,
   });
-
   try {
-    await session.prompt(prompt);
-    return await done;
+    return await runActionInSlack({
+      session,
+      channel,
+      threadTs,
+      client,
+      prompt,
+      isFollowUp,
+    });
   } finally {
     try { await session.dispose(); } catch { /* swallow per Pi semantics */ }
   }
 }
 
 async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId }) {
+  // SDK path: runActionInSlack owns chat.startStream/appendStream/stopStream end-to-end.
+  // We bypass the legacy `client.chatStream(...)` wrapper entirely so we don't
+  // open two streams against the same message.
+  if (USE_SDK) {
+    trace("slack.sdk_stream_started", { requestId });
+    try {
+      const result = await runPiViaSdk(prompt, { threadTs, channel, client });
+      trace("slack.sdk_stream_stopped", { requestId, resultLength: result.length });
+      return result;
+    } catch (error) {
+      trace("slack.sdk_stream_error", { requestId, error: error?.message });
+      throw error;
+    }
+  }
+
   if (typeof client.chatStream !== "function") {
     throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
   }
@@ -943,9 +932,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
     });
 
-    const result = USE_SDK
-      ? await runPiViaSdk(prompt, { onOutput: queueAppend, threadTs, channel, client })
-      : await runPi(prompt, { onOutput: queueAppend });
+    const result = await runPi(prompt, { onOutput: queueAppend });
     await streamChain;
     if (streamError) throw streamError;
     await stream.stop();
@@ -1283,6 +1270,33 @@ async function postAgentActionNotice(client, body, text) {
     trace("agent.ephemeral_failed", { error: error?.data?.error || error.message });
   }
 }
+
+// SDK approval flow: extensions like permission-gate / linear-mcp-guard /
+// slack-mcp-guard surface `ctx.ui.select / confirm` calls; the slackUI host
+// adapter (apps/pi-mom/lib/slack-ui-context.mjs) renders them as `alert`
+// blocks with `action_id` of `pi_approval_choice_<idx>` and `block_id` of
+// `pi_approval_<approvalId>`. Clicking a button resolves the corresponding
+// pendingApprovals entry created by slackUI. The Map is module-scope inside
+// pi-runtime.mjs so it survives session replacement.
+app.action(/^pi_approval_choice_/, async ({ ack, body, action }) => {
+  await ack();
+  try {
+    const { getPendingApprovals } = await import("./lib/pi-runtime.mjs");
+    const pendingApprovals = getPendingApprovals();
+    const slackAction = Array.isArray(body?.actions) ? body.actions[0] : undefined;
+    const blockId = slackAction?.block_id;
+    const value = action?.value ?? slackAction?.value;
+    const resolved = resolveSlackApproval({ pendingApprovals, blockId, value });
+    trace("pi.approval_resolved", {
+      blockId,
+      value,
+      resolved,
+      pending: pendingApprovals.size,
+    });
+  } catch (error) {
+    trace("pi.approval_handler_error", { error: error?.message });
+  }
+});
 
 app.action("agent_run_start", async ({ ack, body, action, client }) => {
   await ack();
