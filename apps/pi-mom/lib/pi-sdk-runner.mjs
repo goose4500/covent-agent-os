@@ -10,6 +10,17 @@
 //   AssistantMessageEvent { type: "error", error: AssistantMessage, reason: "aborted"|"error" }
 //   AgentEvent { type: "agent_end", messages: AgentMessage[] } is the terminal event.
 
+// PI_OFFLINE=1 disables the SDK's "install user-scope packages from settings.json"
+// path that runs at first session creation. The default user settings list
+// `npm:pi-web-access`, `npm:pi-subagents`, etc., which trip `npm install -g`
+// (EACCES on Railway/WSL non-root). The bot doesn't use those packages — it
+// passes `noTools: "all"` + an explicit resource loader. Set this BEFORE the
+// SDK is invoked. Override with PI_OFFLINE=0 only if you specifically need
+// global package installs at runtime.
+if (process.env.PI_OFFLINE === undefined || process.env.PI_OFFLINE === "") {
+  process.env.PI_OFFLINE = "1";
+}
+
 import {
   AuthStorage,
   DefaultResourceLoader,
