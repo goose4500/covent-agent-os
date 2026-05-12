@@ -94,7 +94,7 @@ export function createRunner({
     return loader;
   }
 
-  async function runPi(prompt, { onOutput, signal } = {}) {
+  async function runPi(prompt, { onOutput, signal, sessionManager } = {}) {
     const deps = await getDeps();
     if (!deps.model) {
       throw new Error(
@@ -106,7 +106,7 @@ export function createRunner({
       cwd: workdir,
       model: deps.model,
       thinkingLevel,
-      sessionManager: SessionManager.inMemory(),
+      sessionManager: sessionManager || SessionManager.inMemory(),
       authStorage: deps.authStorage,
       modelRegistry: deps.modelRegistry,
     };

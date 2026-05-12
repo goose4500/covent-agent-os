@@ -11,6 +11,7 @@ import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from
 import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
+import { runTurn } from "./lib/pi-session.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -751,7 +752,7 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
   return args;
 }
 
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId }) {
+async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode }) {
   if (typeof client.chatStream !== "function") {
     throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
   }
@@ -794,7 +795,12 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
     });
 
-    const result = await runPi(prompt, { onOutput: queueAppend });
+    const result = await runTurn({
+      surface: mode,
+      threadTs,
+      prompt,
+      onOutput: queueAppend,
+    });
     await streamChain;
     if (streamError) throw streamError;
     await stream.stop();
@@ -994,7 +1000,7 @@ async function handleRequest({ client, event, mode }) {
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
     if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
+      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode });
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
@@ -1026,7 +1032,7 @@ async function handleRequest({ client, event, mode }) {
       text: `👀 Covent Pi is thinking… (req: ${requestId})`,
     });
 
-    const result = await runPi(prompt);
+    const result = await runTurn({ surface: mode, threadTs, prompt });
     await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
