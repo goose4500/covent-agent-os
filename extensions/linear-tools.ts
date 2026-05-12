@@ -88,9 +88,17 @@ export interface LinearToolsOptions {
 
 type AnyResult = {
   content: Array<{ type: "text"; text: string }>;
-  details?: any;
+  details: any;
   isError?: boolean;
 };
+
+function errorResult(text: string): AnyResult {
+  return {
+    content: [{ type: "text", text }],
+    details: undefined,
+    isError: true,
+  };
+}
 
 // Shared GraphQL caller. Centralizes env check, fetch error handling, and
 // AbortSignal/HTTP/GraphQL error → AgentToolResult shaping so each tool's
@@ -111,15 +119,9 @@ function makeLinearCall({
     const apiKey = env.LINEAR_API_KEY;
     if (!apiKey) {
       return {
-        error: {
-          content: [
-            {
-              type: "text",
-              text: `LINEAR_API_KEY is not set in the bot environment; cannot ${label}. Tell the user to set the env var.`,
-            },
-          ],
-          isError: true,
-        },
+        error: errorResult(
+          `LINEAR_API_KEY is not set in the bot environment; cannot ${label}. Tell the user to set the env var.`,
+        ),
       };
     }
     const apiUrl = env.LINEAR_API_URL || DEFAULT_LINEAR_API_URL;
@@ -139,29 +141,20 @@ function makeLinearCall({
           (payload?.errors || []).map((e: any) => e?.message).filter(Boolean).join("; ") ||
           `HTTP ${response.status}`;
         return {
-          error: {
-            content: [{ type: "text", text: `Linear ${label} failed: ${redactSecrets(reason)}` }],
-            isError: true,
-          },
+          error: errorResult(`Linear ${label} failed: ${redactSecrets(reason)}`),
         };
       }
       return { data: payload?.data || {} };
     } catch (err: any) {
       if (err?.name === "AbortError") {
         return {
-          error: {
-            content: [{ type: "text", text: `Linear ${label} aborted before completion.` }],
-            isError: true,
-          },
+          error: errorResult(`Linear ${label} aborted before completion.`),
         };
       }
       return {
-        error: {
-          content: [
-            { type: "text", text: `Linear ${label} request error: ${redactSecrets(err?.message || String(err))}` },
-          ],
-          isError: true,
-        },
+        error: errorResult(
+          `Linear ${label} request error: ${redactSecrets(err?.message || String(err))}`,
+        ),
       };
     }
   };
@@ -303,15 +296,9 @@ export function createLinearToolsFactory({
       async execute(_toolCallId, params: any, signal) {
         const teamId = env.LINEAR_TEAM_ID;
         if (!teamId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "LINEAR_TEAM_ID is not set in the bot environment; cannot create a Linear issue without a team.",
-              },
-            ],
-            isError: true,
-          };
+          return errorResult(
+            "LINEAR_TEAM_ID is not set in the bot environment; cannot create a Linear issue without a team.",
+          );
         }
         const projectId = env.LINEAR_PROJECT_ID;
         const stateId = env.LINEAR_STATE_ID;
@@ -329,15 +316,9 @@ export function createLinearToolsFactory({
 
         const created = result.data?.issueCreate;
         if (!created?.success || !created?.issue) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Linear issueCreate returned success=false without an issue payload. No issue was created.",
-              },
-            ],
-            isError: true,
-          };
+          return errorResult(
+            "Linear issueCreate returned success=false without an issue payload. No issue was created.",
+          );
         }
         const issue = created.issue;
         return {
@@ -387,16 +368,10 @@ export function createLinearToolsFactory({
         const rawId = String(params.issue_id || "").trim();
         const body = String(params.body || "").trim();
         if (!rawId) {
-          return {
-            content: [{ type: "text", text: "issue_id is required." }],
-            isError: true,
-          };
+          return errorResult("issue_id is required.");
         }
         if (!body) {
-          return {
-            content: [{ type: "text", text: "body is required." }],
-            isError: true,
-          };
+          return errorResult("body is required.");
         }
 
         // If the caller passed a human identifier (FE-554 style), resolve it
@@ -412,15 +387,9 @@ export function createLinearToolsFactory({
           if ("error" in lookup) return lookup.error;
           const found = lookup.data?.issue;
           if (!found?.id) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Linear issue "${rawId}" not found. Pass either the GraphQL UUID (from linear_search_issues) or a valid human identifier like FE-554.`,
-                },
-              ],
-              isError: true,
-            };
+            return errorResult(
+              `Linear issue "${rawId}" not found. Pass either the GraphQL UUID (from linear_search_issues) or a valid human identifier like FE-554.`,
+            );
           }
           issueId = found.id;
         }
@@ -434,15 +403,9 @@ export function createLinearToolsFactory({
         if ("error" in result) return result.error;
         const created = result.data?.commentCreate;
         if (!created?.success || !created?.comment) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Linear commentCreate returned success=false without a comment payload. No comment was added.",
-              },
-            ],
-            isError: true,
-          };
+          return errorResult(
+            "Linear commentCreate returned success=false without a comment payload. No comment was added.",
+          );
         }
         const comment = created.comment;
         return {

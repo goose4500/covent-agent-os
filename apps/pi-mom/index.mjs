@@ -1,13 +1,7 @@
 import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import { createDispatcher } from "./lib/dispatch.mjs";
-import { join } from "node:path";
-import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
-import { createRunStore } from "./lib/agent-run-store.mjs";
-import { buildHomeView, partitionRuns } from "./lib/home-view.mjs";
-import { createAgentRunner } from "./lib/agent-runners.mjs";
-import { createRunCanvas } from "./lib/slack-canvas.mjs";
-import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
+import { buildHomeView } from "./lib/home-view.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
@@ -52,17 +46,6 @@ const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING_LABEL = process.env.PI_MOM_THINKING_LEVEL || "high";
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
-const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
-const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
-if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
-  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake or repo-health.`);
-  process.exit(1);
-}
-const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
-const AGENT_MAX_CONCURRENT = boundedIntegerEnv("PI_MOM_AGENT_MAX_CONCURRENT", 1, { min: 1, max: 3 });
-const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT_MS", 60000, { min: 1000, max: 300000 });
-const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
-const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
@@ -87,44 +70,17 @@ const ROUTES = {
     label: "Spec / PRD draft",
     instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
   },
-  agent: {
-    label: "Agent Run Card",
-    instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
-  },
-  uictx: {
-    label: "Stage 6 UI-context probe (confirm | select | input)",
-    instruction: "Stage 6 dev probe — handled inline by the bridge; not routed to Pi.",
-  },
   bash: {
     label: "Execute bash command (gated by permission-gate)",
     instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. permission-gate may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777.",
   },
 };
 
-function boundedIntegerEnv(name, fallback, { min, max }) {
-  const parsed = Number(process.env[name]);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
-
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
   const entry = { ts: new Date().toISOString(), event: eventName, ...data };
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
 }
-
-function loadAgentActionMetadata() {
-  try {
-    return loadActionMetadata("run-action");
-  } catch (error) {
-    const message = error?.message || String(error);
-    console.warn(`Agent action registry unavailable; using default action metadata. ${message}`);
-    trace("agent.registry_fallback", { error: message });
-    return DEFAULT_ACTION_METADATA;
-  }
-}
-
-const AGENT_ACTION_METADATA = loadAgentActionMetadata();
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
@@ -282,8 +238,6 @@ async function formatStatus(client) {
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi model: \`${PI_MODEL_LABEL}\` (thinking: \`${PI_THINKING_LABEL}\`)\n` +
     `• pi tools: per-route from \`control-plane/registry.yaml\`\n` +
-    `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
-    `• agent run state: \`${RUN_STATE_PATH}\`\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
@@ -303,16 +257,6 @@ async function getThreadContext(client, channel, rootTs) {
       .join("\n");
   } catch (error) {
     return `Thread context unavailable from Slack Web API: ${error?.data?.error || error.message}`;
-  }
-}
-
-async function getSlackPermalink(client, channel, messageTs) {
-  try {
-    const response = await client.chat.getPermalink({ channel, message_ts: messageTs });
-    return response.ok ? response.permalink : "";
-  } catch (error) {
-    trace("slack.permalink_failed", { error: error?.data?.error || error.message });
-    return "";
   }
 }
 
@@ -372,21 +316,6 @@ function cleanPiOutput(text = "") {
   return redactSensitiveText(cleanTerminalSequences(text));
 }
 
-// TODO Stage 10 — delete `splitForSlackStream` entirely. It was the legacy
-// markdown chunker called from queueAppend in the old runPiWithSlackStream;
-// the Stage-5 slack-sink batches by time-window (appendBatchMs=200) and emits
-// a single markdown_text chunk per batch instead, so this function is now
-// unreferenced by the production hot path. Kept here only to defer churn —
-// no production code calls it.
-function splitForSlackStream(text, maxLength = 8000) {
-  if (!text) return [];
-  const chunks = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    chunks.push(text.slice(i, i + maxLength));
-  }
-  return chunks;
-}
-
 function streamArgsForEvent({ channel, threadTs, user, team }) {
   const teamId = team || AUTH_TEAM_ID;
   const args = { channel, thread_ts: threadTs };
@@ -395,62 +324,6 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
     args.recipient_team_id = teamId;
   }
   return args;
-}
-
-async function handleUIContextProbe({ client, channel, threadTs, requestId, text, mode, utilities, user }) {
-  const raw = String(text || "").trim();
-  const subMatch = raw.match(/^(confirm|select|input)\b\s*(.*)$/i);
-  const sub = subMatch?.[1]?.toLowerCase() || "confirm";
-  const arg = subMatch?.[2]?.trim() || "";
-
-  const slackUI = createSlackUIContext({
-    client,
-    channel,
-    threadTs,
-    requestId,
-    pendingApprovals,
-    surface: mode,
-    assistantSetStatus: utilities?.setStatus,
-    trace,
-  });
-
-  trace("uictx_probe.start", { requestId, sub, argLength: arg.length, mode });
-  const startedAt = Date.now();
-  let outcome;
-  try {
-    if (sub === "select") {
-      const options = arg
-        ? arg.split(/\s*,\s*/).filter(Boolean).slice(0, 5)
-        : ["Yes", "No"];
-      outcome = await slackUI.select(
-        arg ? `Stage 6 probe: choose one (req ${requestId})` : `Stage 6 probe: Allow rm -rf /tmp/test-canary? (req ${requestId})`,
-        options,
-        { timeout: 120_000 },
-      );
-    } else if (sub === "input") {
-      outcome = await slackUI.input(
-        `Stage 6 probe: input (req ${requestId})`,
-        arg || "Type anything; the bridge will echo it back.",
-        { timeout: 120_000 },
-      );
-    } else {
-      outcome = await slackUI.confirm(
-        `Stage 6 probe: confirm (req ${requestId})`,
-        arg || "Click Approve to confirm the UI context wiring is live.",
-        { timeout: 120_000 },
-      );
-    }
-  } finally {
-    slackUI.dispose("probe_end");
-  }
-
-  const durationMs = Date.now() - startedAt;
-  trace("uictx_probe.resolved", { requestId, sub, durationMs, outcome: typeof outcome === "string" ? `len:${outcome.length}` : outcome });
-  await client.chat.postMessage({
-    channel,
-    thread_ts: threadTs,
-    text: `📨 Stage 6 probe (req: ${requestId}) — *${sub}* resolved in \`${durationMs}ms\`\nresult: \`${JSON.stringify(outcome)}\``,
-  });
 }
 
 // Stage 8 — routes whose output is long-form enough to deserve a Slack
@@ -574,9 +447,6 @@ const app = new App({
   logLevel: process.env.PI_MOM_DEBUG === "true" ? LogLevel.DEBUG : LogLevel.INFO,
 });
 
-const runStore = createRunStore({ path: RUN_STATE_PATH, trace });
-const agentRunner = createAgentRunner({ mode: AGENT_RUNNER_MODE, trace, workdir: REPO_HEALTH_WORKDIR, timeoutMs: AGENT_COMMAND_TIMEOUT_MS });
-const activeRuns = new Map();
 // Stage 6: ExtensionUIContext → Slack approval modals. Pi extensions like
 // permission-gate call ctx.ui.select/confirm/input from inside an agent loop;
 // `lib/slack-ui-context.mjs` translates those into interactive thread
@@ -585,12 +455,11 @@ const activeRuns = new Map();
 // can resolve the original promise from a button click or view submission.
 const pendingApprovals = new Map();
 
-// Stage 7 — App Home cockpit. The Home tab shows a read-only snapshot:
-// header → approvals waiting → in-flight runs → recent activity. We push
-// updates on every state change: runStore.create/update calls below, plus
-// pendingApprovals add/remove. Slack has no broadcast for Home views, so we
-// publish per-user (event.user for app_home_opened, run.user for run-driven
-// pushes, entry.requesterUserId for approval-driven pushes).
+// Stage 7 — App Home cockpit. The Home tab shows a read-only snapshot of
+// pending approvals. Pushes fire from the pendingApprovals set/delete
+// wrappers below. Slack has no broadcast for Home views, so we publish
+// per-user (event.user for app_home_opened, entry.requesterUserId for
+// approval-driven pushes).
 const homeWatchedUsers = new Set();
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
 
@@ -598,21 +467,12 @@ async function publishHomeForUser(client, userId) {
   if (!userId) return;
   homeWatchedUsers.add(userId);
   try {
-    const allRuns = await runStore.listRecent(50);
-    const { activeRuns: active, recentRuns } = partitionRuns(allRuns);
-    const view = buildHomeView({
-      activeRuns: active,
-      recentRuns,
-      pendingApprovals,
-      now: Date.now(),
-    });
+    const view = buildHomeView({ pendingApprovals, now: Date.now() });
     const payloadKb = Math.round(JSON.stringify(view).length / 1024 * 10) / 10;
     await (client || slackClient).views.publish({ user_id: userId, view });
     trace("app_home.published", {
       user: userId,
-      runCount: active.length,
       approvalCount: pendingApprovals.size,
-      recentActivityCount: recentRuns.length,
       viewKb: payloadKb,
     });
   } catch (error) {
@@ -645,18 +505,6 @@ pendingApprovals.delete = function (key) {
   if (result) publishHomeForAllWatched(slackClient);
   return result;
 };
-
-function isoNow() {
-  return new Date().toISOString();
-}
-
-function appendRunEvent(run, event) {
-  return [...(Array.isArray(run.events) ? run.events : []), { ts: isoNow(), ...event }].slice(-50);
-}
-
-function runId() {
-  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 app.error(async (error) => {
   console.error("[pi-mom] Bolt error", error);
@@ -716,41 +564,6 @@ async function handleRequest({ client, event, mode, utilities }) {
     return;
   }
 
-  if (command.kind === "route" && command.routeKey === "agent") {
-    if (!AGENT_ROUTE_ENABLED) {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "The `agent:` route is disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`." });
-      trace("agent.route_disabled", { requestId });
-      return;
-    }
-
-    const parsed = parseAgentRequest(text);
-    if (!parsed?.prompt) {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "Usage: `@Covent Pi agent: <bounded task>`" });
-      trace("agent.replied_usage", { requestId });
-      return;
-    }
-
-    const sourceUrl = await getSlackPermalink(client, channel, threadTs);
-    let run = await runStore.create({
-      id: runId(),
-      status: "pending_confirmation",
-      runnerMode: AGENT_RUNNER_MODE,
-      prompt: parsed.prompt,
-      channel,
-      threadTs,
-      user,
-      team: event.team || event.team_id || AUTH_TEAM_ID,
-      sourceUrl,
-      events: [{ ts: isoNow(), type: "created", text: "Awaiting Slack confirmation" }],
-    });
-    const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run, AGENT_ACTION_METADATA) });
-    run = await runStore.update(run.id, { messageTs: message.ts });
-    trace("agent.confirmation_posted", { requestId, runId: run.id, runnerMode: AGENT_RUNNER_MODE });
-    // Stage 7: push the new pending run into the requester's Home cockpit.
-    publishHomeForUser(client, run.user);
-    return;
-  }
-
   if (MODE === "echo") {
     await client.chat.postMessage({
       channel,
@@ -758,19 +571,6 @@ async function handleRequest({ client, event, mode, utilities }) {
       text: `✅ Covent Pi event received.\nreq: ${requestId}\nmode: ${mode}\nroute: ${command.routeKey || "none"}\ntext: ${text || "(empty)"}`,
     });
     trace("slack.replied_echo", { requestId, durationMs: Date.now() - start, route: command.routeKey });
-    return;
-  }
-
-  // Stage 6 dev probe — exercises lib/slack-ui-context.mjs end-to-end without
-  // requiring extensions to be loaded. `uictx: confirm <msg>` posts approval
-  // buttons and echoes the boolean back. `uictx: select <opts>` posts buttons
-  // for a comma-separated list and echoes the chosen option. `uictx: input
-  // <placeholder>` opens the modal launcher and echoes the submitted text.
-  // TODO Stage 10 — delete this route once permission-gate.ts is loaded and
-  // a real Action allows bash, at which point the natural extension flow is
-  // the canary.
-  if (command.kind === "route" && command.routeKey === "uictx") {
-    await handleUIContextProbe({ client, channel, threadTs, requestId, text, mode, utilities, user });
     return;
   }
 
@@ -866,137 +666,6 @@ app.command("/thread-spec", async ({ command, ack, client, respond }) => {
   await handleThreadSpecSlashCommand({ command, client, respond });
 });
 
-async function postAgentActionNotice(client, body, text) {
-  const channel = body.channel?.id || body.container?.channel_id;
-  const user = body.user?.id;
-  if (!channel || !user) return;
-  try {
-    await client.chat.postEphemeral({ channel, user, text });
-  } catch (error) {
-    trace("agent.ephemeral_failed", { error: error?.data?.error || error.message });
-  }
-}
-
-app.action("agent_run_start", async ({ ack, body, action, client }) => {
-  await ack();
-  if (!AGENT_ROUTE_ENABLED) {
-    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
-    trace("agent.start_blocked_disabled", { runId: action.value });
-    return;
-  }
-
-  const id = action.value;
-  let run = await runStore.get(id);
-  if (!run) {
-    await postAgentActionNotice(client, body, "Agent run not found; it may have been pruned or created by another environment.");
-    return;
-  }
-  if (!isAllowedChannel(run.channel)) {
-    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
-    trace("agent.start_blocked_channel", { runId: id, channel: run.channel });
-    return;
-  }
-  if (run.status !== "pending_confirmation") {
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    return;
-  }
-  if (activeRuns.size >= AGENT_MAX_CONCURRENT) {
-    await postAgentActionNotice(client, body, "Another agent run is active; wait for it to finish or cancel it first.");
-    return;
-  }
-
-  const controller = new AbortController();
-  activeRuns.set(id, controller);
-  run = await runStore.update(id, {
-    status: "running",
-    startedAt: isoNow(),
-    approvedBy: body.user?.id,
-    events: appendRunEvent(run, { type: "started", text: `Started by <@${body.user?.id || "unknown"}>` }),
-  });
-  await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-  // Stage 7: push the running state into the Home cockpit.
-  publishHomeForUser(client, run.user);
-
-  try {
-    const result = await agentRunner.run({
-      run,
-      signal: controller.signal,
-      onEvent: async (event) => {
-        run = await runStore.update(id, { events: appendRunEvent(run, event) });
-        await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-      },
-    });
-    let canvas;
-    if (AGENT_CANVAS_ENABLED) {
-      canvas = await createRunCanvas({ client, run, markdown: result.markdown, channel: run.channel, trace });
-    }
-    run = await runStore.update(id, {
-      status: "succeeded",
-      finishedAt: isoNow(),
-      result,
-      canvas,
-      events: appendRunEvent(run, { type: "succeeded", text: "Agent run completed" }),
-    });
-    trace("agent.succeeded", { runId: id });
-  } catch (error) {
-    const status = controller.signal.aborted ? "canceled" : "failed";
-    run = await runStore.update(id, {
-      status,
-      finishedAt: isoNow(),
-      error: redactSensitiveText(error?.message || String(error)).slice(0, 2000),
-      events: appendRunEvent(run, { type: status, text: status === "canceled" ? "Agent run canceled" : "Agent run failed" }),
-    });
-    trace("agent.finished_with_error", { runId: id, status, error: run.error });
-  } finally {
-    activeRuns.delete(id);
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    // Stage 7: push the terminal state into the Home cockpit (succeeded /
-    // failed / canceled — the run leaves "in flight" and joins "recent").
-    publishHomeForUser(client, run.user);
-  }
-});
-
-app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
-  await ack();
-  if (!AGENT_ROUTE_ENABLED) {
-    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
-    trace("agent.cancel_blocked_disabled", { runId: action.value });
-    return;
-  }
-
-  const id = action.value;
-  let run = await runStore.get(id);
-  if (!run) return;
-  if (!isAllowedChannel(run.channel)) {
-    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
-    trace("agent.cancel_blocked_channel", { runId: id, channel: run.channel });
-    return;
-  }
-
-  const active = activeRuns.get(id);
-  if (active) {
-    active.abort();
-    run = await runStore.update(id, {
-      events: appendRunEvent(run, { type: "cancel_requested", text: `Cancel requested by <@${body.user?.id || "unknown"}>` }),
-    });
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    publishHomeForUser(client, run.user);
-    return;
-  }
-
-  if (run.status === "pending_confirmation") {
-    run = await runStore.update(id, {
-      status: "canceled",
-      canceledBy: body.user?.id,
-      finishedAt: isoNow(),
-      events: appendRunEvent(run, { type: "canceled", text: `Canceled before start by <@${body.user?.id || "unknown"}>` }),
-    });
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    publishHomeForUser(client, run.user);
-  } else {
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-  }
-});
 
 // Stage 6 — ExtensionUIContext approval handlers. These resolve the
 // promise returned to Pi from ctx.ui.{confirm,select,input}. The pending
@@ -1059,9 +728,9 @@ app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ 
 const { dispatchToAction } = createDispatcher({ handleRequest, trace });
 
 // Stage 7 — App Home cockpit. The user opening the bot's Home tab triggers
-// `app_home_opened`; we publish the current state (active runs, pending
-// approvals, recent activity). Subsequent pushes are fired from runStore
-// mutation sites and from the pendingApprovals set/delete wrappers above.
+// `app_home_opened`; we publish the current state (pending approvals).
+// Subsequent pushes are fired from the pendingApprovals set/delete wrappers
+// above.
 app.event("app_home_opened", async ({ event, client }) => {
   if (event?.tab && event.tab !== "home") return;
   await publishHomeForUser(client, event?.user);
@@ -1116,13 +785,10 @@ app.assistant(assistant);
 (async () => {
   try {
     await preflight();
-    await runStore.load();
     await app.start();
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
     console.log("Slack streaming: enabled (slack-sink + heartbeat)");
-    console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
-    console.log(`Agent run state: ${RUN_STATE_PATH}`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);

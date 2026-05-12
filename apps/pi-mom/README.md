@@ -121,67 +121,31 @@ Fallback slash command:
 
 Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
 
-Routed workflow prefixes:
+Routed workflow prefixes (defined in `control-plane/registry.yaml`):
 
 ```text
 @Covent Pi summarize: decisions, open questions, and next actions
-@Covent Pi linear: create an issue from this thread
-@Covent Pi create Linear issue
+@Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
 @Covent Pi agenda: prep a meeting agenda from this thread
-@Covent Pi escalation: brief this customer/problem escalation
-@Covent Pi spec: turn this idea into a safe implementation/spec draft
-@Covent Pi digest: create a compact digest from this context
-@Covent Pi image: create a clean Covent hero visual for active buyer intelligence
-@Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
+@Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
+@Covent Pi bash: <command>   (runs via the bash tool; rm -rf/sudo/chmod 777/chown 777 require Slack approval)
 ```
+
+Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine; the permission-gate extension intercepts dangerous shell commands.
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
-Agent Run Card behavior:
-
-- `agent:` posts a Block Kit confirmation card with **Start Run** and **Cancel** buttons before any runner executes.
-- `PI_MOM_AGENT_ROUTE_ENABLED=false` is the emergency flag: it disables new `agent:` cards and disables existing Start/Cancel button execution.
-- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
-- Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
-- Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
-- Pi tool gating is now per-route, driven by `control-plane/registry.yaml` under the `routes:` block (Stage 4 of the foundation rebuild). The legacy `PI_MOM_ALLOW_PI_TOOLS` env flag was removed; Agent Run Card runs do not enable Pi tools.
-
-Local smoke test:
-
-```bash
-export PI_MOM_MODE=echo
-export PI_MOM_AGENT_ROUTE_ENABLED=true
-export PI_MOM_AGENT_RUNNER=fake
-export PI_MOM_RUN_STATE_PATH=/tmp/pi-mom-runs.json
-bun --filter pi-mom run start
-```
-
-Then in the allowed Slack test channel: `@Covent Pi agent: repo health smoke test`, click Cancel once, then create another card and click Start.
-
 Linear route behavior in `PI_MOM_MODE=pi`:
 
-- `linear:` / `create Linear issue` first asks Pi to write a Linear-ready issue spec from the Slack thread.
-- Pi's first line should be `Title: <issue title>`; the bridge uses that as the Linear title.
-- The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
-- Default target is Frontend Engineering / `Distribution` / `Backlog`.
-- Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
-- Pi is embedded in-process via the `@earendil-works/pi-coding-agent` SDK (no subprocess); the prompt is passed directly via `session.prompt(text)`.
+- Driven by the modular Linear Pi custom tools (`extensions/linear-tools.ts`): `linear_search_issues`, `linear_create_issue`, `linear_add_comment`.
+- The model's prompt nudges it to search first, then comment-or-create — idempotency lives in the model's reasoning, not in a post-stream guard.
+- Default target is Frontend Engineering / `Distribution` / `Backlog` (override with `LINEAR_TEAM_ID` / `LINEAR_PROJECT_ID` / `LINEAR_STATE_ID`).
+- Requires `LINEAR_API_KEY`. Without it, each tool returns an `isError` result and the model reports the missing key to the user.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
-- Default: `PI_MOM_STREAMING=true` streams Pi `text_delta` events into Slack via Slack `chat.*Stream` APIs.
-- Buffering: `PI_MOM_STREAM_BUFFER_CHARS=1` starts/flushes quickly for live testing; raise it if rate limits become a problem.
-- Safety: Pi tool gating is per-route via `control-plane/registry.yaml`. Routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` configured with `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
-- Fallback: set `PI_MOM_STREAMING=false` to use the older `chat.postMessage` thinking message + final `chat.update` behavior.
-
-Image route behavior in `PI_MOM_MODE=pi`:
-
-- `image:` is handled directly by the bridge, not by the Pi SDK runner.
-- Requires `OPENAI_API_KEY` in the pi-mom environment.
-- `image:` / `image: generate ...` calls text-to-image generation. `image: edit ...` explicitly uses Slack image files in the current thread as references.
-- Generated files are uploaded back to the same Slack thread and saved locally under `PI_MOM_IMAGE_OUTPUT_DIR` or `~/.pi/agent/generated-images/slack`.
-- Draft defaults are cheap/fast: `OPENAI_IMAGE_MODEL=gpt-image-1`, `OPENAI_IMAGE_QUALITY=low`, `OPENAI_IMAGE_SIZE=1024x1024`, `OPENAI_IMAGE_OUTPUT_FORMAT=png`.
-- Optional knobs: `PI_MOM_IMAGE_ROUTE_ENABLED=false`, `PI_MOM_IMAGE_MAX_INPUTS=4`, `PI_MOM_IMAGE_MAX_BYTES=20971520`, `OPENAI_IMAGE_MODEL_FALLBACKS=gpt-image-1.5,gpt-image-1`.
+- Streaming is always on via `lib/slack-sink.mjs` (Stage 5). It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep Slack's stream session alive across long thinking runs.
+- Pi tool gating is per-route via `control-plane/registry.yaml`. Routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` configured with `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
 
 ## Observability & Tracing (DX)
 

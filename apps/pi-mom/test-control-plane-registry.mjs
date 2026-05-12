@@ -28,7 +28,7 @@ assert.equal(repoHealth.riskLevel, "read-only");
 assert.equal(repoHealth.approvalMode, "Slack confirmation required before start");
 
 assert.ok(Array.isArray(registry.legacyRoutes), "legacyRoutes should be present");
-assert.ok(registry.legacyRoutes.length >= 11, "legacy routes should document current Slack routes and handlers (image/digest/escalation removed)");
+assert.ok(registry.legacyRoutes.length >= 8, "legacy routes should document current Slack routes and handlers (agent/image/digest/escalation removed)");
 for (const route of registry.legacyRoutes) {
   assert.equal(typeof route.name, "string");
   assert.ok(route.name.length > 0);
@@ -47,9 +47,6 @@ for (const expected of [
   "linear",
   "agenda",
   "spec",
-  "agent",
-  "agent_run_start",
-  "agent_run_cancel",
   "app_mention",
   "direct_message",
 ]) {

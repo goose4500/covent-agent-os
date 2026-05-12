@@ -25,8 +25,8 @@ import {
 // tokenVerificationEnabled:false + deferInitialization:true skip the
 // auth.test() call that Bolt would otherwise fire during instantiation.
 const app = new App({
-  token: "xoxb-fake-for-instantiation-only",
-  appToken: "xapp-fake-for-instantiation-only",
+  token: "xoxb-fake-placeholder",
+  appToken: "xapp-fake-placeholder",
   socketMode: true,
   logLevel: LogLevel.ERROR,
   tokenVerificationEnabled: false,

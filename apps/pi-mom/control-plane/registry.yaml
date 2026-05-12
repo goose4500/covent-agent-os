@@ -55,10 +55,14 @@ actions:
 # tools active, identical to legacy noTools:"all" posture). `approvals` is
 # advisory until the modal gate lands in a later stage.
 routes:
+  # Unprefixed mentions — give Pi the full default agentic toolset so it can
+  # actually do work on the machine. permission-gate intercepts rm -rf /
+  # sudo / chmod 777 / chown 777 via a Slack approval modal before the call
+  # executes; everything else runs without prompting.
   plain:
-    tools: []
+    tools: ["bash", "read", "grep", "find", "edit", "write"]
     systemPromptSuffix: ""
-    approvals: none
+    approvals: tool
   help:
     tools: []
     systemPromptSuffix: ""
@@ -86,10 +90,6 @@ routes:
     tools: []
     systemPromptSuffix: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions."
     approvals: none
-  agent:
-    tools: []
-    systemPromptSuffix: "Show a Slack confirmation card before running a bounded fake or repo-health agent task."
-    approvals: modal
   # Stage 6.5: bash route with the built-in `bash` tool active. The
   # permission-gate inline extension (extensions/permission-gate.ts) gates
   # rm -rf / sudo / chmod 777 / chown 777 by calling
@@ -142,24 +142,6 @@ legacyRoutes:
       - "Slash command: /thread-spec <Slack message/thread URL> [optional focus]"
     status: legacy-active
     notes: Pi prompt route for PRD/spec drafts; natural intent requires a thread.
-
-  - name: agent
-    triggers:
-      - "Slack app mention or DM prefix: agent:"
-    status: legacy-active
-    notes: Shows an Agent Run Card for bounded fake or repo-health runner tasks; controlled by PI_MOM_AGENT_ROUTE_ENABLED.
-
-  - name: agent_run_start
-    triggers:
-      - "Slack block action: agent_run_start"
-    status: legacy-active
-    notes: Button action that starts a pending Agent Run Card task.
-
-  - name: agent_run_cancel
-    triggers:
-      - "Slack block action: agent_run_cancel"
-    status: legacy-active
-    notes: Button action that cancels a pending/running Agent Run Card task.
 
   - name: app_mention
     triggers:
