@@ -17,11 +17,16 @@
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_HEARTBEAT_THRESHOLD_MS = 25_000;
 const DEFAULT_APPEND_BATCH_MS = 200;
-// Slack's chat.startStream messages cap at ~12 000 chars of cumulative
-// markdown_text; appendStream rejects with msg_too_long past that and the
-// whole stream message can fail-closed empty. Rotate to a new stream a bit
-// under that ceiling so the user always sees their reply.
-const DEFAULT_MAX_STREAM_CHARS = 11_000;
+// Slack's chat.startStream messages reject `chat.appendStream` calls with
+// `msg_too_long` once a stream crosses some opaque cumulative cap (observed
+// empirically around 11 000 chars). Crucially: a single `msg_too_long`
+// during the stream's life poisons the whole stream — `chat.stopStream`
+// later finalizes the message as empty in Slack's UI even though the prior
+// appends succeeded. So rotation must happen STRICTLY before Slack returns
+// any rejection. 9 000 gives ~2 000 chars of headroom for Bolt's 256-char
+// buffer + in-flight chain entries + the size of any markdown overhead
+// Slack counts on its side.
+const DEFAULT_MAX_STREAM_CHARS = 9_000;
 const ZERO_WIDTH_SPACE = "​";
 
 export function createSlackSink({
