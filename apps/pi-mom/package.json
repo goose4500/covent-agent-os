@@ -5,17 +5,17 @@
   "type": "module",
   "description": "Socket Mode Slack bridge for routing Covent Slack requests into Pi agents.",
   "engines": {
-    "node": ">=22 <25",
-    "npm": ">=10"
+    "bun": ">=1.3.0"
   },
   "scripts": {
-    "start": "node index.mjs",
-    "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/control-plane/registry-loader.mjs && node --check lib/linear-idempotency.mjs && node --check test-agent-run-card.mjs && node --check test-control-plane-registry.mjs && node --check test-linear-idempotency.mjs && node test-agent-run-card.mjs && node test-control-plane-registry.mjs && node test-linear-idempotency.mjs"
+    "start": "bun index.mjs",
+    "doctor": "bun doctor.mjs",
+    "check": "bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-tools.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-home-view.mjs && bun test-canvas-sink.mjs && bun test-composite-sink.mjs && bun test-bun-compat.mjs"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
     "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.15.2",
     "yaml": "^2.8.4"
   }
 }

@@ -39,7 +39,7 @@ Copy the app token (`xapp-...`) into your local secret manager.
 From the repo root:
 
 ```bash
-npm install
+bun install
 ```
 
 ## 5. Load tokens locally
@@ -80,8 +80,8 @@ export LINEAR_API_KEY='lin_api_...'
 From the repo root:
 
 ```bash
-npm run doctor:pi-mom
-npm run dev:pi-mom
+bun --filter pi-mom run doctor
+bun --filter pi-mom run start
 ```
 
 Before live local testing, confirm whether the Railway production worker is already running. Do not intentionally run duplicate workers against the same Slack app/channel unless you are doing controlled debugging.
@@ -121,67 +121,31 @@ Fallback slash command:
 
 Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
 
-Routed workflow prefixes:
+Routed workflow prefixes (defined in `control-plane/registry.yaml`):
 
 ```text
 @Covent Pi summarize: decisions, open questions, and next actions
-@Covent Pi linear: create an issue from this thread
-@Covent Pi create Linear issue
+@Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
 @Covent Pi agenda: prep a meeting agenda from this thread
-@Covent Pi escalation: brief this customer/problem escalation
-@Covent Pi spec: turn this idea into a safe implementation/spec draft
-@Covent Pi digest: create a compact digest from this context
-@Covent Pi image: create a clean Covent hero visual for active buyer intelligence
-@Covent Pi image: edit use the image attached in this thread as reference and restyle it as a polished Covent asset
+@Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
+@Covent Pi bash: <command>   (runs via the bash tool; rm -rf/sudo/chmod 777/chown 777 require Slack approval)
 ```
+
+Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine; the permission-gate extension intercepts dangerous shell commands.
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
-Agent Run Card behavior:
-
-- `agent:` posts a Block Kit confirmation card with **Start Run** and **Cancel** buttons before any runner executes.
-- `PI_MOM_AGENT_ROUTE_ENABLED=false` is the emergency flag: it disables new `agent:` cards and disables existing Start/Cancel button execution.
-- Runner modes are intentionally bounded: `PI_MOM_AGENT_RUNNER=fake` executes no tools; `repo-health` only runs fixed read-only command tuples with `shell: false`, scrubbed environment, timeouts, and output caps.
-- Run state is JSON metadata only at `PI_MOM_RUN_STATE_PATH` (default `~/.pi/agent/pi-mom/runs.json`). Do not store secrets there.
-- Optional Canvas creation uses Slack `canvases.create` best-effort after success. Canvas failures are traced but do not fail the run. Disable with `PI_MOM_AGENT_CANVAS_ENABLED=false`.
-- Keep `PI_MOM_ALLOW_PI_TOOLS=false`; Agent Run Card does not require globally enabling Pi tools.
-
-Local smoke test:
-
-```bash
-export PI_MOM_MODE=echo
-export PI_MOM_AGENT_ROUTE_ENABLED=true
-export PI_MOM_AGENT_RUNNER=fake
-export PI_MOM_RUN_STATE_PATH=/tmp/pi-mom-runs.json
-npm run dev:pi-mom
-```
-
-Then in the allowed Slack test channel: `@Covent Pi agent: repo health smoke test`, click Cancel once, then create another card and click Start.
-
 Linear route behavior in `PI_MOM_MODE=pi`:
 
-- `linear:` / `create Linear issue` first asks Pi to write a Linear-ready issue spec from the Slack thread.
-- Pi's first line should be `Title: <issue title>`; the bridge uses that as the Linear title.
-- The full generated spec becomes the Linear issue description, plus a source Slack thread link and request ID.
-- Default target is Frontend Engineering / `Distribution` / `Backlog`.
-- Requires `LINEAR_API_KEY`. If missing, the bridge still posts the draft spec but replies that no Linear issue was created.
-- Linear environment variables are stripped from the Pi subprocess environment.
+- Driven by the modular Linear Pi custom tools (`extensions/linear-tools.ts`): `linear_search_issues`, `linear_create_issue`, `linear_add_comment`.
+- The model's prompt nudges it to search first, then comment-or-create — idempotency lives in the model's reasoning, not in a post-stream guard.
+- Default target is Frontend Engineering / `Distribution` / `Backlog` (override with `LINEAR_TEAM_ID` / `LINEAR_PROJECT_ID` / `LINEAR_STATE_ID`).
+- Requires `LINEAR_API_KEY`. Without it, each tool returns an `isError` result and the model reports the missing key to the user.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
-- Default: `PI_MOM_STREAMING=true` streams Pi stdout into Slack with Slack `chat.*Stream` APIs.
-- Buffering: `PI_MOM_STREAM_BUFFER_CHARS=1` starts/flushes quickly for live testing; raise it if rate limits become a problem.
-- Safety: Slack-related environment variables are stripped from the Pi subprocess env, token-like output is redacted before posting, the prompt is passed via a temporary `0600` file instead of argv, and Pi tools/extensions are disabled unless `PI_MOM_ALLOW_PI_TOOLS=true`.
-- Fallback: set `PI_MOM_STREAMING=false` to use the older `chat.postMessage` thinking message + final `chat.update` behavior.
-
-Image route behavior in `PI_MOM_MODE=pi`:
-
-- `image:` is handled directly by the bridge, not by an unrestricted Pi subprocess.
-- Requires `OPENAI_API_KEY` in the pi-mom environment.
-- `image:` / `image: generate ...` calls text-to-image generation. `image: edit ...` explicitly uses Slack image files in the current thread as references.
-- Generated files are uploaded back to the same Slack thread and saved locally under `PI_MOM_IMAGE_OUTPUT_DIR` or `~/.pi/agent/generated-images/slack`.
-- Draft defaults are cheap/fast: `OPENAI_IMAGE_MODEL=gpt-image-1`, `OPENAI_IMAGE_QUALITY=low`, `OPENAI_IMAGE_SIZE=1024x1024`, `OPENAI_IMAGE_OUTPUT_FORMAT=png`.
-- Optional knobs: `PI_MOM_IMAGE_ROUTE_ENABLED=false`, `PI_MOM_IMAGE_MAX_INPUTS=4`, `PI_MOM_IMAGE_MAX_BYTES=20971520`, `OPENAI_IMAGE_MODEL_FALLBACKS=gpt-image-1.5,gpt-image-1`.
+- Streaming is always on via `lib/slack-sink.mjs` (Stage 5). It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep Slack's stream session alive across long thinking runs.
+- Pi tool gating is per-route via `control-plane/registry.yaml`. Routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` configured with `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
 
 ## Observability & Tracing (DX)
 
@@ -190,7 +154,7 @@ Tracing is enabled by default. Every request logs structured JSON lines prefixed
 - `slack.received` — incoming mention/DM
 - `slack.thread_context` — how much context was pulled from the thread
 - `pi.prompt_built` — prompt size sent to Pi, including detected route when present
-- `pi.output_ready` — Pi stdout close/idle/timeout behavior
+- `pi.output_ready` — Pi run completion (SDK agent_end or timeout)
 - `slack.stream_started` / `slack.stream_stopped` / `slack.replied_pi_stream` — streaming response lifecycle
 - `slack.replied_echo` / `slack.replied_pi` / `slack.replied_help` / `slack.replied_status` — bridge response type
 - `error` — any failures
@@ -213,7 +177,7 @@ As of 2026-05-03, the Covent Pi bridge has a working bare-bones path:
   → Socket Mode app_mention event
   → local bridge
   → Slack thread acknowledgement
-  → Pi subprocess in pi mode
+  → in-process Pi SDK session (createAgentSession)
 ```
 
 Known-good non-secret values:
@@ -224,13 +188,13 @@ Known-good non-secret values:
 - Test channel ID: `C0B05VBGJKF`
 - Default mode for proof: `PI_MOM_MODE=echo`
 - Full mode: `PI_MOM_MODE=pi`
-- Pi model when `PI_EXTRA_ARGS=""`: Pi default `openai-codex/gpt-5.5` with high thinking
+- Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
 
 Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 
 ## Notes
 
-- In Pi mode, the bot streams Pi stdout into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
-- Pi is launched with `--no-session --no-tools --no-extensions` by default so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Set `PI_MOM_ALLOW_PI_TOOLS=true` only for deliberate local experiments.
+- In Pi mode, the bot streams Pi `text_delta` events into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `control-plane/registry.yaml`'s `routes:` block: routes with `tools: []` (the default for every route shipped today) run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/skills/prompts/themes/context-files — so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Routes that need explicit tool access must declare each tool by name in registry.yaml; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
 - The bridge uses Slack Web API only for the current thread context and final reply.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

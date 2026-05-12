@@ -1,17 +1,21 @@
-import { App, LogLevel } from "@slack/bolt";
+import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
-import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
-import { createRunStore } from "./lib/agent-run-store.mjs";
-import { createAgentRunner } from "./lib/agent-runners.mjs";
-import { createRunCanvas } from "./lib/slack-canvas.mjs";
-import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
-import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
-import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
+import { createDispatcher } from "./lib/dispatch.mjs";
+import { buildHomeView } from "./lib/home-view.mjs";
+import { runPi } from "./lib/pi-sdk-runner.mjs";
+import { runTurn } from "./lib/pi-session.mjs";
+import { resolveAction } from "./lib/action-resolver.mjs";
+import { createSlackSink } from "./lib/slack-sink.mjs";
+import { createCanvasSink } from "./lib/canvas-sink.mjs";
+import { createCompositeSink } from "./lib/composite-sink.mjs";
+import {
+  buildInputModalView,
+  createSlackUIContext,
+  resolveConfirmAction,
+  resolveInputCancel,
+  resolveInputSubmission,
+  resolveSelectAction,
+} from "./lib/slack-ui-context.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -29,44 +33,19 @@ if (!["echo", "pi"].includes(MODE)) {
   console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
   process.exit(1);
 }
-const STREAMING_ENV = process.env.PI_MOM_STREAMING || "true";
-if (!["true", "false"].includes(STREAMING_ENV)) {
-  console.error(`Invalid PI_MOM_STREAMING=${STREAMING_ENV}. Expected true or false.`);
-  process.exit(1);
-}
-const STREAMING_ENABLED = STREAMING_ENV === "true";
-const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
-const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
+// PI_MOM_STREAMING removed in Stage 5 — the slack-sink module is now the only
+// streaming path. The legacy `chat.update` fallback (thinking-message → final
+// truncated text) has been deleted; if Slack's stream helper is unavailable,
+// the sink throws at start() and the standard error path posts a single
+// chat.postMessage with the error text.
 if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
   console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
   process.exit(1);
 }
-const PI_COMMAND = process.env.PI_COMMAND || "pi";
-const PI_EXTRA_ARGS = (process.env.PI_EXTRA_ARGS || "").split(/\s+/).filter(Boolean);
+const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
+const PI_THINKING_LABEL = process.env.PI_MOM_THINKING_LEVEL || "high";
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
-const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
-const PI_OUTPUT_IDLE_MS = Number(process.env.PI_OUTPUT_IDLE_MS || 2000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
-const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
-const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
-const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
-const IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
-const IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
-const IMAGE_BACKGROUND = process.env.OPENAI_IMAGE_BACKGROUND || "auto";
-const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 0, max: 16 });
-const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
-const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
-const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
-if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
-  console.error(`Invalid PI_MOM_AGENT_RUNNER=${AGENT_RUNNER_MODE}. Expected fake or repo-health.`);
-  process.exit(1);
-}
-const AGENT_CANVAS_ENABLED = process.env.PI_MOM_AGENT_CANVAS_ENABLED !== "false";
-const AGENT_MAX_CONCURRENT = boundedIntegerEnv("PI_MOM_AGENT_MAX_CONCURRENT", 1, { min: 1, max: 3 });
-const AGENT_COMMAND_TIMEOUT_MS = boundedIntegerEnv("PI_MOM_AGENT_COMMAND_TIMEOUT_MS", 60000, { min: 1000, max: 300000 });
-const RUN_STATE_PATH = process.env.PI_MOM_RUN_STATE_PATH || join(process.env.HOME || process.cwd(), ".pi", "agent", "pi-mom", "runs.json");
-const REPO_HEALTH_WORKDIR = process.env.PI_MOM_REPO_HEALTH_WORKDIR || process.cwd();
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c98fc2274f2"; // Frontend Engineering / FE
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
@@ -81,58 +60,27 @@ const ROUTES = {
   },
   linear: {
     label: "Create Linear issue",
-    instruction: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.",
+    instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
   },
   agenda: {
     label: "Meeting agenda",
     instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
   },
-  escalation: {
-    label: "Escalation brief",
-    instruction: "Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply.",
-  },
   spec: {
     label: "Spec / PRD draft",
     instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
   },
-  digest: {
-    label: "Digest",
-    instruction: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.",
-  },
-  image: {
-    label: "GPT Image generation/edit",
-    instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
-  },
-  agent: {
-    label: "Agent Run Card",
-    instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
+  bash: {
+    label: "Execute bash command (gated by permission-gate)",
+    instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. permission-gate may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777.",
   },
 };
-
-function boundedIntegerEnv(name, fallback, { min, max }) {
-  const parsed = Number(process.env[name]);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
 
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
   const entry = { ts: new Date().toISOString(), event: eventName, ...data };
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
 }
-
-function loadAgentActionMetadata() {
-  try {
-    return loadActionMetadata("run-action");
-  } catch (error) {
-    const message = error?.message || String(error);
-    console.warn(`Agent action registry unavailable; using default action metadata. ${message}`);
-    trace("agent.registry_fallback", { error: message });
-    return DEFAULT_ACTION_METADATA;
-  }
-}
-
-const AGENT_ACTION_METADATA = loadAgentActionMetadata();
 
 function isAllowedChannel(channel) {
   if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
@@ -268,9 +216,7 @@ function formatHelp() {
     `• in a thread: \`@Covent Pi create Linear issue\`\n` +
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
-    `• \`@Covent Pi image: create a clean Covent hero visual for active buyer intelligence\`\n` +
-    `• attach an image in-thread, then \`@Covent Pi image: edit restyle this as a polished Covent website asset\`\n` +
-    `• \`@Covent Pi escalation: brief this customer problem\``;
+    `• \`@Covent Pi spec: turn this thread into a PRD draft\``;
 }
 
 async function formatStatus(client) {
@@ -285,16 +231,13 @@ async function formatStatus(client) {
   const uptimeSeconds = Math.round((Date.now() - STARTED_AT.getTime()) / 1000);
   return `*Covent Pi status*\n` +
     `• mode: \`${MODE}\`\n` +
-    `• streaming: \`${STREAMING_ENABLED ? "on" : "off"}\`\n` +
+    `• streaming: \`on\` (slack-sink + heartbeat)\n` +
     `• uptime: \`${uptimeSeconds}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
-    `• pi command: \`${PI_COMMAND}\`\n` +
-    `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
-    `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
-    `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
-    `• agent run state: \`${RUN_STATE_PATH}\`\n` +
+    `• pi model: \`${PI_MODEL_LABEL}\` (thinking: \`${PI_THINKING_LABEL}\`)\n` +
+    `• pi tools: per-route from \`control-plane/registry.yaml\`\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
@@ -315,147 +258,6 @@ async function getThreadContext(client, channel, rootTs) {
   } catch (error) {
     return `Thread context unavailable from Slack Web API: ${error?.data?.error || error.message}`;
   }
-}
-
-async function getSlackPermalink(client, channel, messageTs) {
-  try {
-    const response = await client.chat.getPermalink({ channel, message_ts: messageTs });
-    return response.ok ? response.permalink : "";
-  } catch (error) {
-    trace("slack.permalink_failed", { error: error?.data?.error || error.message });
-    return "";
-  }
-}
-
-function clampLinearTitle(title = "") {
-  const singleLine = String(title || "").replace(/\s+/g, " ").trim();
-  if (!singleLine) return "Slack thread spec";
-  return singleLine.length <= 240 ? singleLine : `${singleLine.slice(0, 237)}...`;
-}
-
-function stripWrappingMarkdownFence(text = "") {
-  return String(text || "")
-    .trim()
-    .replace(/^```(?:markdown|md|text)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function extractLinearIssuePayload(piOutput = "") {
-  const cleaned = stripWrappingMarkdownFence(cleanPiOutput(piOutput));
-  const lines = cleaned.split(/\r?\n/);
-  const titleLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i.test(line));
-
-  if (titleLineIndex >= 0) {
-    const title = lines[titleLineIndex].replace(/^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i, "").trim();
-    const description = stripWrappingMarkdownFence(lines.filter((_, index) => index !== titleLineIndex).join("\n")) || cleaned;
-    return { title: clampLinearTitle(title), description };
-  }
-
-  const headingLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*#{1,3}\s+\S+/.test(line));
-  if (headingLineIndex >= 0) {
-    const title = lines[headingLineIndex].replace(/^\s*#{1,3}\s+/, "").trim();
-    return { title: clampLinearTitle(title), description: cleaned };
-  }
-
-  const firstUsefulLine = lines.find((line) => line.trim()) || "Slack thread spec";
-  return { title: clampLinearTitle(firstUsefulLine.replace(/^\*+|\*+$/g, "")), description: cleaned };
-}
-
-async function createLinearIssue({ title, description, slackUrl, requestId }) {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");
-  }
-
-  const fullDescription = `${description.trim()}\n\n---\n\nSource Slack thread: ${slackUrl || "unavailable"}\nCreated by Covent Pi request: ${requestId}`;
-  const query = `
-    mutation IssueCreate($input: IssueCreateInput!) {
-      issueCreate(input: $input) {
-        success
-        issue { id identifier title url }
-      }
-    }
-  `;
-
-  const response = await fetch(LINEAR_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: {
-        input: {
-          teamId: LINEAR_TEAM_ID,
-          projectId: LINEAR_PROJECT_ID,
-          stateId: LINEAR_STATE_ID,
-          title: clampLinearTitle(title),
-          description: fullDescription,
-        },
-      },
-    }),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.errors?.length) {
-    const message = payload.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`;
-    throw new Error(`Linear issueCreate failed: ${message}`);
-  }
-  if (!payload.data?.issueCreate?.success || !payload.data?.issueCreate?.issue) {
-    throw new Error("Linear issueCreate did not return a created issue.");
-  }
-
-  return payload.data.issueCreate.issue;
-}
-
-async function createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }) {
-  const sourceUrl = await getSlackPermalink(client, channel, threadTs);
-  const { title, description } = extractLinearIssuePayload(result);
-
-  trace("linear.issue_create_requested", {
-    requestId,
-    titleLength: title.length,
-    descriptionLength: description.length,
-    teamId: LINEAR_TEAM_ID,
-    projectId: LINEAR_PROJECT_ID,
-    stateId: LINEAR_STATE_ID,
-  });
-
-  const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
-  trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
-  return issue;
-}
-
-async function getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId }) {
-  try {
-    const messages = await getThreadMessages(client, channel, threadTs);
-    const existing = findPriorLinearIssueConfirmation(messages);
-    trace("linear.duplicate_scan", { requestId, messageCount: messages.length, duplicate: Boolean(existing), identifier: existing?.identifier || "" });
-    return { messages, existing };
-  } catch (error) {
-    trace("linear.duplicate_scan_failed", { requestId, error: error?.data?.error || error.message });
-    return { messages: [], existing: undefined };
-  }
-}
-
-async function postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }) {
-  await client.chat.postMessage({
-    channel,
-    thread_ts: threadTs,
-    text: duplicateLinearIssueReply(existing),
-  });
-  trace("slack.replied_linear_duplicate", { requestId, identifier: existing?.identifier || "", messageTs: existing?.messageTs || "" });
-}
-
-async function createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result }) {
-  const { messages } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
-  return createLinearIssueUnlessDuplicate({
-    messages,
-    createIssue: () => createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }),
-    postDuplicateReply: (existing) => postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }),
-  });
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -488,227 +290,6 @@ ${text}
 `;
 }
 
-function parseImageRequest(text = "") {
-  let prompt = String(text || "").trim();
-  if (prompt.startsWith("(No extra instructions after")) prompt = "";
-
-  const subcommand = prompt.match(/^(generate|draw|create|new|edit|reference|img2img|image-to-image)\s*:?[ \t\n]*/i);
-  let requestedAction;
-  if (subcommand) {
-    const verb = subcommand[1].toLowerCase();
-    requestedAction = ["edit", "reference", "img2img", "image-to-image"].includes(verb) ? "edit" : "generate";
-    prompt = prompt.slice(subcommand[0].length).trim();
-  }
-
-  return { prompt, requestedAction };
-}
-
-function slackFileLooksLikeImage(file = {}) {
-  if (isImageMime(file.mimetype || "")) return true;
-  const filetype = String(file.filetype || "").toLowerCase();
-  return ["png", "jpg", "jpeg", "webp"].includes(filetype);
-}
-
-function slackImageMime(file = {}) {
-  if (isImageMime(file.mimetype || "")) return file.mimetype.split(";")[0].trim();
-  const filetype = String(file.filetype || "").toLowerCase();
-  if (filetype === "jpg" || filetype === "jpeg") return "image/jpeg";
-  if (filetype === "webp") return "image/webp";
-  return "image/png";
-}
-
-async function slackFileToImageInput(file) {
-  const url = file.url_private_download || file.url_private;
-  if (!url) return undefined;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Could not download Slack image ${file.id || file.name || "unknown"}: ${response.status}`);
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > IMAGE_MAX_BYTES) {
-    throw new Error(`Slack image ${file.name || file.id || "unknown"} is too large for MVP (${buffer.length} bytes > ${IMAGE_MAX_BYTES}).`);
-  }
-
-  const detectedMime = detectImageMime(buffer);
-  if (!detectedMime) {
-    throw new Error(`Slack file ${file.name || file.id || "unknown"} is not a supported PNG, JPEG, or WebP image.`);
-  }
-
-  const mimeType = detectedMime || (response.headers.get("content-type") || slackImageMime(file)).split(";")[0].trim();
-  return {
-    imageUrl: bufferToDataUrl(buffer, mimeType),
-    name: file.name || file.title || file.id || "slack-image",
-    id: file.id,
-    mimeType,
-    bytes: buffer.length,
-  };
-}
-
-async function collectSlackImageInputs(client, event, channel, threadTs) {
-  const messages = await getThreadMessages(client, channel, threadTs);
-  const filesByKey = new Map();
-
-  for (const file of event.files || []) {
-    if (slackFileLooksLikeImage(file)) filesByKey.set(file.id || file.url_private || file.name, file);
-  }
-
-  for (const message of messages) {
-    for (const file of message.files || []) {
-      if (slackFileLooksLikeImage(file)) filesByKey.set(file.id || file.url_private || file.name, file);
-    }
-  }
-
-  const selectedFiles = [...filesByKey.values()].slice(0, IMAGE_MAX_INPUTS);
-  const inputs = [];
-  for (const file of selectedFiles) {
-    const input = await slackFileToImageInput(file);
-    if (input) inputs.push(input);
-  }
-
-  return {
-    inputs,
-    totalImageFiles: filesByKey.size,
-    usedImageFiles: inputs.length,
-    skippedImageFiles: Math.max(0, filesByKey.size - inputs.length),
-  };
-}
-
-function formatImageSlackComment(result, { prompt, inputCount }) {
-  const actionLabel = result.action === "edit" ? "edited/reference image" : "generated image";
-  const safePrompt = truncateForSlack(prompt).slice(0, 1200);
-  const localFiles = result.files.map((file) => `• ${file.filename}`).join("\n");
-  const metadataName = result.metadataPath.split("/").pop();
-
-  return `🎨 *Covent Pi ${actionLabel}*\n` +
-    `• model: \`${result.model}\`\n` +
-    `• quality/size: \`${result.options.quality}\` / \`${result.options.size}\`\n` +
-    `• input images: \`${inputCount}\`\n` +
-    (result.requestId ? `• request: \`${result.requestId}\`\n` : "") +
-    `• metadata: \`${metadataName}\`\n\n` +
-    `*Prompt*\n${safePrompt}\n\n` +
-    `*Saved locally*\n${localFiles}`;
-}
-
-async function uploadImageResultToSlack(client, channel, threadTs, result, requestId, comment) {
-  let uploaded = 0;
-  for (const file of result.files) {
-    await client.filesUploadV2({
-      channel_id: channel,
-      thread_ts: threadTs,
-      file: createReadStream(file.path),
-      filename: file.filename,
-      title: file.filename,
-      initial_comment: uploaded === 0 ? comment : undefined,
-    });
-    uploaded += 1;
-  }
-  trace("slack.uploaded_image", { requestId, uploaded, files: result.files.length });
-  return uploaded;
-}
-
-async function handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start }) {
-  if (!IMAGE_ROUTE_ENABLED) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "The `image:` route is disabled. Set `PI_MOM_IMAGE_ROUTE_ENABLED=true` and restart pi-mom to enable it.",
-    });
-    trace("slack.replied_image_disabled", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  const { prompt, requestedAction } = parseImageRequest(text);
-  if (!prompt) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "Usage: `@Covent Pi image: create ...` or attach an image and use `@Covent Pi image: edit ...`.",
-    });
-    trace("slack.replied_image_usage", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "The `image:` route needs `OPENAI_API_KEY` in the pi-mom environment. I did not call OpenAI.",
-    });
-    trace("slack.replied_image_missing_key", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  const thinking = await client.chat.postMessage({
-    channel,
-    thread_ts: threadTs,
-    text: `🎨 Covent Pi is preparing an image request… (req: ${requestId})`,
-  });
-
-  try {
-    const action = requestedAction || "generate";
-    const collected = action === "edit"
-      ? await collectSlackImageInputs(client, event, channel, threadTs)
-      : { inputs: [], totalImageFiles: 0, usedImageFiles: 0, skippedImageFiles: 0 };
-
-    if (action === "edit" && collected.inputs.length === 0) {
-      await client.chat.update({
-        channel,
-        ts: thinking.ts,
-        text: "For `image: edit`, attach an image in this thread or use `image: generate` for text-only generation.",
-      });
-      trace("slack.replied_image_missing_input", { requestId, durationMs: Date.now() - start });
-      return;
-    }
-
-    trace("openai.image_request", {
-      requestId,
-      action,
-      model: IMAGE_MODEL,
-      quality: IMAGE_QUALITY,
-      size: IMAGE_SIZE,
-      inputImages: collected.inputs.length,
-      skippedImages: collected.skippedImageFiles,
-    });
-
-    const result = await createOpenAIImage({
-      action,
-      prompt,
-      imageDataUrls: collected.inputs.map((input) => input.imageUrl),
-      model: IMAGE_MODEL,
-      size: IMAGE_SIZE,
-      quality: IMAGE_QUALITY,
-      outputFormat: IMAGE_OUTPUT_FORMAT,
-      background: IMAGE_BACKGROUND,
-      outputDir: IMAGE_OUTPUT_DIR,
-      prefix: `slack-${requestId}`,
-      user: user ? `slack:${user}` : undefined,
-    });
-
-    const comment = formatImageSlackComment(result, { prompt, inputCount: collected.inputs.length });
-    const uploaded = await uploadImageResultToSlack(client, channel, threadTs, result, requestId, comment);
-
-    await client.chat.update({
-      channel,
-      ts: thinking.ts,
-      text: `✅ Uploaded ${uploaded} image file(s). Model: \`${result.model}\`. Metadata: \`${result.metadataPath.split("/").pop()}\``,
-    });
-    trace("slack.replied_image", { requestId, durationMs: Date.now() - start, resultLength: comment.length, uploaded });
-  } catch (error) {
-    const message = redactSensitiveText(error?.message || String(error)).slice(0, 1500);
-    trace("error", { requestId, route: "image", error: message, durationMs: Date.now() - start });
-    console.error(`[pi-mom] ${requestId} image error:`, error);
-    await client.chat.update({
-      channel,
-      ts: thinking.ts,
-      text: `Image generation failed (req: ${requestId}). Check the pi-mom terminal/logs for details.`,
-    });
-  }
-}
-
 function redactSensitiveText(text = "") {
   return text
     .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "xox[REDACTED]")
@@ -735,22 +316,9 @@ function cleanPiOutput(text = "") {
   return redactSensitiveText(cleanTerminalSequences(text));
 }
 
-function stripTerminalSequences(text) {
-  return cleanPiOutput(text).trim();
-}
-
-function splitForSlackStream(text, maxLength = STREAM_APPEND_CHARS) {
-  if (!text) return [];
-  const chunks = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    chunks.push(text.slice(i, i + maxLength));
-  }
-  return chunks;
-}
-
 function streamArgsForEvent({ channel, threadTs, user, team }) {
   const teamId = team || AUTH_TEAM_ID;
-  const args = { channel, thread_ts: threadTs, buffer_size: STREAM_BUFFER_CHARS };
+  const args = { channel, thread_ts: threadTs };
   if (user && teamId) {
     args.recipient_user_id = user;
     args.recipient_team_id = teamId;
@@ -758,166 +326,95 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
   return args;
 }
 
-function piSubprocessEnv() {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("SLACK_") || key.includes("SLACK") || key.startsWith("LINEAR_") || key.includes("LINEAR")) delete env[key];
-  }
-  return env;
-}
+// Stage 8 — routes whose output is long-form enough to deserve a Slack
+// canvas mirror in addition to the chat-stream. The canvas-sink runs
+// alongside the slack-sink (via composite-sink) so the user gets both a
+// live chat preview and a clean scrollable document.
+const CANVAS_ROUTES = new Set(["spec"]);
 
-async function runPi(prompt, { onOutput } = {}) {
-  const promptDir = await mkdtemp(join(tmpdir(), "pi-mom-prompt-"));
-  const promptPath = join(promptDir, "prompt.md");
-  await writeFile(promptPath, prompt, { mode: 0o600 });
+async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities }) {
+  const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
+  const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
-  try {
-    return await new Promise((resolve, reject) => {
-      const safeRuntimeArgs = process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? [] : ["--no-tools", "--no-extensions"];
-      const args = [...PI_EXTRA_ARGS, ...safeRuntimeArgs, "--no-session", "-p", `@${promptPath}`];
-      const child = spawn(PI_COMMAND, args, {
-        env: piSubprocessEnv(),
-        cwd: process.env.PI_WORKDIR || process.env.HOME || process.cwd(),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let idleTimer;
-    let emittedOutput = "";
-
-    const emitNewOutput = () => {
-      if (typeof onOutput !== "function") return;
-      const cleanedSoFar = cleanPiOutput(stdout);
-      if (cleanedSoFar === emittedOutput) return;
-
-      const delta = cleanedSoFar.startsWith(emittedOutput)
-        ? cleanedSoFar.slice(emittedOutput.length)
-        : cleanedSoFar;
-      emittedOutput = cleanedSoFar;
-
-      if (!delta) return;
-      try {
-        onOutput(delta);
-      } catch (error) {
-        trace("pi.output_stream_callback_error", { error: error.message });
-      }
-    };
-
-    const finish = (kind, error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(idleTimer);
-      clearTimeout(timeoutTimer);
-
-      const cleaned = stripTerminalSequences(stdout);
-      if (error && kind !== "stdout_idle") {
-        const message = cleaned ? `${error.message}\n\nPartial stdout:\n${cleaned}` : error.message;
-        reject(new Error(message));
-        return;
-      }
-
-      if (cleaned) {
-        trace("pi.output_ready", { kind, outputLength: cleaned.length });
-        try { child.kill("SIGTERM"); } catch {}
-        resolve(cleaned);
-        return;
-      }
-
-      if (error) reject(error);
-      else reject(new Error(`${PI_COMMAND} produced no stdout. stderr: ${stripTerminalSequences(stderr)}`));
-    };
-
-    const timeoutTimer = setTimeout(() => {
-      try { child.kill("SIGTERM"); } catch {}
-      finish("timeout", new Error(`${PI_COMMAND} timed out after ${PI_TIMEOUT_MS}ms. stderr: ${stripTerminalSequences(stderr)}`));
-    }, PI_TIMEOUT_MS);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-      emitNewOutput();
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => finish("stdout_idle"), PI_OUTPUT_IDLE_MS);
-    });
-
-    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
-    child.on("error", (error) => finish("process_error", error));
-    child.on("close", (code, signal) => {
-      if (code === 0) finish("process_close");
-      else finish("process_close", new Error(`${PI_COMMAND} exited ${code ?? signal}. stderr: ${stripTerminalSequences(stderr)}`));
-    });
-    });
-  } finally {
-    await rm(promptDir, { recursive: true, force: true });
-  }
-}
-
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId }) {
-  if (typeof client.chatStream !== "function") {
-    throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
-  }
-
-  const streamArgs = streamArgsForEvent({
+  const slackSink = createSlackSink({
+    client,
     channel,
     threadTs,
-    user,
-    team: event.team || event.team_id || event.context_team_id,
+    recipient,
+    surface: mode,
+    requestId,
+    trace,
   });
-  const stream = client.chatStream(streamArgs);
-  let streamChain = Promise.resolve();
-  let streamError = null;
-  let streamedLength = 0;
-  let streamVisible = false;
 
-  const queueAppend = (text) => {
-    for (const markdown_text of splitForSlackStream(text)) {
-      streamedLength += markdown_text.length;
-      streamChain = streamChain
-        .then(() => stream.append({ markdown_text }))
-        .catch((error) => {
-          streamError = streamError || error;
-          trace("slack.stream_append_error", {
-            requestId,
-            error: error?.data?.error || error.message,
-          });
-        });
-    }
-    return streamChain;
-  };
-
-  try {
-    await queueAppend(`👀 Covent Pi is thinking… (req: ${requestId})\n\n`);
-    await streamChain;
-    if (streamError) throw streamError;
-    streamVisible = true;
-    trace("slack.stream_started", {
+  // Stage 8: if this route is canvas-eligible (currently just `spec:`),
+  // mirror the run into a standalone Slack canvas. The canvas-sink
+  // creates one canvas per Pi run (new canvas on every invocation —
+  // matches the user's chosen re-run policy), debounces edits at 3s /
+  // 1.5KB to stay under Tier 3 limits, and at stop performs a single
+  // `replace` op with the final cleaned markdown so the doc reads as
+  // one cohesive piece. Failures are fail-soft: the chat stream is
+  // authoritative and continues regardless.
+  const wantsCanvas = CANVAS_ROUTES.has(action?.name) || CANVAS_ROUTES.has(action?.routeKey);
+  let canvasSink;
+  if (wantsCanvas) {
+    canvasSink = createCanvasSink({
+      client,
+      channel,
+      title: `Spec — ${requestId}`,
       requestId,
-      hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
+      teamId,
+      accessUserIds: user ? [user] : [],
+      trace,
     });
-
-    const result = await runPi(prompt, { onOutput: queueAppend });
-    await streamChain;
-    if (streamError) throw streamError;
-    await stream.stop();
-    trace("slack.stream_stopped", { requestId, streamedLength, resultLength: result.length });
-    return result;
-  } catch (error) {
-    if (streamVisible) {
-      try {
-        await queueAppend(`\n\nPi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`);
-        await streamChain;
-        await stream.stop();
-        error.slackStreamNotified = true;
-      } catch (stopError) {
-        trace("slack.stream_stop_error", {
-          requestId,
-          error: stopError?.data?.error || stopError.message,
-        });
-      }
-    }
-    throw error;
   }
+
+  const sink = canvasSink ? createCompositeSink([slackSink, canvasSink]) : slackSink;
+
+  // Stage 6: per-turn slack UI context for ctx.ui.{confirm,select,input,notify,setStatus}.
+  // The Bolt action/view handlers consult pendingApprovals to resolve the
+  // promise returned to Pi. Dispose at the end of the turn to free any
+  // entries that an extension never followed through on.
+  const slackUI = createSlackUIContext({
+    client,
+    channel,
+    threadTs,
+    requestId,
+    pendingApprovals,
+    surface: mode,
+    assistantSetStatus: utilities?.setStatus,
+    trace,
+  });
+
+  await sink.start({ initialText: `👀 Covent Pi is thinking… (req: ${requestId})\n\n` });
+
+  // Post the canvas link into the Slack thread once we know the canvas
+  // exists. Best-effort — failures here don't affect the run.
+  if (canvasSink?.canvasId && canvasSink?.url) {
+    try {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `📄 Streaming this spec into a canvas → <${canvasSink.url}|${canvasSink.canvasId}>`,
+      });
+      trace("canvas.link_posted", { requestId, canvasId: canvasSink.canvasId });
+    } catch (err) {
+      trace("canvas.link_post_failed", { requestId, error: err?.data?.error || err?.message });
+    }
+  }
+
+  let result;
+  let runError;
+  try {
+    result = await runTurn({ surface: mode, threadTs, prompt, action, sink, uiContext: slackUI });
+  } catch (err) {
+    runError = err;
+  }
+
+  await sink.stop({ result, error: runError });
+  slackUI.dispose("turn_end");
+
+  if (runError) throw runError;
+  return result;
 }
 
 async function preflight() {
@@ -950,27 +447,70 @@ const app = new App({
   logLevel: process.env.PI_MOM_DEBUG === "true" ? LogLevel.DEBUG : LogLevel.INFO,
 });
 
-const runStore = createRunStore({ path: RUN_STATE_PATH, trace });
-const agentRunner = createAgentRunner({ mode: AGENT_RUNNER_MODE, trace, workdir: REPO_HEALTH_WORKDIR, timeoutMs: AGENT_COMMAND_TIMEOUT_MS });
-const activeRuns = new Map();
+// Stage 6: ExtensionUIContext → Slack approval modals. Pi extensions like
+// permission-gate call ctx.ui.select/confirm/input from inside an agent loop;
+// `lib/slack-ui-context.mjs` translates those into interactive thread
+// messages (and a modal for `input`). The pending-approval registry is a
+// process-global Map keyed by approvalId so the Bolt action/view handlers
+// can resolve the original promise from a button click or view submission.
+const pendingApprovals = new Map();
 
-function isoNow() {
-  return new Date().toISOString();
+// Stage 7 — App Home cockpit. The Home tab shows a read-only snapshot of
+// pending approvals. Pushes fire from the pendingApprovals set/delete
+// wrappers below. Slack has no broadcast for Home views, so we publish
+// per-user (event.user for app_home_opened, entry.requesterUserId for
+// approval-driven pushes).
+const homeWatchedUsers = new Set();
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+
+async function publishHomeForUser(client, userId) {
+  if (!userId) return;
+  homeWatchedUsers.add(userId);
+  try {
+    const view = buildHomeView({ pendingApprovals, now: Date.now() });
+    const payloadKb = Math.round(JSON.stringify(view).length / 1024 * 10) / 10;
+    await (client || slackClient).views.publish({ user_id: userId, view });
+    trace("app_home.published", {
+      user: userId,
+      approvalCount: pendingApprovals.size,
+      viewKb: payloadKb,
+    });
+  } catch (error) {
+    trace("app_home.publish_failed", {
+      user: userId,
+      error: error?.data?.error || error?.message || String(error),
+    });
+  }
 }
 
-function appendRunEvent(run, event) {
-  return [...(Array.isArray(run.events) ? run.events : []), { ts: isoNow(), ...event }].slice(-50);
+function publishHomeForAllWatched(client) {
+  for (const userId of homeWatchedUsers) {
+    // Fire-and-forget; publishHomeForUser already swallows errors.
+    publishHomeForUser(client, userId);
+  }
 }
 
-function runId() {
-  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
+// Wrap pendingApprovals.set/.delete so any code path (slack-ui-context,
+// future producers) that mutates the Map automatically triggers a Home
+// republish. Keeps lib/slack-ui-context.mjs ignorant of App Home concerns.
+const _origApprovalsSet = pendingApprovals.set.bind(pendingApprovals);
+const _origApprovalsDelete = pendingApprovals.delete.bind(pendingApprovals);
+pendingApprovals.set = function (key, value) {
+  const result = _origApprovalsSet(key, value);
+  publishHomeForAllWatched(slackClient);
+  return result;
+};
+pendingApprovals.delete = function (key) {
+  const result = _origApprovalsDelete(key);
+  if (result) publishHomeForAllWatched(slackClient);
+  return result;
+};
 
 app.error(async (error) => {
   console.error("[pi-mom] Bolt error", error);
 });
 
-async function handleRequest({ client, event, mode }) {
+async function handleRequest({ client, event, mode, utilities }) {
   const requestId = `req_${Date.now().toString(36)}`;
   const start = Date.now();
   const channel = event.channel;
@@ -979,6 +519,7 @@ async function handleRequest({ client, event, mode }) {
   const rawText = stripBotMentions(event.text || "");
   const command = parseSlackRequestCommand(rawText, { mode });
   const text = command.text || rawText;
+  const action = resolveAction(command);
 
   trace("slack.received", {
     requestId,
@@ -990,9 +531,13 @@ async function handleRequest({ client, event, mode }) {
     command: command.kind,
     route: command.routeKey,
     naturalIntent: command.naturalIntent,
+    action: action.name,
+    toolCount: action.tools.length,
   });
 
-  if (!isAllowedChannel(channel)) {
+  // Channel allowlist applies to channel mentions. DMs (direct_message) and the
+  // Assistant chat tab (assistant) are private to one user and bypass the gate.
+  if (mode === "app_mention" && !isAllowedChannel(channel)) {
     trace("slack.ignored", { requestId, reason: "channel_not_allowed", channel, allowed: ALLOWED_CHANNEL_ID });
     return;
   }
@@ -1019,39 +564,6 @@ async function handleRequest({ client, event, mode }) {
     return;
   }
 
-  if (command.kind === "route" && command.routeKey === "agent") {
-    if (!AGENT_ROUTE_ENABLED) {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "The `agent:` route is disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`." });
-      trace("agent.route_disabled", { requestId });
-      return;
-    }
-
-    const parsed = parseAgentRequest(text);
-    if (!parsed?.prompt) {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: "Usage: `@Covent Pi agent: <bounded task>`" });
-      trace("agent.replied_usage", { requestId });
-      return;
-    }
-
-    const sourceUrl = await getSlackPermalink(client, channel, threadTs);
-    let run = await runStore.create({
-      id: runId(),
-      status: "pending_confirmation",
-      runnerMode: AGENT_RUNNER_MODE,
-      prompt: parsed.prompt,
-      channel,
-      threadTs,
-      user,
-      team: event.team || event.team_id || AUTH_TEAM_ID,
-      sourceUrl,
-      events: [{ ts: isoNow(), type: "created", text: "Awaiting Slack confirmation" }],
-    });
-    const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run, AGENT_ACTION_METADATA) });
-    run = await runStore.update(run.id, { messageTs: message.ts });
-    trace("agent.confirmation_posted", { requestId, runId: run.id, runnerMode: AGENT_RUNNER_MODE });
-    return;
-  }
-
   if (MODE === "echo") {
     await client.chat.postMessage({
       channel,
@@ -1061,21 +573,6 @@ async function handleRequest({ client, event, mode }) {
     trace("slack.replied_echo", { requestId, durationMs: Date.now() - start, route: command.routeKey });
     return;
   }
-
-  if (command.kind === "route" && command.routeKey === "image") {
-    await handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start });
-    return;
-  }
-
-  if (command.kind === "route" && command.routeKey === "linear") {
-    const { existing } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
-    if (existing) {
-      await postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing });
-      return;
-    }
-  }
-
-  let thinking;
 
   try {
     const threadContext = await getThreadContext(client, channel, threadTs);
@@ -1093,74 +590,19 @@ async function handleRequest({ client, event, mode }) {
     });
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
-    if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId });
-      trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-      if (command.kind === "route" && command.routeKey === "linear") {
-        try {
-          const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
-          if (outcome.status === "duplicate") return;
-          const issue = outcome.issue;
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-        } catch (error) {
-          const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-          trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-          });
-        }
-      }
-      return;
-    }
-
-    thinking = await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: `👀 Covent Pi is thinking… (req: ${requestId})`,
-    });
-
-    const result = await runPi(prompt);
-    await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
-    trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-    if (command.kind === "route" && command.routeKey === "linear") {
-      try {
-        const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
-        if (outcome.status === "duplicate") return;
-        const issue = outcome.issue;
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-        });
-        trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-      } catch (error) {
-        const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-        trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-        });
-      }
-    }
+    const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities });
+    trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
   } catch (error) {
     trace("error", { requestId, error: error.message, durationMs: Date.now() - start });
     console.error(`[pi-mom] ${requestId} error:`, error);
+    // slack-sink.stop({error}) has already appended a visible error chunk and
+    // marked error.slackStreamNotified — don't double-post in that case.
     if (error.slackStreamNotified) return;
-
-    const errorText = `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`;
-    if (thinking?.ts) {
-      await client.chat.update({ channel, ts: thinking.ts, text: errorText });
-    } else {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: errorText });
-    }
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`,
+    });
   }
 }
 
@@ -1224,152 +666,129 @@ app.command("/thread-spec", async ({ command, ack, client, respond }) => {
   await handleThreadSpecSlashCommand({ command, client, respond });
 });
 
-async function postAgentActionNotice(client, body, text) {
-  const channel = body.channel?.id || body.container?.channel_id;
-  const user = body.user?.id;
-  if (!channel || !user) return;
-  try {
-    await client.chat.postEphemeral({ channel, user, text });
-  } catch (error) {
-    trace("agent.ephemeral_failed", { error: error?.data?.error || error.message });
-  }
-}
 
-app.action("agent_run_start", async ({ ack, body, action, client }) => {
+// Stage 6 — ExtensionUIContext approval handlers. These resolve the
+// promise returned to Pi from ctx.ui.{confirm,select,input}. The pending
+// entry is looked up in the global `pendingApprovals` Map by approvalId
+// (embedded in the button value or view.private_metadata). The shared
+// helpers live in lib/slack-ui-context.mjs so the resolution logic can be
+// unit-tested without booting Bolt.
+app.action("pi_uictx_confirm_approve", async ({ ack, body, action, client }) => {
   await ack();
-  if (!AGENT_ROUTE_ENABLED) {
-    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
-    trace("agent.start_blocked_disabled", { runId: action.value });
+  resolveConfirmAction({ pendingApprovals, action, body, client, trace });
+});
+app.action("pi_uictx_confirm_cancel", async ({ ack, body, action, client }) => {
+  await ack();
+  resolveConfirmAction({ pendingApprovals, action, body, client, trace });
+});
+app.action(/^pi_uictx_select_\d+$/, async ({ ack, body, action, client }) => {
+  await ack();
+  resolveSelectAction({ pendingApprovals, action, body, client, trace });
+});
+app.action("pi_uictx_input_launch", async ({ ack, body, action, client }) => {
+  await ack();
+  const approvalId = action.value;
+  const entry = pendingApprovals.get(approvalId);
+  if (!entry || entry._finalized) {
+    trace("slack_ui.input_launch_unknown", { approvalId });
     return;
   }
-
-  const id = action.value;
-  let run = await runStore.get(id);
-  if (!run) {
-    await postAgentActionNotice(client, body, "Agent run not found; it may have been pruned or created by another environment.");
-    return;
-  }
-  if (!isAllowedChannel(run.channel)) {
-    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
-    trace("agent.start_blocked_channel", { runId: id, channel: run.channel });
-    return;
-  }
-  if (run.status !== "pending_confirmation") {
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    return;
-  }
-  if (activeRuns.size >= AGENT_MAX_CONCURRENT) {
-    await postAgentActionNotice(client, body, "Another agent run is active; wait for it to finish or cancel it first.");
-    return;
-  }
-
-  const controller = new AbortController();
-  activeRuns.set(id, controller);
-  run = await runStore.update(id, {
-    status: "running",
-    startedAt: isoNow(),
-    approvedBy: body.user?.id,
-    events: appendRunEvent(run, { type: "started", text: `Started by <@${body.user?.id || "unknown"}>` }),
-  });
-  await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-
   try {
-    const result = await agentRunner.run({
-      run,
-      signal: controller.signal,
-      onEvent: async (event) => {
-        run = await runStore.update(id, { events: appendRunEvent(run, event) });
-        await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-      },
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildInputModalView({ approvalId, title: entry.title, placeholder: entry.placeholder }),
     });
-    let canvas;
-    if (AGENT_CANVAS_ENABLED) {
-      canvas = await createRunCanvas({ client, run, markdown: result.markdown, channel: run.channel, trace });
-    }
-    run = await runStore.update(id, {
-      status: "succeeded",
-      finishedAt: isoNow(),
-      result,
-      canvas,
-      events: appendRunEvent(run, { type: "succeeded", text: "Agent run completed" }),
-    });
-    trace("agent.succeeded", { runId: id });
+    trace("slack_ui.input_launched", { approvalId });
   } catch (error) {
-    const status = controller.signal.aborted ? "canceled" : "failed";
-    run = await runStore.update(id, {
-      status,
-      finishedAt: isoNow(),
-      error: redactSensitiveText(error?.message || String(error)).slice(0, 2000),
-      events: appendRunEvent(run, { type: status, text: status === "canceled" ? "Agent run canceled" : "Agent run failed" }),
-    });
-    trace("agent.finished_with_error", { runId: id, status, error: run.error });
-  } finally {
-    activeRuns.delete(id);
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    trace("slack_ui.input_launch_failed", { approvalId, error: error?.data?.error || error.message });
   }
 });
-
-app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
+app.action("pi_uictx_input_skip", async ({ ack, body, action, client }) => {
   await ack();
-  if (!AGENT_ROUTE_ENABLED) {
-    await postAgentActionNotice(client, body, "Agent runs are disabled by `PI_MOM_AGENT_ROUTE_ENABLED=false`; this button will not execute.");
-    trace("agent.cancel_blocked_disabled", { runId: action.value });
-    return;
-  }
+  // The skip button has the same effect as closing the modal: resolve(undefined).
+  // We synthesize the cancel path so the helper can edit the launcher post
+  // and clean up the pending entry without going through views.open.
+  resolveInputCancel({
+    pendingApprovals,
+    view: { private_metadata: action.value },
+    body,
+    client,
+    trace,
+  });
+});
+app.view("pi_uictx_input_modal", async ({ ack, body, view, client }) => {
+  await ack();
+  resolveInputSubmission({ pendingApprovals, view, body, client, trace });
+});
+app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ ack, body, view, client }) => {
+  await ack();
+  resolveInputCancel({ pendingApprovals, view, body, client, trace });
+});
 
-  const id = action.value;
-  let run = await runStore.get(id);
-  if (!run) return;
-  if (!isAllowedChannel(run.channel)) {
-    await postAgentActionNotice(client, body, "Agent run channel is not allowed by this bridge configuration.");
-    trace("agent.cancel_blocked_channel", { runId: id, channel: run.channel });
-    return;
-  }
+const { dispatchToAction } = createDispatcher({ handleRequest, trace });
 
-  const active = activeRuns.get(id);
-  if (active) {
-    active.abort();
-    run = await runStore.update(id, {
-      events: appendRunEvent(run, { type: "cancel_requested", text: `Cancel requested by <@${body.user?.id || "unknown"}>` }),
-    });
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-    return;
-  }
-
-  if (run.status === "pending_confirmation") {
-    run = await runStore.update(id, {
-      status: "canceled",
-      canceledBy: body.user?.id,
-      finishedAt: isoNow(),
-      events: appendRunEvent(run, { type: "canceled", text: `Canceled before start by <@${body.user?.id || "unknown"}>` }),
-    });
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-  } else {
-    await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
-  }
+// Stage 7 — App Home cockpit. The user opening the bot's Home tab triggers
+// `app_home_opened`; we publish the current state (pending approvals).
+// Subsequent pushes are fired from the pendingApprovals set/delete wrappers
+// above.
+app.event("app_home_opened", async ({ event, client }) => {
+  if (event?.tab && event.tab !== "home") return;
+  await publishHomeForUser(client, event?.user);
 });
 
 app.event("app_mention", async ({ event, client }) => {
-  await handleRequest({ client, event, mode: "app_mention" });
+  await dispatchToAction({ surface: "app_mention", event, client });
 });
 
 app.message(async ({ message, client }) => {
   if (message.subtype || message.bot_id) return;
   if (message.channel_type !== "im") return;
-  await handleRequest({ client, event: message, mode: "direct_message" });
+  await dispatchToAction({ surface: "direct_message", event: message, client });
 });
+
+// Bolt 4.7 Assistant container — the modern Slack agent surface. Activated by
+// the user opening the bot's chat tab (left sidebar → Apps → Covent-Agent).
+// Threads here are 1:1 with the user; setStatus drives the "thinking" pill.
+const assistant = new Assistant({
+  threadStarted: async ({ event, client, setSuggestedPrompts, say }) => {
+    try {
+      await setSuggestedPrompts({
+        title: "What can I draft for you?",
+        prompts: [
+          { title: "Draft a spec", message: "spec: " },
+          { title: "Create a Linear issue", message: "linear: " },
+          { title: "Meeting agenda", message: "agenda: " },
+          { title: "Summarize a thread", message: "summarize: paste the thread URL or context" },
+        ],
+      });
+    } catch (error) {
+      trace("assistant.thread_started_error", { error: error?.data?.error || error?.message });
+    }
+    trace("assistant.thread_started", {
+      channel: event?.assistant_thread?.channel_id,
+      threadTs: event?.assistant_thread?.thread_ts,
+      user: event?.assistant_thread?.user_id,
+    });
+  },
+  userMessage: async ({ message, client, setStatus }) => {
+    if (message.subtype || message.bot_id) return;
+    await dispatchToAction({
+      surface: "assistant",
+      event: message,
+      client,
+      utilities: { setStatus },
+    });
+  },
+});
+app.assistant(assistant);
 
 (async () => {
   try {
     await preflight();
-    await runStore.load();
     await app.start();
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
-    console.log(`Slack streaming: ${STREAMING_ENABLED ? "enabled" : "disabled"}`);
-    console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
-    console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
-    console.log(`Agent run state: ${RUN_STATE_PATH}`);
+    console.log("Slack streaming: enabled (slack-sink + heartbeat)");
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);

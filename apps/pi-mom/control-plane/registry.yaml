@@ -48,6 +48,61 @@ actions:
       entrypoint: repo-health
       notes: Existing legacy runner mode exists, but this Action is not active in the registry/runtime concept yet.
 
+# Per-route tool gating, system prompt suffix, and approval posture for the
+# Slack-facing routes that `parseSlackRequestCommand` resolves to. The
+# action-resolver maps a parsed command to one of these entries; the SDK
+# runner uses `tools` to call `setActiveToolsByName` (empty array = no Pi
+# tools active, identical to legacy noTools:"all" posture). `approvals` is
+# advisory until the modal gate lands in a later stage.
+routes:
+  # Unprefixed mentions — give Pi the full default agentic toolset so it can
+  # actually do work on the machine. permission-gate intercepts rm -rf /
+  # sudo / chmod 777 / chown 777 via a Slack approval modal before the call
+  # executes; everything else runs without prompting.
+  plain:
+    tools: ["bash", "read", "grep", "find", "edit", "write"]
+    systemPromptSuffix: ""
+    approvals: tool
+  help:
+    tools: []
+    systemPromptSuffix: ""
+    approvals: none
+  status:
+    tools: []
+    systemPromptSuffix: ""
+    approvals: none
+  summarize:
+    tools: []
+    systemPromptSuffix: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context."
+    approvals: none
+  linear:
+    # Linear is driven by Pi custom tools (extensions/linear-tools.ts).
+    # The model invokes them directly; idempotency lives in the model's
+    # reasoning (search first, then comment-or-create).
+    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"]
+    systemPromptSuffix: "The user wants to track something in Linear. ALWAYS call linear_search_issues first with the most distinctive phrase or proper noun from their request. If a clear match comes back, call linear_add_comment on that issue (Markdown body referencing the Slack thread) instead of creating a duplicate. If no relevant match exists, call linear_create_issue exactly once with: title (concise single line), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions), and optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the final tool call, write a short Slack reply quoting the Linear issue identifier and URL (or comment URL). Never call linear_create_issue twice for the same thread."
+    approvals: tool
+  agenda:
+    tools: []
+    systemPromptSuffix: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes."
+    approvals: none
+  spec:
+    tools: []
+    systemPromptSuffix: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions."
+    approvals: none
+  # Stage 6.5: bash route with the built-in `bash` tool active. The
+  # permission-gate inline extension (extensions/permission-gate.ts) gates
+  # rm -rf / sudo / chmod 777 / chown 777 by calling
+  # ctx.ui.select("Allow?", ["Yes","No"]) which lib/slack-ui-context.mjs
+  # translates into Slack approval buttons. Non-dangerous commands run
+  # without prompting. Keep this route off in production environments
+  # without an approval workflow — restrict to test channels and trusted
+  # operators.
+  bash:
+    tools: ["bash"]
+    systemPromptSuffix: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. The permission-gate extension may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777 — that's expected; the gate either resumes or blocks the call based on the user's choice."
+    approvals: tool
+
 legacyRoutes:
   - name: help
     triggers:
@@ -80,12 +135,6 @@ legacyRoutes:
     status: legacy-active
     notes: Pi prompt route for meeting agendas.
 
-  - name: escalation
-    triggers:
-      - "Slack app mention or DM prefix: escalation:"
-    status: legacy-active
-    notes: Pi prompt route for escalation briefs.
-
   - name: spec
     triggers:
       - "Slack app mention or DM prefix: spec:"
@@ -93,36 +142,6 @@ legacyRoutes:
       - "Slash command: /thread-spec <Slack message/thread URL> [optional focus]"
     status: legacy-active
     notes: Pi prompt route for PRD/spec drafts; natural intent requires a thread.
-
-  - name: digest
-    triggers:
-      - "Slack app mention or DM prefix: digest:"
-    status: legacy-active
-    notes: Pi prompt route for compact digests.
-
-  - name: image
-    triggers:
-      - "Slack app mention or DM prefix: image:"
-    status: legacy-active
-    notes: Direct OpenAI image generation/edit route handled by the Slack bridge.
-
-  - name: agent
-    triggers:
-      - "Slack app mention or DM prefix: agent:"
-    status: legacy-active
-    notes: Shows an Agent Run Card for bounded fake or repo-health runner tasks; controlled by PI_MOM_AGENT_ROUTE_ENABLED.
-
-  - name: agent_run_start
-    triggers:
-      - "Slack block action: agent_run_start"
-    status: legacy-active
-    notes: Button action that starts a pending Agent Run Card task.
-
-  - name: agent_run_cancel
-    triggers:
-      - "Slack block action: agent_run_cancel"
-    status: legacy-active
-    notes: Button action that cancels a pending/running Agent Run Card task.
 
   - name: app_mention
     triggers:

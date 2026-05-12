@@ -27,7 +27,7 @@
  * It exists because safety gates REQUIRE Pi's mutable `tool_call.event.input`
  * primitive — which cannot be replicated as a Tier-1 capability.
  */
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const BLOCKED_PATH_PATTERNS: RegExp[] = [
     /(^|\/)\.env($|\.)/, // .env, .env.local, .env.production, etc.
