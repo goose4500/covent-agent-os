@@ -12,6 +12,8 @@ import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
 import { createSlackSink } from "./lib/slack-sink.mjs";
+import { createCanvasSink } from "./lib/canvas-sink.mjs";
+import { createCompositeSink } from "./lib/composite-sink.mjs";
 import {
   buildInputModalView,
   createSlackUIContext,
@@ -459,11 +461,17 @@ async function handleUIContextProbe({ client, channel, threadTs, requestId, text
   });
 }
 
+// Stage 8 — routes whose output is long-form enough to deserve a Slack
+// canvas mirror in addition to the chat-stream. The canvas-sink runs
+// alongside the slack-sink (via composite-sink) so the user gets both a
+// live chat preview and a clean scrollable document.
+const CANVAS_ROUTES = new Set(["spec"]);
+
 async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities }) {
   const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
   const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
-  const sink = createSlackSink({
+  const slackSink = createSlackSink({
     client,
     channel,
     threadTs,
@@ -472,6 +480,28 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     requestId,
     trace,
   });
+
+  // Stage 8: if this route is canvas-eligible (currently just `spec:`),
+  // mirror the run into a standalone Slack canvas. The canvas-sink
+  // creates one canvas per Pi run (new canvas on every invocation —
+  // matches the user's chosen re-run policy), debounces edits at 3s /
+  // 1.5KB to stay under Tier 3 limits, and at stop performs a single
+  // `replace` op with the final cleaned markdown so the doc reads as
+  // one cohesive piece. Failures are fail-soft: the chat stream is
+  // authoritative and continues regardless.
+  const wantsCanvas = CANVAS_ROUTES.has(action?.name) || CANVAS_ROUTES.has(action?.routeKey);
+  let canvasSink;
+  if (wantsCanvas) {
+    canvasSink = createCanvasSink({
+      client,
+      channel,
+      title: `Spec — ${requestId}`,
+      requestId,
+      trace,
+    });
+  }
+
+  const sink = canvasSink ? createCompositeSink([slackSink, canvasSink]) : slackSink;
 
   // Stage 6: per-turn slack UI context for ctx.ui.{confirm,select,input,notify,setStatus}.
   // The Bolt action/view handlers consult pendingApprovals to resolve the
@@ -489,6 +519,21 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
   });
 
   await sink.start({ initialText: `👀 Covent Pi is thinking… (req: ${requestId})\n\n` });
+
+  // Post the canvas link into the Slack thread once we know the canvas
+  // exists. Best-effort — failures here don't affect the run.
+  if (canvasSink?.canvasId && canvasSink?.url) {
+    try {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `📄 Streaming this spec into a canvas → <${canvasSink.url}|${canvasSink.canvasId}>`,
+      });
+      trace("canvas.link_posted", { requestId, canvasId: canvasSink.canvasId });
+    } catch (err) {
+      trace("canvas.link_post_failed", { requestId, error: err?.data?.error || err?.message });
+    }
+  }
 
   let result;
   let runError;
