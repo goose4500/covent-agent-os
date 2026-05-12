@@ -14,11 +14,24 @@
 // not safe for concurrent writers; pi-mom is one process anyway.
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
-const DEFAULT_PATH =
-  process.env.PI_MOM_THREAD_SESSION_PATH ||
-  `${process.env.HOME || "/tmp"}/.pi/agent/pi-mom/thread-sessions.json`;
+// The map lives next to the SDK's session storage so a persistent Railway
+// volume (mounted at PI_AGENT_DIR / PI_CODING_AGENT_DIR) keeps thread→session
+// continuity across container restarts. Without this the JSON would land on
+// ephemeral disk and every redeploy would orphan in-flight thread sessions.
+function _resolveDefaultThreadSessionPath() {
+  if (process.env.PI_MOM_THREAD_SESSION_PATH) {
+    return process.env.PI_MOM_THREAD_SESSION_PATH;
+  }
+  const agentDir =
+    process.env.PI_AGENT_DIR ||
+    process.env.PI_CODING_AGENT_DIR ||
+    `${process.env.HOME || "/tmp"}/.pi/agent`;
+  return join(agentDir, "pi-mom", "thread-sessions.json");
+}
+
+const DEFAULT_PATH = _resolveDefaultThreadSessionPath();
 
 export function createThreadSessionMap({
   path = DEFAULT_PATH,
