@@ -83,17 +83,9 @@ const ROUTES = {
     label: "Meeting agenda",
     instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
   },
-  escalation: {
-    label: "Escalation brief",
-    instruction: "Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply.",
-  },
   spec: {
     label: "Spec / PRD draft",
     instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
-  },
-  digest: {
-    label: "Digest",
-    instruction: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.",
   },
   agent: {
     label: "Agent Run Card",
@@ -268,7 +260,7 @@ function formatHelp() {
     `• in a thread: \`@Covent Pi create Linear issue\`\n` +
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
-    `• \`@Covent Pi escalation: brief this customer problem\``;
+    `• \`@Covent Pi spec: turn this thread into a PRD draft\``;
 }
 
 async function formatStatus(client) {
@@ -1095,7 +1087,7 @@ const assistant = new Assistant({
         title: "What can I draft for you?",
         prompts: [
           { title: "Draft a spec", message: "spec: " },
-          { title: "Escalation brief", message: "escalation: " },
+          { title: "Create a Linear issue", message: "linear: " },
           { title: "Meeting agenda", message: "agenda: " },
           { title: "Summarize a thread", message: "summarize: paste the thread URL or context" },
         ],

@@ -83,17 +83,9 @@ routes:
     tools: []
     systemPromptSuffix: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes."
     approvals: none
-  escalation:
-    tools: []
-    systemPromptSuffix: "Create an escalation brief from the current Slack thread. Output: severity, customer/business impact, known facts, unknowns, blockers, recommended owner, immediate next action, and a concise suggested internal reply."
-    approvals: none
   spec:
     tools: []
     systemPromptSuffix: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions."
-    approvals: none
-  digest:
-    tools: []
-    systemPromptSuffix: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing."
     approvals: none
   agent:
     tools: []
@@ -144,12 +136,6 @@ legacyRoutes:
     status: legacy-active
     notes: Pi prompt route for meeting agendas.
 
-  - name: escalation
-    triggers:
-      - "Slack app mention or DM prefix: escalation:"
-    status: legacy-active
-    notes: Pi prompt route for escalation briefs.
-
   - name: spec
     triggers:
       - "Slack app mention or DM prefix: spec:"
@@ -157,12 +143,6 @@ legacyRoutes:
       - "Slash command: /thread-spec <Slack message/thread URL> [optional focus]"
     status: legacy-active
     notes: Pi prompt route for PRD/spec drafts; natural intent requires a thread.
-
-  - name: digest
-    triggers:
-      - "Slack app mention or DM prefix: digest:"
-    status: legacy-active
-    notes: Pi prompt route for compact digests.
 
   - name: agent
     triggers:
