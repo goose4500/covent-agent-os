@@ -17,6 +17,11 @@
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_HEARTBEAT_THRESHOLD_MS = 25_000;
 const DEFAULT_APPEND_BATCH_MS = 200;
+// Slack's chat.startStream messages cap at ~12 000 chars of cumulative
+// markdown_text; appendStream rejects with msg_too_long past that and the
+// whole stream message can fail-closed empty. Rotate to a new stream a bit
+// under that ceiling so the user always sees their reply.
+const DEFAULT_MAX_STREAM_CHARS = 11_000;
 const ZERO_WIDTH_SPACE = "​";
 
 export function createSlackSink({
@@ -31,6 +36,7 @@ export function createSlackSink({
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   heartbeatThresholdMs = DEFAULT_HEARTBEAT_THRESHOLD_MS,
   appendBatchMs = DEFAULT_APPEND_BATCH_MS,
+  maxStreamChars = DEFAULT_MAX_STREAM_CHARS,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   setIntervalFn = setInterval,
@@ -48,11 +54,43 @@ export function createSlackSink({
   let stopped = false;
   let streamChain = Promise.resolve();
   let streamError = null;
-  let streamedChars = 0;
+  let streamedChars = 0;       // cumulative across rotations (for traces / stop)
+  let currentStreamChars = 0;  // resets on rotation
+  let streamRotations = 0;
   let textBuffer = "";
   let textTimer;
   let heartbeatTimer;
   let lastActivityMs = now();
+
+  function buildStreamArgs() {
+    const args = { channel, thread_ts: threadTs };
+    if (recipient?.user_id && recipient?.team_id) {
+      args.recipient_user_id = recipient.user_id;
+      args.recipient_team_id = recipient.team_id;
+    }
+    return args;
+  }
+
+  async function rotateStream() {
+    if (!started || stopped) return;
+    streamRotations += 1;
+    trace("slack.stream_rotated", {
+      requestId,
+      streamRotations,
+      previousChars: currentStreamChars,
+    });
+    try { await stream.stop(); } catch {}
+    stream = client.chatStream(buildStreamArgs());
+    currentStreamChars = 0;
+    try {
+      await stream.append({ markdown_text: "_…(continued)_\n\n" });
+    } catch (err) {
+      trace("slack.stream_rotation_marker_failed", {
+        requestId,
+        error: err?.data?.error || err.message,
+      });
+    }
+  }
 
   function touch() {
     lastActivityMs = now();
@@ -60,7 +98,15 @@ export function createSlackSink({
 
   function appendNow(markdown_text) {
     if (!markdown_text) return streamChain;
+    // Rotate to a fresh stream before this append if it would push the
+    // current stream past Slack's per-message cumulative ceiling. The
+    // check uses currentStreamChars (post-rotation counter) so we only
+    // rotate once per cycle; streamedChars stays a monotonic total.
+    if (started && currentStreamChars + markdown_text.length > maxStreamChars) {
+      streamChain = streamChain.then(() => rotateStream());
+    }
     streamedChars += markdown_text.length;
+    currentStreamChars += markdown_text.length;
     touch();
     streamChain = streamChain
       .then(() => stream.append({ markdown_text }))
@@ -118,11 +164,7 @@ export function createSlackSink({
   async function start({ initialText } = {}) {
     if (started) throw new Error("slack-sink: start() called twice");
     started = true;
-    const streamArgs = { channel, thread_ts: threadTs };
-    if (recipient?.user_id && recipient?.team_id) {
-      streamArgs.recipient_user_id = recipient.user_id;
-      streamArgs.recipient_team_id = recipient.team_id;
-    }
+    const streamArgs = buildStreamArgs();
     stream = client.chatStream(streamArgs);
     trace("slack.stream_started", {
       requestId,

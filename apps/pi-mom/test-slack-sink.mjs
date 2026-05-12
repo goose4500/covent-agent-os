@@ -183,7 +183,56 @@ function makeFakeTimers() {
   assert.equal(err.slackStreamNotified, true, "error tagged slackStreamNotified");
 }
 
-// Case 8: missing client.chatStream throws at factory time.
+// Case 8: stream rotation when cumulative text exceeds maxStreamChars.
+{
+  const streams = [];
+  const client = {
+    chatStream: (args) => {
+      const s = makeFakeStream();
+      s._args = args;
+      streams.push(s);
+      return s;
+    },
+  };
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client,
+    channel: "C8",
+    threadTs: "8.0",
+    recipient: { user_id: "U1", team_id: "T1" },
+    surface: "app_mention",
+    requestId: "req_t8",
+    maxStreamChars: 100,
+    appendBatchMs: 1,
+    ...T,
+  });
+
+  await sink.start({ initialText: "x".repeat(30) });
+  // Now push ~150 more chars; should trigger rotation before exceeding cap.
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "y".repeat(80) } });
+  // fire flush timer for first batch
+  const t1 = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (t1) await t1.fn();
+  await new Promise((r) => setImmediate(r));
+  // push another batch that forces rotation
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "z".repeat(80) } });
+  const t2 = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (t2) await t2.fn();
+  await new Promise((r) => setImmediate(r));
+  await sink.stop({ result: "done" });
+
+  assert.ok(streams.length >= 2, `expected ≥ 2 chatStream calls, saw ${streams.length}`);
+  // Second stream should have the same thread + recipient.
+  assert.equal(streams[1]._args.thread_ts, "8.0");
+  assert.equal(streams[1]._args.recipient_user_id, "U1");
+  // Second stream should have received the continuation marker.
+  const continuationMarker = streams[1].appends.find(
+    (a) => typeof a.markdown_text === "string" && a.markdown_text.includes("continued"),
+  );
+  assert.ok(continuationMarker, "second stream received continuation marker");
+}
+
+// Case 9: missing client.chatStream throws at factory time.
 {
   assert.throws(
     () => createSlackSink({ client: {}, channel: "C", threadTs: "0", requestId: "x" }),
