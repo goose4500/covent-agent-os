@@ -112,6 +112,10 @@ const ROUTES = {
     label: "Agent Run Card",
     instruction: "Show a Slack confirmation card before running a bounded fake or repo-health agent task.",
   },
+  uictx: {
+    label: "Stage 6 UI-context probe (confirm | select | input)",
+    instruction: "Stage 6 dev probe — handled inline by the bridge; not routed to Pi.",
+  },
 };
 
 function boundedIntegerEnv(name, fallback, { min, max }) {
@@ -765,6 +769,62 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
   return args;
 }
 
+async function handleUIContextProbe({ client, channel, threadTs, requestId, text, mode, utilities, user }) {
+  const raw = String(text || "").trim();
+  const subMatch = raw.match(/^(confirm|select|input)\b\s*(.*)$/i);
+  const sub = subMatch?.[1]?.toLowerCase() || "confirm";
+  const arg = subMatch?.[2]?.trim() || "";
+
+  const slackUI = createSlackUIContext({
+    client,
+    channel,
+    threadTs,
+    requestId,
+    pendingApprovals,
+    surface: mode,
+    assistantSetStatus: utilities?.setStatus,
+    trace,
+  });
+
+  trace("uictx_probe.start", { requestId, sub, argLength: arg.length, mode });
+  const startedAt = Date.now();
+  let outcome;
+  try {
+    if (sub === "select") {
+      const options = arg
+        ? arg.split(/\s*,\s*/).filter(Boolean).slice(0, 5)
+        : ["Yes", "No"];
+      outcome = await slackUI.select(
+        arg ? `Stage 6 probe: choose one (req ${requestId})` : `Stage 6 probe: Allow rm -rf /tmp/test-canary? (req ${requestId})`,
+        options,
+        { timeout: 120_000 },
+      );
+    } else if (sub === "input") {
+      outcome = await slackUI.input(
+        `Stage 6 probe: input (req ${requestId})`,
+        arg || "Type anything; the bridge will echo it back.",
+        { timeout: 120_000 },
+      );
+    } else {
+      outcome = await slackUI.confirm(
+        `Stage 6 probe: confirm (req ${requestId})`,
+        arg || "Click Approve to confirm the UI context wiring is live.",
+        { timeout: 120_000 },
+      );
+    }
+  } finally {
+    slackUI.dispose("probe_end");
+  }
+
+  const durationMs = Date.now() - startedAt;
+  trace("uictx_probe.resolved", { requestId, sub, durationMs, outcome: typeof outcome === "string" ? `len:${outcome.length}` : outcome });
+  await client.chat.postMessage({
+    channel,
+    thread_ts: threadTs,
+    text: `📨 Stage 6 probe (req: ${requestId}) — *${sub}* resolved in \`${durationMs}ms\`\nresult: \`${JSON.stringify(outcome)}\``,
+  });
+}
+
 async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities }) {
   const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
   const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
@@ -967,6 +1027,19 @@ async function handleRequest({ client, event, mode, utilities }) {
 
   if (command.kind === "route" && command.routeKey === "image") {
     await handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start });
+    return;
+  }
+
+  // Stage 6 dev probe — exercises lib/slack-ui-context.mjs end-to-end without
+  // requiring extensions to be loaded. `uictx: confirm <msg>` posts approval
+  // buttons and echoes the boolean back. `uictx: select <opts>` posts buttons
+  // for a comma-separated list and echoes the chosen option. `uictx: input
+  // <placeholder>` opens the modal launcher and echoes the submitted text.
+  // TODO Stage 10 — delete this route once permission-gate.ts is loaded and
+  // a real Action allows bash, at which point the natural extension flow is
+  // the canary.
+  if (command.kind === "route" && command.routeKey === "uictx") {
+    await handleUIContextProbe({ client, channel, threadTs, requestId, text, mode, utilities, user });
     return;
   }
 
