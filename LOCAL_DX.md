@@ -3,36 +3,52 @@
 ## Goals
 
 - One repo contains Covent automation source.
-- `~/.pi/agent` becomes runtime/install state, not source of truth.
-- Local POC stays fast: edit repo → run checks → install/load in Pi → test Slack route.
+- Local DX stays fast: edit repo → run checks → run the Slack bridge → test in `#idea-specs`.
+- `~/.pi/agent` is runtime/install state for the standalone `pi` CLI; the *production* Pi runtime is now in-process via the SDK (no subprocess), so the bridge does not depend on a globally installed `pi`.
 
 ## Common commands
 
 ```bash
-npm install
-npm run check
-npm run doctor
-npm run dev:pi-mom
-npm run install:pi
+bun install                    # workspace install
+bun run check                  # secret-scan + skill/agent validators + pi-mom tests + tsc --noEmit
+bun run doctor                 # alias for doctor:pi-mom
+bun run doctor:pi-mom          # non-secret readiness diagnostics
+bun run dev:pi-mom             # run the Slack bridge locally
+bun run install:pi             # optional: install repo as a Pi package for harness experiments
+bun run typecheck              # tsc --noEmit
+bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 ```
+
+`npm` works in compat mode via bun, but the canonical runtime is **bun 1.3+**. The package.json's `"engines": {"bun": ">=1.3.0"}` field is the source of truth.
 
 ## Source layout
 
-- `apps/pi-mom/` — live Slack Socket Mode bridge.
-- `extensions/` — Pi extension tools and guards.
-- `lib/` — shared JavaScript helpers.
-- `skills/` — Pi skills copied from current local working state.
-- `agents/` — subagent definitions copied from current local working state.
+- `apps/pi-mom/` — the Slack Socket Mode bridge (deployed to Railway as `covent-pi-mom`).
+- `apps/pi-mom/control-plane/registry.yaml` — declarative per-Action vocabulary.
+- `apps/pi-mom/lib/` — dispatch, action-resolver, pi-sdk-runner, pi-session, slack-sink, slack-ui-context, canvas-sink, composite-sink, thread-session-map, home-view.
+- `extensions/` — Pi extension tools and guards (`linear-tools.ts`, `permission-gate.ts`, `env-guard.ts`, etc.).
+- `lib/` — shared JavaScript helpers (legacy; most logic now in `apps/pi-mom/lib/`).
+- `skills/` — Pi skills.
+- `agents/` — subagent definitions.
 - `packages/pi-chrome-access/` — local Chrome/DevTools Pi package.
-- `docs/` — runbooks, specs, source-of-truth notes, context packs.
+- `packages/pi-ext-covent-aws/` — EC2 operator extension scaffolding (not yet wired into prod).
+- `docs/` — architecture, ADRs, runbooks, specs, source-of-truth notes, historical research.
 
-## Syncing from current live Pi state
+## Local Slack testing
 
-Use this only while migrating:
+1. Fill `apps/pi-mom/.env.local` with your Slack tokens (never commit). See `apps/pi-mom/README.md` for the full env shape and 1Password recipe.
+2. Run `bun run dev:pi-mom`.
+3. Confirm prod isn't also handling the same Slack tokens (both services holding the same Socket Mode connection causes split-brain).
+4. Mention `@Covent-Agent` in `#idea-specs` from your Slack account. Watch logs for `[pi-mom-trace]` lines.
 
-```bash
-scripts/sync-from-live-pi.sh --dry-run
-scripts/sync-from-live-pi.sh --apply
-```
+If Pi credentials aren't seeded locally (`~/.pi/agent/auth.json`), the SDK will prompt for OAuth on first session creation. Either log in once interactively, or set `PI_AUTH_JSON_B64` from a sibling environment's auth.json.
 
-The goal is to retire ad-hoc edits in `~/.pi/agent` and make this repo canonical.
+## Syncing from `~/.pi/agent` (historical)
+
+The repo was originally bootstrapped by copying state from `~/.pi/agent/pi-mom/`. That migration is complete; `MIGRATION_MAP.md` documents the one-time copy. The sync scripts under `scripts/` are kept for evidence but should not be re-run — this repo is now the canonical source.
+
+## Production deploy
+
+Production runs on Railway. The bridge auto-deploys from `main`. See [`README.md`](README.md) and [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/runbooks/foundation-v2-cutover-2026-05-12.md) for the deploy lifecycle.
+
+Do not run `bun run dev:pi-mom` locally against production Slack tokens unless you intentionally want a local instance to hold the Socket Mode connection (which kicks the Railway worker off).
