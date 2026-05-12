@@ -9,7 +9,6 @@ import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
-import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
@@ -86,7 +85,7 @@ const ROUTES = {
   },
   linear: {
     label: "Create Linear issue",
-    instruction: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec.",
+    instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
   },
   agenda: {
     label: "Meeting agenda",
@@ -338,137 +337,6 @@ async function getSlackPermalink(client, channel, messageTs) {
     trace("slack.permalink_failed", { error: error?.data?.error || error.message });
     return "";
   }
-}
-
-function clampLinearTitle(title = "") {
-  const singleLine = String(title || "").replace(/\s+/g, " ").trim();
-  if (!singleLine) return "Slack thread spec";
-  return singleLine.length <= 240 ? singleLine : `${singleLine.slice(0, 237)}...`;
-}
-
-function stripWrappingMarkdownFence(text = "") {
-  return String(text || "")
-    .trim()
-    .replace(/^```(?:markdown|md|text)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
-
-function extractLinearIssuePayload(piOutput = "") {
-  const cleaned = stripWrappingMarkdownFence(cleanPiOutput(piOutput));
-  const lines = cleaned.split(/\r?\n/);
-  const titleLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i.test(line));
-
-  if (titleLineIndex >= 0) {
-    const title = lines[titleLineIndex].replace(/^\s*(?:#{1,3}\s*)?(?:title|issue title)\s*:\s+/i, "").trim();
-    const description = stripWrappingMarkdownFence(lines.filter((_, index) => index !== titleLineIndex).join("\n")) || cleaned;
-    return { title: clampLinearTitle(title), description };
-  }
-
-  const headingLineIndex = lines.findIndex((line, index) => index < 12 && /^\s*#{1,3}\s+\S+/.test(line));
-  if (headingLineIndex >= 0) {
-    const title = lines[headingLineIndex].replace(/^\s*#{1,3}\s+/, "").trim();
-    return { title: clampLinearTitle(title), description: cleaned };
-  }
-
-  const firstUsefulLine = lines.find((line) => line.trim()) || "Slack thread spec";
-  return { title: clampLinearTitle(firstUsefulLine.replace(/^\*+|\*+$/g, "")), description: cleaned };
-}
-
-async function createLinearIssue({ title, description, slackUrl, requestId }) {
-  const apiKey = process.env.LINEAR_API_KEY;
-  if (!apiKey) {
-    throw new Error("LINEAR_API_KEY is not set in the pi-mom environment.");
-  }
-
-  const fullDescription = `${description.trim()}\n\n---\n\nSource Slack thread: ${slackUrl || "unavailable"}\nCreated by Covent Pi request: ${requestId}`;
-  const query = `
-    mutation IssueCreate($input: IssueCreateInput!) {
-      issueCreate(input: $input) {
-        success
-        issue { id identifier title url }
-      }
-    }
-  `;
-
-  const response = await fetch(LINEAR_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: {
-        input: {
-          teamId: LINEAR_TEAM_ID,
-          projectId: LINEAR_PROJECT_ID,
-          stateId: LINEAR_STATE_ID,
-          title: clampLinearTitle(title),
-          description: fullDescription,
-        },
-      },
-    }),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.errors?.length) {
-    const message = payload.errors?.map((error) => error.message).join("; ") || `HTTP ${response.status}`;
-    throw new Error(`Linear issueCreate failed: ${message}`);
-  }
-  if (!payload.data?.issueCreate?.success || !payload.data?.issueCreate?.issue) {
-    throw new Error("Linear issueCreate did not return a created issue.");
-  }
-
-  return payload.data.issueCreate.issue;
-}
-
-async function createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }) {
-  const sourceUrl = await getSlackPermalink(client, channel, threadTs);
-  const { title, description } = extractLinearIssuePayload(result);
-
-  trace("linear.issue_create_requested", {
-    requestId,
-    titleLength: title.length,
-    descriptionLength: description.length,
-    teamId: LINEAR_TEAM_ID,
-    projectId: LINEAR_PROJECT_ID,
-    stateId: LINEAR_STATE_ID,
-  });
-
-  const issue = await createLinearIssue({ title, description, slackUrl: sourceUrl, requestId });
-  trace("linear.issue_created", { requestId, identifier: issue.identifier, issueId: issue.id });
-  return issue;
-}
-
-async function getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId }) {
-  try {
-    const messages = await getThreadMessages(client, channel, threadTs);
-    const existing = findPriorLinearIssueConfirmation(messages);
-    trace("linear.duplicate_scan", { requestId, messageCount: messages.length, duplicate: Boolean(existing), identifier: existing?.identifier || "" });
-    return { messages, existing };
-  } catch (error) {
-    trace("linear.duplicate_scan_failed", { requestId, error: error?.data?.error || error.message });
-    return { messages: [], existing: undefined };
-  }
-}
-
-async function postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }) {
-  await client.chat.postMessage({
-    channel,
-    thread_ts: threadTs,
-    text: duplicateLinearIssueReply(existing),
-  });
-  trace("slack.replied_linear_duplicate", { requestId, identifier: existing?.identifier || "", messageTs: existing?.messageTs || "" });
-}
-
-async function createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result }) {
-  const { messages } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
-  return createLinearIssueUnlessDuplicate({
-    messages,
-    createIssue: () => createLinearIssueFromPiOutput({ client, channel, threadTs, requestId, result }),
-    postDuplicateReply: (existing) => postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing }),
-  });
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext, routeKey, route }) {
@@ -1047,14 +915,6 @@ async function handleRequest({ client, event, mode, utilities }) {
     return;
   }
 
-  if (command.kind === "route" && command.routeKey === "linear") {
-    const { existing } = await getPriorLinearIssueConfirmation({ client, channel, threadTs, requestId });
-    if (existing) {
-      await postDuplicateLinearIssueReply({ client, channel, threadTs, requestId, existing });
-      return;
-    }
-  }
-
   try {
     const threadContext = await getThreadContext(client, channel, threadTs);
     trace("slack.thread_context", { requestId, contextLength: threadContext.length });
@@ -1073,27 +933,6 @@ async function handleRequest({ client, event, mode, utilities }) {
 
     const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities });
     trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-    if (command.kind === "route" && command.routeKey === "linear") {
-      try {
-        const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
-        if (outcome.status === "duplicate") return;
-        const issue = outcome.issue;
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-        });
-        trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-      } catch (error) {
-        const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-        trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-        await client.chat.postMessage({
-          channel,
-          thread_ts: threadTs,
-          text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-        });
-      }
-    }
   } catch (error) {
     trace("error", { requestId, error: error.message, durationMs: Date.now() - start });
     console.error(`[pi-mom] ${requestId} error:`, error);

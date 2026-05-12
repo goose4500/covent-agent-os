@@ -84,6 +84,11 @@ import {
 // approval buttons. Bun's native .ts handling lets us import the source
 // directly without a build step.
 import permissionGate from "../../../extensions/permission-gate.ts";
+// Linear-tools (post-Stage 6.5): registers `linear_create_issue` as a Pi
+// custom tool. Replaces the legacy post-stream GraphQL call that lived in
+// index.mjs; the model now drives Linear issue creation directly via tool
+// calls, which is composable with future search/comment/update tools.
+import linearTools from "../../../extensions/linear-tools.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -149,7 +154,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate],
+      extensionFactories: [permissionGate, linearTools],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,

@@ -72,9 +72,13 @@ routes:
     systemPromptSuffix: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context."
     approvals: none
   linear:
-    tools: []
-    systemPromptSuffix: "Create a Linear-ready issue spec from the current Slack thread. The first line must be exactly `Title: <concise issue title>`. Then write the issue description in Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread timestamp if inferable, and open questions. The bridge will create the Linear issue after you output this spec."
-    approvals: none
+    # Linear is now driven by the linear_create_issue Pi custom tool
+    # (extensions/linear-tools.ts). The model invokes the tool directly with
+    # the title + Markdown description; the bridge no longer scrapes the
+    # streamed output to call Linear after the fact.
+    tools: ["linear_create_issue"]
+    systemPromptSuffix: "Create a Linear issue from the current Slack thread using the linear_create_issue tool. Call the tool exactly once with: title (concise single line), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions), and optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the tool returns, write a short Slack reply quoting the Linear issue identifier and URL. Do not call the tool twice for the same Slack thread."
+    approvals: tool
   agenda:
     tools: []
     systemPromptSuffix: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes."
