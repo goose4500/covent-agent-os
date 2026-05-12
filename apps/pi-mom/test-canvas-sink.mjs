@@ -1,22 +1,33 @@
 import assert from "node:assert/strict";
 import { createCanvasSink } from "./lib/canvas-sink.mjs";
 
-function makeFakeClient({ createImpl, editImpl } = {}) {
+function makeFakeClient({ createImpl, editImpl, accessSetImpl } = {}) {
   const creates = [];
   const edits = [];
+  const accessSets = [];
   return {
     creates,
     edits,
+    accessSets,
     canvases: {
       create: async (args) => {
         creates.push(args);
         if (createImpl) return createImpl(args, creates.length);
-        return { ok: true, canvas_id: `canvas_${creates.length}`, canvas: { id: `canvas_${creates.length}`, url: `https://app.slack.com/docs/T1/canvas_${creates.length}` } };
+        // Real Slack canvases.create returns {ok, canvas_id} — no canvas.url.
+        // The sink constructs the URL from teamId + canvasId.
+        return { ok: true, canvas_id: `canvas_${creates.length}` };
       },
       edit: async (args) => {
         edits.push(args);
         if (editImpl) return editImpl(args, edits.length);
         return { ok: true };
+      },
+      access: {
+        set: async (args) => {
+          accessSets.push(args);
+          if (accessSetImpl) return accessSetImpl(args, accessSets.length);
+          return { ok: true };
+        },
       },
     },
   };
@@ -40,22 +51,32 @@ function makeFakeTimers() {
 
 const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } });
 
-// Case 1: start() creates a canvas with [streaming] title prefix and returns id+url.
+// Case 1: start() creates a standalone canvas (no channel_id) with the
+// final title verbatim and constructs the URL from teamId + canvasId.
+// Also grants write access to the requesting user AND the channel via
+// canvases.access.set so the link in the thread actually opens.
 {
   const client = makeFakeClient();
   const T = makeFakeTimers();
   const sink = createCanvasSink({
-    client, channel: "C1", title: "Spec draft", requestId: "req_c1", ...T,
+    client, channel: "C1", title: "Spec draft",
+    requestId: "req_c1", teamId: "T1", accessUserIds: ["U1"], ...T,
   });
   const out = await sink.start({});
   assert.equal(out.canvasId, "canvas_1");
-  assert.equal(out.url, "https://app.slack.com/docs/T1/canvas_1");
+  assert.equal(out.url, "https://app.slack.com/docs/T1/canvas_1", "URL includes team_id segment");
   assert.equal(sink.canvasId, "canvas_1");
   assert.equal(client.creates.length, 1);
-  assert.match(client.creates[0].title, /^\[streaming\] /);
-  assert.match(client.creates[0].title, /Spec draft$/);
-  assert.equal(client.creates[0].channel_id, "C1");
+  assert.equal(client.creates[0].title, "Spec draft", "no [streaming] prefix");
+  assert.equal(client.creates[0].channel_id, undefined, "standalone canvas, no channel_id");
   assert.equal(client.creates[0].document_content.type, "markdown");
+  // Access grants: one for the user, one for the channel.
+  assert.equal(client.accessSets.length, 2);
+  const userGrant = client.accessSets.find((a) => Array.isArray(a.user_ids));
+  const channelGrant = client.accessSets.find((a) => Array.isArray(a.channel_ids));
+  assert.deepEqual(userGrant.user_ids, ["U1"]);
+  assert.equal(userGrant.access_level, "write");
+  assert.deepEqual(channelGrant.channel_ids, ["C1"]);
 }
 
 // Case 2: handle text_delta buffers until flushMs timer fires → insert_at_end.
@@ -128,13 +149,16 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
   assert.equal(client.edits[1].changes[0].document_content.markdown, "hi there", "full chunk re-queued, no data lost");
 }
 
-// Case 5: stop() drains buffer, sends replace with full text, then rename to clean title.
+// Case 5: stop() drains buffer then sends replace with full text. No
+// rename op — Slack's canvases.edit `rename` operation returned
+// `invalid_arguments` in live testing; the streaming indicator lives
+// in the chat link message, not the canvas title.
 {
   const client = makeFakeClient();
   const T = makeFakeTimers();
   const sink = createCanvasSink({
     client, channel: "C5", title: "Spec",
-    requestId: "req_c5", flushMs: 1000, flushBytes: 10000, ...T,
+    requestId: "req_c5", teamId: "T1", flushMs: 1000, flushBytes: 10000, ...T,
   });
   await sink.start({});
   sink.handle(delta("part one. "));
@@ -143,13 +167,12 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
 
   // edits[0] = the drained buffer (insert_at_end)
   // edits[1] = the replace with the result
-  // edits[2] = the rename
-  assert.equal(client.edits.length, 3);
+  assert.equal(client.edits.length, 2);
   assert.equal(client.edits[0].changes[0].operation, "insert_at_end");
   assert.equal(client.edits[1].changes[0].operation, "replace");
   assert.equal(client.edits[1].changes[0].document_content.markdown, "Final cleaned markdown for the spec.");
-  assert.equal(client.edits[2].changes[0].operation, "rename");
-  assert.equal(client.edits[2].changes[0].title, "Spec");
+  const renameOp = client.edits.find((e) => e.changes[0].operation === "rename");
+  assert.equal(renameOp, undefined, "no rename op (Slack rejected invalid_arguments in production)");
 }
 
 // Case 6: stop() falls back to accumulated fullText when result is omitted.
@@ -229,13 +252,11 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
   const longTitle = "a".repeat(120);
   const sink = createCanvasSink({
     client, channel: "C10", title: longTitle,
-    requestId: "req_c10", ...T,
+    requestId: "req_c10", teamId: "T1", ...T,
   });
   await sink.start({});
   await sink.stop({ result: "x" });
   assert.ok(client.creates[0].title.length <= 80, "create title clamped");
-  const rename = client.edits.find((e) => e.changes[0].operation === "rename");
-  assert.ok(rename.changes[0].title.length <= 80, "rename title clamped");
 }
 
 console.log("canvas-sink tests passed");

@@ -30,7 +30,6 @@
 const DEFAULT_FLUSH_MS = 3000;
 const DEFAULT_FLUSH_BYTES = 1500;
 const DEFAULT_RATE_LIMIT_BACKOFF_MS = 2000;
-const STREAMING_TITLE_PREFIX = "[streaming] ";
 const INITIAL_MARKDOWN = "_Starting…_\n\n";
 
 export function createCanvasSink({
@@ -38,6 +37,8 @@ export function createCanvasSink({
   channel,
   title,
   requestId,
+  teamId,
+  accessUserIds = [],
   trace = () => {},
   flushMs = DEFAULT_FLUSH_MS,
   flushBytes = DEFAULT_FLUSH_BYTES,
@@ -113,21 +114,62 @@ export function createCanvasSink({
     if (started) throw new Error("canvas-sink: start() called twice");
     started = true;
     try {
+      // IMPORTANT: do NOT pass channel_id here. `canvases.create` with a
+      // channel_id implicitly creates a channel-attached canvas, which is
+      // mutually exclusive with the "standalone canvas, share via link"
+      // model the user picked. Channel-tabbed canvases live under the
+      // channel's Canvas tab and use a different access model. For a
+      // standalone canvas we omit channel_id entirely; the canvas
+      // belongs to the bot, and access is granted explicitly below via
+      // canvases.access.set for the requesting user.
       const args = {
-        title: `${STREAMING_TITLE_PREFIX}${baseTitle}`.slice(0, 80),
+        title: baseTitle,
         document_content: { type: "markdown", markdown: initialText },
       };
-      // Channel attachment is best-effort: free workspaces require it; paid
-      // workspaces accept it as a hint. Standalone canvases (no channel)
-      // still work on Pro+; passing channel_id is the safest universal
-      // call.
-      if (channel) args.channel_id = channel;
       const resp = await client.canvases.create(args);
       canvasId = resp?.canvas_id || resp?.canvas?.id;
-      canvasUrl = resp?.canvas?.url || resp?.canvas_url || (canvasId
-        ? `https://app.slack.com/docs/${canvasId}`
-        : undefined);
-      trace("canvas.created", { requestId, canvasId, hasUrl: Boolean(canvasUrl) });
+      // Slack's canvases.create returns {ok, canvas_id} — no canvas.url.
+      // The web-app URL needs the workspace's team_id segment:
+      //   https://app.slack.com/docs/{TEAM_ID}/{CANVAS_ID}
+      // Without team_id the URL 404s; we require teamId at factory time.
+      canvasUrl = resp?.canvas?.url || resp?.canvas_url ||
+        (canvasId && teamId
+          ? `https://app.slack.com/docs/${teamId}/${canvasId}`
+          : undefined);
+      trace("canvas.created", { requestId, canvasId, hasUrl: Boolean(canvasUrl), hasTeamId: Boolean(teamId) });
+
+      // Grant the requesting user (and any other accessUserIds) write
+      // access. Without this, only the bot can open the canvas and the
+      // user clicks the link to get a permissions error.
+      if (canvasId && Array.isArray(accessUserIds) && accessUserIds.length > 0 && typeof client.canvases?.access?.set === "function") {
+        try {
+          await client.canvases.access.set({
+            canvas_id: canvasId,
+            user_ids: accessUserIds,
+            access_level: "write",
+          });
+          trace("canvas.access_granted", { requestId, canvasId, userCount: accessUserIds.length });
+        } catch (err) {
+          trace("canvas.access_set_failed", { requestId, canvasId, error: err?.data?.error || err?.message || "unknown" });
+        }
+      }
+
+      // Also expose the canvas to the channel where the request originated
+      // so anyone in that channel can open the link (matches the "share
+      // via thread link in #idea-specs" UX). Best-effort.
+      if (canvasId && channel && typeof client.canvases?.access?.set === "function") {
+        try {
+          await client.canvases.access.set({
+            canvas_id: canvasId,
+            channel_ids: [channel],
+            access_level: "write",
+          });
+          trace("canvas.channel_access_granted", { requestId, canvasId, channel });
+        } catch (err) {
+          trace("canvas.channel_access_failed", { requestId, canvasId, error: err?.data?.error || err?.message || "unknown" });
+        }
+      }
+
       return canvasId ? { canvasId, url: canvasUrl } : undefined;
     } catch (err) {
       const code = err?.data?.error || err?.message;
@@ -195,17 +237,6 @@ export function createCanvasSink({
       } catch (err) {
         trace("canvas.replace_failed", { requestId, canvasId, error: err?.data?.error || err?.message || "unknown" });
       }
-    }
-    // Flip the title to drop the [streaming] prefix.
-    try {
-      await client.canvases.edit({
-        canvas_id: canvasId,
-        changes: [{ operation: "rename", title: baseTitle.slice(0, 80) }],
-      });
-      trace("canvas.renamed", { requestId, canvasId, title: baseTitle });
-    } catch (err) {
-      // Cosmetic — non-fatal.
-      trace("canvas.rename_failed", { requestId, canvasId, error: err?.data?.error || err?.message || "unknown" });
     }
     if (error) {
       // Append an error note so the canvas reader sees that the run was incomplete.

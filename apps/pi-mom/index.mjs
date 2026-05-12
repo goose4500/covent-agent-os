@@ -497,6 +497,8 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       channel,
       title: `Spec — ${requestId}`,
       requestId,
+      teamId,
+      accessUserIds: user ? [user] : [],
       trace,
     });
   }
