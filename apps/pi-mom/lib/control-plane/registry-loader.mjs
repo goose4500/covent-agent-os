@@ -81,6 +81,32 @@ export function validateRegistry(registry) {
     throw new Error("registry validation failed: legacyRoutes must be an array when present");
   }
 
+  if (registry.routes !== undefined) {
+    if (!isObject(registry.routes)) {
+      throw new Error("registry validation failed: routes must be an object when present");
+    }
+    for (const [routeKey, route] of Object.entries(registry.routes)) {
+      const path = `routes.${routeKey}`;
+      if (!isObject(route)) {
+        throw new Error(`registry validation failed: ${path} must be an object`);
+      }
+      if (route.tools !== undefined) {
+        if (!Array.isArray(route.tools)) {
+          throw new Error(`registry validation failed: ${path}.tools must be an array when present`);
+        }
+        for (const [index, tool] of route.tools.entries()) {
+          requireString(tool, `${path}.tools[${index}]`);
+        }
+      }
+      if (route.systemPromptSuffix !== undefined && typeof route.systemPromptSuffix !== "string") {
+        throw new Error(`registry validation failed: ${path}.systemPromptSuffix must be a string when present`);
+      }
+      if (route.approvals !== undefined) {
+        requireString(route.approvals, `${path}.approvals`);
+      }
+    }
+  }
+
   return registry;
 }
 
@@ -94,6 +120,11 @@ export function loadRegistry(registryPath = DEFAULT_REGISTRY_PATH) {
 
 export function findAction(registry, key) {
   return registry?.actions?.find((action) => action.key === key);
+}
+
+export function findRoute(registry, routeKey) {
+  if (!routeKey) return undefined;
+  return registry?.routes?.[routeKey];
 }
 
 export function loadActionMetadata(key = "run-action", registryPath = DEFAULT_REGISTRY_PATH) {

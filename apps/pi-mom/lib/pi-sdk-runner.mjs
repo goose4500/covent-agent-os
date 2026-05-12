@@ -34,6 +34,11 @@ const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
 const PI_WORKDIR = process.env.PI_WORKDIR || process.env.HOME || process.cwd();
+// TODO Stage 10 — remove PI_MOM_ALLOW_PI_TOOLS env fallback entirely once every
+// caller passes an explicit `tools` array via the action-resolver (Stage 4 wired
+// this end-to-end; the fallback only survives so the existing pi-sdk-runner
+// unit tests that construct a runner without `tools` keep exercising the
+// noTools posture exactly as before).
 const ALLOW_TOOLS = process.env.PI_MOM_ALLOW_PI_TOOLS === "true";
 
 function stripTerminalSequences(text) {
@@ -94,13 +99,22 @@ export function createRunner({
     return loader;
   }
 
-  async function runPi(prompt, { onOutput, signal, sessionManager } = {}) {
+  async function runPi(prompt, { onOutput, signal, sessionManager, tools } = {}) {
     const deps = await getDeps();
     if (!deps.model) {
       throw new Error(
         `PI_MOM_MODEL '${deps.modelId || PI_MODEL}' not found in registry; check provider API key env var`,
       );
     }
+
+    // Tool gating: when `tools` is provided (Stage 4 action-resolver path),
+    // it is the authoritative allowlist. Empty array → noTools:"all"
+    // (no Pi tools active; model-only draft). Non-empty array → all builtin
+    // tools available to the SDK, then `setActiveToolsByName(tools)` narrows
+    // them after createSession returns. When `tools` is undefined (legacy
+    // callers + unit tests), fall back to the historical `allowTools` flag.
+    const toolsExplicit = Array.isArray(tools);
+    const effectiveAllowTools = toolsExplicit ? tools.length > 0 : allowTools;
 
     const sessionOptions = {
       cwd: workdir,
@@ -110,13 +124,16 @@ export function createRunner({
       authStorage: deps.authStorage,
       modelRegistry: deps.modelRegistry,
     };
-    if (!allowTools) {
+    if (!effectiveAllowTools) {
       sessionOptions.noTools = "all";
       sessionOptions.resourceLoader = await makeResourceLoader(workdir);
     }
 
     const result = await createSession(sessionOptions);
     const session = result?.session ?? result;
+    if (toolsExplicit && tools.length > 0 && typeof session.setActiveToolsByName === "function") {
+      session.setActiveToolsByName(tools);
+    }
 
     return await new Promise((resolve, reject) => {
       let settled = false;

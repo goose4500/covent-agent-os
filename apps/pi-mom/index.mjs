@@ -12,6 +12,7 @@ import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane
 import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorLinearIssueConfirmation } from "./lib/linear-idempotency.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
+import { resolveAction } from "./lib/action-resolver.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -289,7 +290,7 @@ async function formatStatus(client) {
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi model: \`${PI_MODEL_LABEL}\` (thinking: \`${PI_THINKING_LABEL}\`)\n` +
-    `• pi tools/extensions: \`${process.env.PI_MOM_ALLOW_PI_TOOLS === "true" ? "enabled" : "disabled"}\`\n` +
+    `• pi tools: per-route from \`control-plane/registry.yaml\`\n` +
     `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
     `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
     `• agent run state: \`${RUN_STATE_PATH}\`\n` +
@@ -752,7 +753,7 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
   return args;
 }
 
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode }) {
+async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action }) {
   if (typeof client.chatStream !== "function") {
     throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
   }
@@ -799,6 +800,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       surface: mode,
       threadTs,
       prompt,
+      action,
       onOutput: queueAppend,
     });
     await streamChain;
@@ -883,6 +885,7 @@ async function handleRequest({ client, event, mode }) {
   const rawText = stripBotMentions(event.text || "");
   const command = parseSlackRequestCommand(rawText, { mode });
   const text = command.text || rawText;
+  const action = resolveAction(command);
 
   trace("slack.received", {
     requestId,
@@ -894,6 +897,8 @@ async function handleRequest({ client, event, mode }) {
     command: command.kind,
     route: command.routeKey,
     naturalIntent: command.naturalIntent,
+    action: action.name,
+    toolCount: action.tools.length,
   });
 
   // Channel allowlist applies to channel mentions. DMs (direct_message) and the
@@ -1000,7 +1005,7 @@ async function handleRequest({ client, event, mode }) {
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
     if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode });
+      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action });
       trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
       if (command.kind === "route" && command.routeKey === "linear") {
         try {
@@ -1032,7 +1037,7 @@ async function handleRequest({ client, event, mode }) {
       text: `👀 Covent Pi is thinking… (req: ${requestId})`,
     });
 
-    const result = await runTurn({ surface: mode, threadTs, prompt });
+    const result = await runTurn({ surface: mode, threadTs, prompt, action });
     await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
     trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {

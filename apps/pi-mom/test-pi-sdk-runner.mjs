@@ -126,4 +126,56 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   await assert.rejects(runPi("hi"), /PI_MOM_MODEL 'fake\/missing' not found/);
 }
 
+// Case 6 (Stage 4): explicit `tools: []` → noTools:"all" posture (same as legacy
+// PI_MOM_ALLOW_PI_TOOLS=false), even when the runner was constructed with allowTools=true.
+{
+  const session = fakeSession({ script: [{ type: "agent_end", messages: [] }] });
+  let captured;
+  const setActiveCalls = [];
+  session.setActiveToolsByName = (names) => setActiveCalls.push(names);
+  const { runPi } = createRunner({
+    createSession: async (opts) => { captured = opts; return { session }; },
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({ marker: "loader" }),
+    allowTools: true, // legacy posture would normally enable tools…
+  });
+  await runPi("noop", { tools: [] }); // …but explicit tools=[] overrides it.
+  assert.equal(captured.noTools, "all", "tools=[] forces noTools posture");
+  assert.ok(captured.resourceLoader, "tools=[] still passes the minimal resource loader");
+  assert.deepEqual(setActiveCalls, [], "setActiveToolsByName not called for empty allowlist");
+}
+
+// Case 7 (Stage 4): explicit `tools: ['read']` → omits noTools and calls setActiveToolsByName(['read']).
+{
+  const session = fakeSession({ script: [{ type: "agent_end", messages: [] }] });
+  let captured;
+  const setActiveCalls = [];
+  session.setActiveToolsByName = (names) => setActiveCalls.push(names);
+  const { runPi } = createRunner({
+    createSession: async (opts) => { captured = opts; return { session }; },
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({ marker: "loader" }),
+    allowTools: false,
+  });
+  await runPi("with tools", { tools: ["read"] });
+  assert.equal(captured.noTools, undefined, "non-empty tools omits noTools");
+  assert.equal(captured.resourceLoader, undefined, "non-empty tools skips minimal loader");
+  assert.deepEqual(setActiveCalls, [["read"]], "setActiveToolsByName called once with the allowlist");
+  assert.equal(session.state.prompts, 1, "prompt still issued after tool gating");
+}
+
+// Case 8 (Stage 4): explicit `tools: ['read','bash']` forwards the full allowlist verbatim.
+{
+  const session = fakeSession({ script: [{ type: "agent_end", messages: [] }] });
+  const setActiveCalls = [];
+  session.setActiveToolsByName = (names) => setActiveCalls.push(names);
+  const { runPi } = createRunner({
+    createSession: async () => ({ session }),
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({}),
+  });
+  await runPi("multi", { tools: ["read", "bash"] });
+  assert.deepEqual(setActiveCalls, [["read", "bash"]]);
+}
+
 console.log("pi-sdk-runner tests passed");

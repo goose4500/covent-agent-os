@@ -154,7 +154,74 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
   assert.equal(persisted.d.sessionFile, "/sess/keep.jsonl");
 }
 
-// Case 6: required-arg validation.
+// Case 6 (Stage 4): action.tools is forwarded to runPi.
+{
+  const map = makeFakeMap();
+  const SM = makeFakeSessionManager();
+  let captured;
+  const runPi = async (_p, o) => { captured = o; return "ok"; };
+
+  const { runTurn } = createSession({
+    threadSessionMap: map,
+    runPi,
+    SessionManager: SM,
+    fileExists: () => false,
+    workdir: "/work",
+  });
+
+  await runTurn({
+    surface: "app_mention",
+    threadTs: "3.0",
+    prompt: "hi",
+    action: { name: "linear", tools: ["read"], systemPromptSuffix: "", approvals: "none" },
+  });
+  assert.deepEqual(captured.tools, ["read"], "runPi received action.tools allowlist");
+}
+
+// Case 7 (Stage 4): omitted action → runPi opts have no tools key (legacy callers keep working).
+{
+  const map = makeFakeMap();
+  const SM = makeFakeSessionManager();
+  let captured;
+  const runPi = async (_p, o) => { captured = o; return "ok"; };
+
+  const { runTurn } = createSession({
+    threadSessionMap: map,
+    runPi,
+    SessionManager: SM,
+    fileExists: () => false,
+    workdir: "/work",
+  });
+
+  await runTurn({ surface: "app_mention", threadTs: "3.1", prompt: "hi" });
+  assert.equal(captured.tools, undefined, "no action → tools key omitted");
+}
+
+// Case 8 (Stage 4): action.tools=[] is still forwarded (empty allowlist is meaningful).
+{
+  const map = makeFakeMap();
+  const SM = makeFakeSessionManager();
+  let captured;
+  const runPi = async (_p, o) => { captured = o; return "ok"; };
+
+  const { runTurn } = createSession({
+    threadSessionMap: map,
+    runPi,
+    SessionManager: SM,
+    fileExists: () => false,
+    workdir: "/work",
+  });
+
+  await runTurn({
+    surface: "assistant",
+    threadTs: "3.2",
+    prompt: "hi",
+    action: { name: "summarize", tools: [], systemPromptSuffix: "", approvals: "none" },
+  });
+  assert.deepEqual(captured.tools, [], "empty tools allowlist still forwarded");
+}
+
+// Case 9: required-arg validation.
 {
   const { runTurn } = createSession({
     threadSessionMap: makeFakeMap(),

@@ -3,8 +3,12 @@
 // creates a fresh one if absent or stale), and delegates the actual
 // streaming to pi-sdk-runner.runPi with the resolved SessionManager.
 //
+// Stage 4: accepts an `action` (from lib/action-resolver.mjs) and forwards
+// `action.tools` to runPi so the SDK can call setActiveToolsByName for
+// per-Action tool gating.
+//
 // Public surface:
-//   runTurn({ surface, threadTs, prompt, onOutput, signal }) → Promise<string>
+//   runTurn({ surface, threadTs, prompt, action, onOutput, signal }) → Promise<string>
 //
 // Factory `createSession` is DI-friendly for tests: inject runPi, the map,
 // the SessionManager class, and the fs.existsSync probe.
@@ -27,7 +31,7 @@ export function createSession({
 } = {}) {
   const map = threadSessionMap || createThreadSessionMap();
 
-  async function runTurn({ surface, threadTs, prompt, onOutput, signal } = {}) {
+  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal } = {}) {
     if (!threadTs) throw new Error("runTurn requires threadTs");
     if (typeof prompt !== "string" || !prompt) {
       throw new Error("runTurn requires non-empty prompt");
@@ -51,9 +55,19 @@ export function createSession({
     } else {
       sessionManager = SessionManager.create(workdir);
     }
-    trace("pi_session.session_resolved", { surface, threadTs, resumed });
+    trace("pi_session.session_resolved", {
+      surface,
+      threadTs,
+      resumed,
+      action: action?.name,
+      toolCount: Array.isArray(action?.tools) ? action.tools.length : undefined,
+    });
 
-    const result = await runPi(prompt, { onOutput, signal, sessionManager });
+    const runPiOptions = { onOutput, signal, sessionManager };
+    if (action && Array.isArray(action.tools)) {
+      runPiOptions.tools = action.tools;
+    }
+    const result = await runPi(prompt, runPiOptions);
 
     const sessionFile = sessionManager.getSessionFile?.();
     if (sessionFile) {
