@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
 import { createRunStore } from "./lib/agent-run-store.mjs";
+import { buildHomeView, partitionRuns } from "./lib/home-view.mjs";
 import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
 import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
@@ -784,6 +785,67 @@ const activeRuns = new Map();
 // can resolve the original promise from a button click or view submission.
 const pendingApprovals = new Map();
 
+// Stage 7 — App Home cockpit. The Home tab shows a read-only snapshot:
+// header → approvals waiting → in-flight runs → recent activity. We push
+// updates on every state change: runStore.create/update calls below, plus
+// pendingApprovals add/remove. Slack has no broadcast for Home views, so we
+// publish per-user (event.user for app_home_opened, run.user for run-driven
+// pushes, entry.requesterUserId for approval-driven pushes).
+const homeWatchedUsers = new Set();
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+
+async function publishHomeForUser(client, userId) {
+  if (!userId) return;
+  homeWatchedUsers.add(userId);
+  try {
+    const allRuns = await runStore.listRecent(50);
+    const { activeRuns: active, recentRuns } = partitionRuns(allRuns);
+    const view = buildHomeView({
+      activeRuns: active,
+      recentRuns,
+      pendingApprovals,
+      now: Date.now(),
+    });
+    const payloadKb = Math.round(JSON.stringify(view).length / 1024 * 10) / 10;
+    await (client || slackClient).views.publish({ user_id: userId, view });
+    trace("app_home.published", {
+      user: userId,
+      runCount: active.length,
+      approvalCount: pendingApprovals.size,
+      recentActivityCount: recentRuns.length,
+      viewKb: payloadKb,
+    });
+  } catch (error) {
+    trace("app_home.publish_failed", {
+      user: userId,
+      error: error?.data?.error || error?.message || String(error),
+    });
+  }
+}
+
+function publishHomeForAllWatched(client) {
+  for (const userId of homeWatchedUsers) {
+    // Fire-and-forget; publishHomeForUser already swallows errors.
+    publishHomeForUser(client, userId);
+  }
+}
+
+// Wrap pendingApprovals.set/.delete so any code path (slack-ui-context,
+// future producers) that mutates the Map automatically triggers a Home
+// republish. Keeps lib/slack-ui-context.mjs ignorant of App Home concerns.
+const _origApprovalsSet = pendingApprovals.set.bind(pendingApprovals);
+const _origApprovalsDelete = pendingApprovals.delete.bind(pendingApprovals);
+pendingApprovals.set = function (key, value) {
+  const result = _origApprovalsSet(key, value);
+  publishHomeForAllWatched(slackClient);
+  return result;
+};
+pendingApprovals.delete = function (key) {
+  const result = _origApprovalsDelete(key);
+  if (result) publishHomeForAllWatched(slackClient);
+  return result;
+};
+
 function isoNow() {
   return new Date().toISOString();
 }
@@ -884,6 +946,8 @@ async function handleRequest({ client, event, mode, utilities }) {
     const message = await client.chat.postMessage({ channel, thread_ts: threadTs, ...buildAgentRunCard(run, AGENT_ACTION_METADATA) });
     run = await runStore.update(run.id, { messageTs: message.ts });
     trace("agent.confirmation_posted", { requestId, runId: run.id, runnerMode: AGENT_RUNNER_MODE });
+    // Stage 7: push the new pending run into the requester's Home cockpit.
+    publishHomeForUser(client, run.user);
     return;
   }
 
@@ -1055,6 +1119,8 @@ app.action("agent_run_start", async ({ ack, body, action, client }) => {
     events: appendRunEvent(run, { type: "started", text: `Started by <@${body.user?.id || "unknown"}>` }),
   });
   await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+  // Stage 7: push the running state into the Home cockpit.
+  publishHomeForUser(client, run.user);
 
   try {
     const result = await agentRunner.run({
@@ -1089,6 +1155,9 @@ app.action("agent_run_start", async ({ ack, body, action, client }) => {
   } finally {
     activeRuns.delete(id);
     await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    // Stage 7: push the terminal state into the Home cockpit (succeeded /
+    // failed / canceled — the run leaves "in flight" and joins "recent").
+    publishHomeForUser(client, run.user);
   }
 });
 
@@ -1116,6 +1185,7 @@ app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
       events: appendRunEvent(run, { type: "cancel_requested", text: `Cancel requested by <@${body.user?.id || "unknown"}>` }),
     });
     await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    publishHomeForUser(client, run.user);
     return;
   }
 
@@ -1127,6 +1197,7 @@ app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
       events: appendRunEvent(run, { type: "canceled", text: `Canceled before start by <@${body.user?.id || "unknown"}>` }),
     });
     await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
+    publishHomeForUser(client, run.user);
   } else {
     await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
   }
@@ -1191,6 +1262,15 @@ app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ 
 });
 
 const { dispatchToAction } = createDispatcher({ handleRequest, trace });
+
+// Stage 7 — App Home cockpit. The user opening the bot's Home tab triggers
+// `app_home_opened`; we publish the current state (active runs, pending
+// approvals, recent activity). Subsequent pushes are fired from runStore
+// mutation sites and from the pendingApprovals set/delete wrappers above.
+app.event("app_home_opened", async ({ event, client }) => {
+  if (event?.tab && event.tab !== "home") return;
+  await publishHomeForUser(client, event?.user);
+});
 
 app.event("app_mention", async ({ event, client }) => {
   await dispatchToAction({ surface: "app_mention", event, client });
