@@ -1,5 +1,6 @@
-import { App, LogLevel } from "@slack/bolt";
+import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
+import { createDispatcher } from "./lib/dispatch.mjs";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
@@ -889,7 +890,9 @@ async function handleRequest({ client, event, mode }) {
     naturalIntent: command.naturalIntent,
   });
 
-  if (!isAllowedChannel(channel)) {
+  // Channel allowlist applies to channel mentions. DMs (direct_message) and the
+  // Assistant chat tab (assistant) are private to one user and bypass the gate.
+  if (mode === "app_mention" && !isAllowedChannel(channel)) {
     trace("slack.ignored", { requestId, reason: "channel_not_allowed", channel, allowed: ALLOWED_CHANNEL_ID });
     return;
   }
@@ -1246,15 +1249,53 @@ app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
   }
 });
 
+const { dispatchToAction } = createDispatcher({ handleRequest, trace });
+
 app.event("app_mention", async ({ event, client }) => {
-  await handleRequest({ client, event, mode: "app_mention" });
+  await dispatchToAction({ surface: "app_mention", event, client });
 });
 
 app.message(async ({ message, client }) => {
   if (message.subtype || message.bot_id) return;
   if (message.channel_type !== "im") return;
-  await handleRequest({ client, event: message, mode: "direct_message" });
+  await dispatchToAction({ surface: "direct_message", event: message, client });
 });
+
+// Bolt 4.7 Assistant container — the modern Slack agent surface. Activated by
+// the user opening the bot's chat tab (left sidebar → Apps → Covent-Agent).
+// Threads here are 1:1 with the user; setStatus drives the "thinking" pill.
+const assistant = new Assistant({
+  threadStarted: async ({ event, client, setSuggestedPrompts, say }) => {
+    try {
+      await setSuggestedPrompts({
+        title: "What can I draft for you?",
+        prompts: [
+          { title: "Draft a spec", message: "spec: " },
+          { title: "Escalation brief", message: "escalation: " },
+          { title: "Meeting agenda", message: "agenda: " },
+          { title: "Summarize a thread", message: "summarize: paste the thread URL or context" },
+        ],
+      });
+    } catch (error) {
+      trace("assistant.thread_started_error", { error: error?.data?.error || error?.message });
+    }
+    trace("assistant.thread_started", {
+      channel: event?.assistant_thread?.channel_id,
+      threadTs: event?.assistant_thread?.thread_ts,
+      user: event?.assistant_thread?.user_id,
+    });
+  },
+  userMessage: async ({ message, client, setStatus }) => {
+    if (message.subtype || message.bot_id) return;
+    await dispatchToAction({
+      surface: "assistant",
+      event: message,
+      client,
+      utilities: { setStatus },
+    });
+  },
+});
+app.assistant(assistant);
 
 (async () => {
   try {
