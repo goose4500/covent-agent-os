@@ -1,14 +1,12 @@
 import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import { createDispatcher } from "./lib/dispatch.mjs";
-import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { buildAgentRunCard, buildAgentRunUpdate, parseAgentRequest } from "./lib/agent-run-card.mjs";
 import { createRunStore } from "./lib/agent-run-store.mjs";
 import { buildHomeView, partitionRuns } from "./lib/home-view.mjs";
 import { createAgentRunner } from "./lib/agent-runners.mjs";
 import { createRunCanvas } from "./lib/slack-canvas.mjs";
-import { bufferToDataUrl, createOpenAIImage, detectImageMime, isImageMime } from "./lib/openai-image-client.mjs";
 import { DEFAULT_ACTION_METADATA, loadActionMetadata } from "./lib/control-plane/registry-loader.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
@@ -52,15 +50,6 @@ const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING_LABEL = process.env.PI_MOM_THINKING_LEVEL || "high";
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
-const IMAGE_ROUTE_ENABLED = process.env.PI_MOM_IMAGE_ROUTE_ENABLED !== "false";
-const IMAGE_OUTPUT_DIR = process.env.PI_MOM_IMAGE_OUTPUT_DIR || join(process.env.HOME || process.cwd(), ".pi", "agent", "generated-images", "slack");
-const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-const IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
-const IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
-const IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
-const IMAGE_BACKGROUND = process.env.OPENAI_IMAGE_BACKGROUND || "auto";
-const IMAGE_MAX_INPUTS = boundedIntegerEnv("PI_MOM_IMAGE_MAX_INPUTS", 4, { min: 0, max: 16 });
-const IMAGE_MAX_BYTES = boundedIntegerEnv("PI_MOM_IMAGE_MAX_BYTES", 20 * 1024 * 1024, { min: 1024 * 1024, max: 50 * 1024 * 1024 });
 const AGENT_ROUTE_ENABLED = process.env.PI_MOM_AGENT_ROUTE_ENABLED !== "false";
 const AGENT_RUNNER_MODE = process.env.PI_MOM_AGENT_RUNNER || "fake";
 if (!["fake", "repo-health"].includes(AGENT_RUNNER_MODE)) {
@@ -103,10 +92,6 @@ const ROUTES = {
   digest: {
     label: "Digest",
     instruction: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing.",
-  },
-  image: {
-    label: "GPT Image generation/edit",
-    instruction: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread.",
   },
   agent: {
     label: "Agent Run Card",
@@ -281,8 +266,6 @@ function formatHelp() {
     `• in a thread: \`@Covent Pi create Linear issue\`\n` +
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
-    `• \`@Covent Pi image: create a clean Covent hero visual for active buyer intelligence\`\n` +
-    `• attach an image in-thread, then \`@Covent Pi image: edit restyle this as a polished Covent website asset\`\n` +
     `• \`@Covent Pi escalation: brief this customer problem\``;
 }
 
@@ -305,7 +288,6 @@ async function formatStatus(client) {
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi model: \`${PI_MODEL_LABEL}\` (thinking: \`${PI_THINKING_LABEL}\`)\n` +
     `• pi tools: per-route from \`control-plane/registry.yaml\`\n` +
-    `• image route: \`${IMAGE_ROUTE_ENABLED ? "on" : "off"}\` (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"}, ${IMAGE_QUALITY}, ${IMAGE_SIZE})\n` +
     `• agent route: \`${AGENT_ROUTE_ENABLED ? "on" : "off"}\` (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "on" : "off"}, max ${AGENT_MAX_CONCURRENT}, command timeout ${AGENT_COMMAND_TIMEOUT_MS}ms)\n` +
     `• agent run state: \`${RUN_STATE_PATH}\`\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
@@ -368,227 +350,6 @@ ${threadContext || "(none)"}
 User request:
 ${text}
 `;
-}
-
-function parseImageRequest(text = "") {
-  let prompt = String(text || "").trim();
-  if (prompt.startsWith("(No extra instructions after")) prompt = "";
-
-  const subcommand = prompt.match(/^(generate|draw|create|new|edit|reference|img2img|image-to-image)\s*:?[ \t\n]*/i);
-  let requestedAction;
-  if (subcommand) {
-    const verb = subcommand[1].toLowerCase();
-    requestedAction = ["edit", "reference", "img2img", "image-to-image"].includes(verb) ? "edit" : "generate";
-    prompt = prompt.slice(subcommand[0].length).trim();
-  }
-
-  return { prompt, requestedAction };
-}
-
-function slackFileLooksLikeImage(file = {}) {
-  if (isImageMime(file.mimetype || "")) return true;
-  const filetype = String(file.filetype || "").toLowerCase();
-  return ["png", "jpg", "jpeg", "webp"].includes(filetype);
-}
-
-function slackImageMime(file = {}) {
-  if (isImageMime(file.mimetype || "")) return file.mimetype.split(";")[0].trim();
-  const filetype = String(file.filetype || "").toLowerCase();
-  if (filetype === "jpg" || filetype === "jpeg") return "image/jpeg";
-  if (filetype === "webp") return "image/webp";
-  return "image/png";
-}
-
-async function slackFileToImageInput(file) {
-  const url = file.url_private_download || file.url_private;
-  if (!url) return undefined;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Could not download Slack image ${file.id || file.name || "unknown"}: ${response.status}`);
-  }
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > IMAGE_MAX_BYTES) {
-    throw new Error(`Slack image ${file.name || file.id || "unknown"} is too large for MVP (${buffer.length} bytes > ${IMAGE_MAX_BYTES}).`);
-  }
-
-  const detectedMime = detectImageMime(buffer);
-  if (!detectedMime) {
-    throw new Error(`Slack file ${file.name || file.id || "unknown"} is not a supported PNG, JPEG, or WebP image.`);
-  }
-
-  const mimeType = detectedMime || (response.headers.get("content-type") || slackImageMime(file)).split(";")[0].trim();
-  return {
-    imageUrl: bufferToDataUrl(buffer, mimeType),
-    name: file.name || file.title || file.id || "slack-image",
-    id: file.id,
-    mimeType,
-    bytes: buffer.length,
-  };
-}
-
-async function collectSlackImageInputs(client, event, channel, threadTs) {
-  const messages = await getThreadMessages(client, channel, threadTs);
-  const filesByKey = new Map();
-
-  for (const file of event.files || []) {
-    if (slackFileLooksLikeImage(file)) filesByKey.set(file.id || file.url_private || file.name, file);
-  }
-
-  for (const message of messages) {
-    for (const file of message.files || []) {
-      if (slackFileLooksLikeImage(file)) filesByKey.set(file.id || file.url_private || file.name, file);
-    }
-  }
-
-  const selectedFiles = [...filesByKey.values()].slice(0, IMAGE_MAX_INPUTS);
-  const inputs = [];
-  for (const file of selectedFiles) {
-    const input = await slackFileToImageInput(file);
-    if (input) inputs.push(input);
-  }
-
-  return {
-    inputs,
-    totalImageFiles: filesByKey.size,
-    usedImageFiles: inputs.length,
-    skippedImageFiles: Math.max(0, filesByKey.size - inputs.length),
-  };
-}
-
-function formatImageSlackComment(result, { prompt, inputCount }) {
-  const actionLabel = result.action === "edit" ? "edited/reference image" : "generated image";
-  const safePrompt = truncateForSlack(prompt).slice(0, 1200);
-  const localFiles = result.files.map((file) => `• ${file.filename}`).join("\n");
-  const metadataName = result.metadataPath.split("/").pop();
-
-  return `🎨 *Covent Pi ${actionLabel}*\n` +
-    `• model: \`${result.model}\`\n` +
-    `• quality/size: \`${result.options.quality}\` / \`${result.options.size}\`\n` +
-    `• input images: \`${inputCount}\`\n` +
-    (result.requestId ? `• request: \`${result.requestId}\`\n` : "") +
-    `• metadata: \`${metadataName}\`\n\n` +
-    `*Prompt*\n${safePrompt}\n\n` +
-    `*Saved locally*\n${localFiles}`;
-}
-
-async function uploadImageResultToSlack(client, channel, threadTs, result, requestId, comment) {
-  let uploaded = 0;
-  for (const file of result.files) {
-    await client.filesUploadV2({
-      channel_id: channel,
-      thread_ts: threadTs,
-      file: createReadStream(file.path),
-      filename: file.filename,
-      title: file.filename,
-      initial_comment: uploaded === 0 ? comment : undefined,
-    });
-    uploaded += 1;
-  }
-  trace("slack.uploaded_image", { requestId, uploaded, files: result.files.length });
-  return uploaded;
-}
-
-async function handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start }) {
-  if (!IMAGE_ROUTE_ENABLED) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "The `image:` route is disabled. Set `PI_MOM_IMAGE_ROUTE_ENABLED=true` and restart pi-mom to enable it.",
-    });
-    trace("slack.replied_image_disabled", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  const { prompt, requestedAction } = parseImageRequest(text);
-  if (!prompt) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "Usage: `@Covent Pi image: create ...` or attach an image and use `@Covent Pi image: edit ...`.",
-    });
-    trace("slack.replied_image_usage", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  if (!process.env.OPENAI_API_KEY) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "The `image:` route needs `OPENAI_API_KEY` in the pi-mom environment. I did not call OpenAI.",
-    });
-    trace("slack.replied_image_missing_key", { requestId, durationMs: Date.now() - start });
-    return;
-  }
-
-  const thinking = await client.chat.postMessage({
-    channel,
-    thread_ts: threadTs,
-    text: `🎨 Covent Pi is preparing an image request… (req: ${requestId})`,
-  });
-
-  try {
-    const action = requestedAction || "generate";
-    const collected = action === "edit"
-      ? await collectSlackImageInputs(client, event, channel, threadTs)
-      : { inputs: [], totalImageFiles: 0, usedImageFiles: 0, skippedImageFiles: 0 };
-
-    if (action === "edit" && collected.inputs.length === 0) {
-      await client.chat.update({
-        channel,
-        ts: thinking.ts,
-        text: "For `image: edit`, attach an image in this thread or use `image: generate` for text-only generation.",
-      });
-      trace("slack.replied_image_missing_input", { requestId, durationMs: Date.now() - start });
-      return;
-    }
-
-    trace("openai.image_request", {
-      requestId,
-      action,
-      model: IMAGE_MODEL,
-      quality: IMAGE_QUALITY,
-      size: IMAGE_SIZE,
-      inputImages: collected.inputs.length,
-      skippedImages: collected.skippedImageFiles,
-    });
-
-    const result = await createOpenAIImage({
-      action,
-      prompt,
-      imageDataUrls: collected.inputs.map((input) => input.imageUrl),
-      model: IMAGE_MODEL,
-      size: IMAGE_SIZE,
-      quality: IMAGE_QUALITY,
-      outputFormat: IMAGE_OUTPUT_FORMAT,
-      background: IMAGE_BACKGROUND,
-      outputDir: IMAGE_OUTPUT_DIR,
-      prefix: `slack-${requestId}`,
-      user: user ? `slack:${user}` : undefined,
-    });
-
-    const comment = formatImageSlackComment(result, { prompt, inputCount: collected.inputs.length });
-    const uploaded = await uploadImageResultToSlack(client, channel, threadTs, result, requestId, comment);
-
-    await client.chat.update({
-      channel,
-      ts: thinking.ts,
-      text: `✅ Uploaded ${uploaded} image file(s). Model: \`${result.model}\`. Metadata: \`${result.metadataPath.split("/").pop()}\``,
-    });
-    trace("slack.replied_image", { requestId, durationMs: Date.now() - start, resultLength: comment.length, uploaded });
-  } catch (error) {
-    const message = redactSensitiveText(error?.message || String(error)).slice(0, 1500);
-    trace("error", { requestId, route: "image", error: message, durationMs: Date.now() - start });
-    console.error(`[pi-mom] ${requestId} image error:`, error);
-    await client.chat.update({
-      channel,
-      ts: thinking.ts,
-      text: `Image generation failed (req: ${requestId}). Check the pi-mom terminal/logs for details.`,
-    });
-  }
 }
 
 function redactSensitiveText(text = "") {
@@ -961,11 +722,6 @@ async function handleRequest({ client, event, mode, utilities }) {
     return;
   }
 
-  if (command.kind === "route" && command.routeKey === "image") {
-    await handleImageRequest({ client, event, channel, threadTs, user, text, requestId, start });
-    return;
-  }
-
   // Stage 6 dev probe — exercises lib/slack-ui-context.mjs end-to-end without
   // requiring extensions to be loaded. `uictx: confirm <msg>` posts approval
   // buttons and echoes the boolean back. `uictx: select <opts>` posts buttons
@@ -1326,7 +1082,6 @@ app.assistant(assistant);
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
     console.log("Slack streaming: enabled (slack-sink + heartbeat)");
-    console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
     console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
     console.log(`Agent run state: ${RUN_STATE_PATH}`);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);

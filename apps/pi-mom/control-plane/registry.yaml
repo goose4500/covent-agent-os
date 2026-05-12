@@ -95,10 +95,6 @@ routes:
     tools: []
     systemPromptSuffix: "Create a compact digest from the available Slack context. Output: important updates, decisions, asks, blockers, follow-ups, and anything that needs an owner. If broader channel/date context is needed, say exactly what scope is missing."
     approvals: none
-  image:
-    tools: []
-    systemPromptSuffix: "Generate or edit an image with OpenAI GPT Image. In Slack, the bridge handles this route directly and uploads image files back to the thread."
-    approvals: none
   agent:
     tools: []
     systemPromptSuffix: "Show a Slack confirmation card before running a bounded fake or repo-health agent task."
@@ -167,12 +163,6 @@ legacyRoutes:
       - "Slack app mention or DM prefix: digest:"
     status: legacy-active
     notes: Pi prompt route for compact digests.
-
-  - name: image
-    triggers:
-      - "Slack app mention or DM prefix: image:"
-    status: legacy-active
-    notes: Direct OpenAI image generation/edit route handled by the Slack bridge.
 
   - name: agent
     triggers:
