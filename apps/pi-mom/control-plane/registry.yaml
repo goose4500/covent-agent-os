@@ -99,6 +99,18 @@ routes:
     tools: []
     systemPromptSuffix: "Show a Slack confirmation card before running a bounded fake or repo-health agent task."
     approvals: modal
+  # Stage 6.5: bash route with the built-in `bash` tool active. The
+  # permission-gate inline extension (extensions/permission-gate.ts) gates
+  # rm -rf / sudo / chmod 777 / chown 777 by calling
+  # ctx.ui.select("Allow?", ["Yes","No"]) which lib/slack-ui-context.mjs
+  # translates into Slack approval buttons. Non-dangerous commands run
+  # without prompting. Keep this route off in production environments
+  # without an approval workflow — restrict to test channels and trusted
+  # operators.
+  bash:
+    tools: ["bash"]
+    systemPromptSuffix: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. The permission-gate extension may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777 — that's expected; the gate either resumes or blocks the call based on the user's choice."
+    approvals: tool
 
 legacyRoutes:
   - name: help

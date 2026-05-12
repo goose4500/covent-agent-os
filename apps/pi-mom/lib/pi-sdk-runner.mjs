@@ -78,6 +78,12 @@ import {
   createAgentSession,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+// Stage 6.5: load extensions/permission-gate.ts as an inline factory so the
+// permission-gate `tool_call` hook fires inside Pi's agent loop and the
+// ctx.ui.select prompt gets translated by slack-ui-context.mjs into Slack
+// approval buttons. Bun's native .ts handling lets us import the source
+// directly without a build step.
+import permissionGate from "../../../extensions/permission-gate.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -138,7 +144,12 @@ export function createRunner({
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir: getAgentDir(),
+      // Skip filesystem discovery of extensions (extensionPaths empty) but
+      // still load the inline factories below. This keeps the bot's
+      // surface area predictable — only the extensions we explicitly opt
+      // into run inside the agent loop.
       noExtensions: true,
+      extensionFactories: [permissionGate],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
@@ -172,10 +183,16 @@ export function createRunner({
       sessionManager: sessionManager || SessionManager.inMemory(),
       authStorage: deps.authStorage,
       modelRegistry: deps.modelRegistry,
+      // Always pass our resource loader so permission-gate (and any future
+      // inline extensions) load regardless of whether tools are gated.
+      // Without this, createAgentSession synthesizes a default
+      // DefaultResourceLoader({cwd, agentDir}) that discovers from
+      // agentDir/extensions (empty on Railway) and our inline factories are
+      // never seen.
+      resourceLoader: await makeResourceLoader(workdir),
     };
     if (!effectiveAllowTools) {
       sessionOptions.noTools = "all";
-      sessionOptions.resourceLoader = await makeResourceLoader(workdir);
     }
     // Stage 6: a uiContext (ExtensionUIContext shape) is passed for surfaces
     // where Pi extensions need to gate dangerous actions through the user —

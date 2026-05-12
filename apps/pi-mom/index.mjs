@@ -116,6 +116,10 @@ const ROUTES = {
     label: "Stage 6 UI-context probe (confirm | select | input)",
     instruction: "Stage 6 dev probe — handled inline by the bridge; not routed to Pi.",
   },
+  bash: {
+    label: "Execute bash command (gated by permission-gate)",
+    instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. permission-gate may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777.",
+  },
 };
 
 function boundedIntegerEnv(name, fallback, { min, max }) {

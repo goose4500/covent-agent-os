@@ -101,7 +101,11 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.equal(session.state.disposed, 1);
 }
 
-// Case 4: tools/extensions posture — allowTools=true skips noTools + resourceLoader.
+// Case 4: tools/extensions posture — allowTools=true skips noTools but the
+// resourceLoader is ALWAYS passed (Stage 6.5 change). The loader carries the
+// inline permission-gate factory, so it must be wired even when tools are
+// allowed; otherwise createAgentSession synthesizes its own default loader
+// and our extensions never load.
 {
   const session = fakeSession({ script: [{ type: "agent_end", messages: [] }] });
   let captured;
@@ -113,7 +117,7 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   });
   await runPi("noop");
   assert.equal(captured.noTools, undefined, "posture: noTools omitted when allowTools=true");
-  assert.equal(captured.resourceLoader, undefined, "posture: resourceLoader omitted when allowTools=true");
+  assert.deepEqual(captured.resourceLoader, { marker: "loader" }, "posture: resourceLoader always passed (carries inline permission-gate factory)");
 }
 
 // Case 5: model not found — getDeps returns no model, runPi rejects with PI_MOM_MODEL message.
@@ -159,7 +163,7 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   });
   await runPi("with tools", { tools: ["read"] });
   assert.equal(captured.noTools, undefined, "non-empty tools omits noTools");
-  assert.equal(captured.resourceLoader, undefined, "non-empty tools skips minimal loader");
+  assert.deepEqual(captured.resourceLoader, { marker: "loader" }, "non-empty tools still passes the resource loader (Stage 6.5: carries inline extensions)");
   assert.deepEqual(setActiveCalls, [["read"]], "setActiveToolsByName called once with the allowlist");
   assert.equal(session.state.prompts, 1, "prompt still issued after tool gating");
 }
