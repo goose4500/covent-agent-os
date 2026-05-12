@@ -13,6 +13,7 @@ import { createLinearIssueUnlessDuplicate, duplicateLinearIssueReply, findPriorL
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
+import { createSlackSink } from "./lib/slack-sink.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -30,14 +31,11 @@ if (!["echo", "pi"].includes(MODE)) {
   console.error(`Invalid PI_MOM_MODE=${MODE}. Expected echo or pi.`);
   process.exit(1);
 }
-const STREAMING_ENV = process.env.PI_MOM_STREAMING || "true";
-if (!["true", "false"].includes(STREAMING_ENV)) {
-  console.error(`Invalid PI_MOM_STREAMING=${STREAMING_ENV}. Expected true or false.`);
-  process.exit(1);
-}
-const STREAMING_ENABLED = STREAMING_ENV === "true";
-const STREAM_APPEND_CHARS = Math.max(1000, Number(process.env.PI_MOM_STREAM_APPEND_CHARS || 8000));
-const STREAM_BUFFER_CHARS = Math.max(1, Number(process.env.PI_MOM_STREAM_BUFFER_CHARS || 1));
+// PI_MOM_STREAMING removed in Stage 5 — the slack-sink module is now the only
+// streaming path. The legacy `chat.update` fallback (thinking-message → final
+// truncated text) has been deleted; if Slack's stream helper is unavailable,
+// the sink throws at start() and the standard error path posts a single
+// chat.postMessage with the error text.
 if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
   console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
   process.exit(1);
@@ -284,7 +282,7 @@ async function formatStatus(client) {
   const uptimeSeconds = Math.round((Date.now() - STARTED_AT.getTime()) / 1000);
   return `*Covent Pi status*\n` +
     `• mode: \`${MODE}\`\n` +
-    `• streaming: \`${STREAMING_ENABLED ? "on" : "off"}\`\n` +
+    `• streaming: \`on\` (slack-sink + heartbeat)\n` +
     `• uptime: \`${uptimeSeconds}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
@@ -734,7 +732,13 @@ function cleanPiOutput(text = "") {
   return redactSensitiveText(cleanTerminalSequences(text));
 }
 
-function splitForSlackStream(text, maxLength = STREAM_APPEND_CHARS) {
+// TODO Stage 10 — delete `splitForSlackStream` entirely. It was the legacy
+// markdown chunker called from queueAppend in the old runPiWithSlackStream;
+// the Stage-5 slack-sink batches by time-window (appendBatchMs=200) and emits
+// a single markdown_text chunk per batch instead, so this function is now
+// unreferenced by the production hot path. Kept here only to defer churn —
+// no production code calls it.
+function splitForSlackStream(text, maxLength = 8000) {
   if (!text) return [];
   const chunks = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -745,7 +749,7 @@ function splitForSlackStream(text, maxLength = STREAM_APPEND_CHARS) {
 
 function streamArgsForEvent({ channel, threadTs, user, team }) {
   const teamId = team || AUTH_TEAM_ID;
-  const args = { channel, thread_ts: threadTs, buffer_size: STREAM_BUFFER_CHARS };
+  const args = { channel, thread_ts: threadTs };
   if (user && teamId) {
     args.recipient_user_id = user;
     args.recipient_team_id = teamId;
@@ -754,76 +758,33 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
 }
 
 async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action }) {
-  if (typeof client.chatStream !== "function") {
-    throw new Error("Slack WebClient chatStream helper is unavailable. Update @slack/web-api or disable PI_MOM_STREAMING.");
-  }
+  const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
+  const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
-  const streamArgs = streamArgsForEvent({
+  const sink = createSlackSink({
+    client,
     channel,
     threadTs,
-    user,
-    team: event.team || event.team_id || event.context_team_id,
+    recipient,
+    surface: mode,
+    requestId,
+    trace,
   });
-  const stream = client.chatStream(streamArgs);
-  let streamChain = Promise.resolve();
-  let streamError = null;
-  let streamedLength = 0;
-  let streamVisible = false;
 
-  const queueAppend = (text) => {
-    for (const markdown_text of splitForSlackStream(text)) {
-      streamedLength += markdown_text.length;
-      streamChain = streamChain
-        .then(() => stream.append({ markdown_text }))
-        .catch((error) => {
-          streamError = streamError || error;
-          trace("slack.stream_append_error", {
-            requestId,
-            error: error?.data?.error || error.message,
-          });
-        });
-    }
-    return streamChain;
-  };
+  await sink.start({ initialText: `👀 Covent Pi is thinking… (req: ${requestId})\n\n` });
 
+  let result;
+  let runError;
   try {
-    await queueAppend(`👀 Covent Pi is thinking… (req: ${requestId})\n\n`);
-    await streamChain;
-    if (streamError) throw streamError;
-    streamVisible = true;
-    trace("slack.stream_started", {
-      requestId,
-      hasRecipient: Boolean(streamArgs.recipient_user_id && streamArgs.recipient_team_id),
-    });
-
-    const result = await runTurn({
-      surface: mode,
-      threadTs,
-      prompt,
-      action,
-      onOutput: queueAppend,
-    });
-    await streamChain;
-    if (streamError) throw streamError;
-    await stream.stop();
-    trace("slack.stream_stopped", { requestId, streamedLength, resultLength: result.length });
-    return result;
-  } catch (error) {
-    if (streamVisible) {
-      try {
-        await queueAppend(`\n\nPi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`);
-        await streamChain;
-        await stream.stop();
-        error.slackStreamNotified = true;
-      } catch (stopError) {
-        trace("slack.stream_stop_error", {
-          requestId,
-          error: stopError?.data?.error || stopError.message,
-        });
-      }
-    }
-    throw error;
+    result = await runTurn({ surface: mode, threadTs, prompt, action, sink });
+  } catch (err) {
+    runError = err;
   }
+
+  await sink.stop({ result, error: runError });
+
+  if (runError) throw runError;
+  return result;
 }
 
 async function preflight() {
@@ -986,8 +947,6 @@ async function handleRequest({ client, event, mode }) {
     }
   }
 
-  let thinking;
-
   try {
     const threadContext = await getThreadContext(client, channel, threadTs);
     trace("slack.thread_context", { requestId, contextLength: threadContext.length });
@@ -1004,42 +963,8 @@ async function handleRequest({ client, event, mode }) {
     });
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
-    if (STREAMING_ENABLED) {
-      const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action });
-      trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
-      if (command.kind === "route" && command.routeKey === "linear") {
-        try {
-          const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
-          if (outcome.status === "duplicate") return;
-          const issue = outcome.issue;
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `✅ Created Linear issue <${issue.url}|${issue.identifier}: ${issue.title}>`,
-          });
-          trace("slack.replied_linear_created", { requestId, identifier: issue.identifier, durationMs: Date.now() - start });
-        } catch (error) {
-          const message = redactSensitiveText(error?.message || String(error)).slice(0, 1200);
-          trace("linear.issue_create_failed", { requestId, error: message, durationMs: Date.now() - start });
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I drafted the issue spec, but did not create the Linear issue: ${message}`,
-          });
-        }
-      }
-      return;
-    }
-
-    thinking = await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: `👀 Covent Pi is thinking… (req: ${requestId})`,
-    });
-
-    const result = await runTurn({ surface: mode, threadTs, prompt, action });
-    await client.chat.update({ channel, ts: thinking.ts, text: truncateForSlack(result) });
-    trace("slack.replied_pi", { requestId, durationMs: Date.now() - start, resultLength: result.length });
+    const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action });
+    trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
         const outcome = await createLinearIssueFromPiOutputUnlessDuplicate({ client, channel, threadTs, requestId, result });
@@ -1064,14 +989,14 @@ async function handleRequest({ client, event, mode }) {
   } catch (error) {
     trace("error", { requestId, error: error.message, durationMs: Date.now() - start });
     console.error(`[pi-mom] ${requestId} error:`, error);
+    // slack-sink.stop({error}) has already appended a visible error chunk and
+    // marked error.slackStreamNotified — don't double-post in that case.
     if (error.slackStreamNotified) return;
-
-    const errorText = `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`;
-    if (thinking?.ts) {
-      await client.chat.update({ channel, ts: thinking.ts, text: errorText });
-    } else {
-      await client.chat.postMessage({ channel, thread_ts: threadTs, text: errorText });
-    }
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`,
+    });
   }
 }
 
@@ -1315,7 +1240,7 @@ app.assistant(assistant);
     await app.start();
     console.log("⚡️ Covent pi-mom is running in Socket Mode");
     console.log(`Mode: ${MODE}`);
-    console.log(`Slack streaming: ${STREAMING_ENABLED ? "enabled" : "disabled"}`);
+    console.log("Slack streaming: enabled (slack-sink + heartbeat)");
     console.log(`Image route: ${IMAGE_ROUTE_ENABLED ? "enabled" : "disabled"} (${process.env.OPENAI_API_KEY ? IMAGE_MODEL : "OPENAI_API_KEY missing"})`);
     console.log(`Agent route: ${AGENT_ROUTE_ENABLED ? "enabled" : "disabled"} (${AGENT_RUNNER_MODE}, canvas ${AGENT_CANVAS_ENABLED ? "enabled" : "disabled"})`);
     console.log(`Agent run state: ${RUN_STATE_PATH}`);

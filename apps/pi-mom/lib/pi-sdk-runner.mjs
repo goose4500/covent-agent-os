@@ -148,7 +148,7 @@ export function createRunner({
     return loader;
   }
 
-  async function runPi(prompt, { onOutput, signal, sessionManager, tools } = {}) {
+  async function runPi(prompt, { onOutput, signal, sessionManager, tools, sink } = {}) {
     const deps = await getDeps();
     if (!deps.model) {
       throw new Error(
@@ -219,6 +219,12 @@ export function createRunner({
           }
         } else if (evt.type === "agent_end") {
           settle(capturedError || null);
+        }
+        // Forward every event (text deltas, tool_execution_*, turn_start/end,
+        // etc.) to the optional Stage-5 sink so it can drive Slack streaming.
+        // Sink-internal errors must not break the SDK subscription loop.
+        if (sink && typeof sink.handle === "function") {
+          try { sink.handle(evt); } catch {}
         }
       });
 

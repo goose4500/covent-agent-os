@@ -31,7 +31,7 @@ export function createSession({
 } = {}) {
   const map = threadSessionMap || createThreadSessionMap();
 
-  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal } = {}) {
+  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal, sink } = {}) {
     if (!threadTs) throw new Error("runTurn requires threadTs");
     if (typeof prompt !== "string" || !prompt) {
       throw new Error("runTurn requires non-empty prompt");
@@ -67,6 +67,7 @@ export function createSession({
     if (action && Array.isArray(action.tools)) {
       runPiOptions.tools = action.tools;
     }
+    if (sink) runPiOptions.sink = sink;
     const result = await runPi(prompt, runPiOptions);
 
     const sessionFile = sessionManager.getSessionFile?.();
