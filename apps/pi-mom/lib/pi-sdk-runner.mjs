@@ -21,6 +21,55 @@ if (process.env.PI_OFFLINE === undefined || process.env.PI_OFFLINE === "") {
   process.env.PI_OFFLINE = "1";
 }
 
+// PI_AGENT_DIR is a friendlier alias for the SDK's PI_CODING_AGENT_DIR env var
+// (resolved by getAgentDir() in @earendil-works/pi-coding-agent/dist/config.js).
+// Without this alias, anyone who sets PI_AGENT_DIR on Railway expecting the
+// docs-friendly name would silently fall back to ~/.pi/agent.
+if (process.env.PI_AGENT_DIR && !process.env.PI_CODING_AGENT_DIR) {
+  process.env.PI_CODING_AGENT_DIR = process.env.PI_AGENT_DIR;
+}
+
+// OAuth provider seeding for Railway/non-interactive deploys: certain providers
+// (notably openai-codex) have no env-key path — they only authenticate via
+// OAuth credentials in auth.json. Locally Jake ran `pi login openai-codex`
+// and the SDK rotates tokens on every call. On Railway the file doesn't
+// exist, so we materialize it from PI_AUTH_JSON_B64 on cold boot. Once the
+// file exists (typically on a persistent volume mounted at $PI_AGENT_DIR),
+// the SDK owns subsequent token rotation via its file-lock path. The seed
+// env var is only consulted if auth.json is missing — we never overwrite
+// an existing file because that would clobber the SDK's rotated tokens.
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { Buffer as _NodeBuffer } from "node:buffer";
+import { homedir as _homedir } from "node:os";
+import { join as _join } from "node:path";
+
+function _resolveAgentDir() {
+  return (
+    process.env.PI_AGENT_DIR ||
+    process.env.PI_CODING_AGENT_DIR ||
+    _join(_homedir(), ".pi", "agent")
+  );
+}
+
+(function seedAuthJsonFromEnv() {
+  const seed = process.env.PI_AUTH_JSON_B64;
+  if (!seed) return;
+  const dir = _resolveAgentDir();
+  const authPath = _join(dir, "auth.json");
+  if (existsSync(authPath)) return;
+  try {
+    const json = _NodeBuffer.from(seed, "base64").toString("utf-8");
+    JSON.parse(json); // syntax check before writing
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(authPath, json, { mode: 0o600 });
+    console.log(`✓ Seeded ${authPath} from PI_AUTH_JSON_B64 (${json.length} bytes)`);
+  } catch (err) {
+    console.error(
+      `Failed to seed auth.json from PI_AUTH_JSON_B64: ${err?.message || err}`,
+    );
+  }
+})();
+
 import {
   AuthStorage,
   DefaultResourceLoader,
