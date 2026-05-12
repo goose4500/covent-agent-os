@@ -14,6 +14,14 @@ import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
 import { createSlackSink } from "./lib/slack-sink.mjs";
+import {
+  buildInputModalView,
+  createSlackUIContext,
+  resolveConfirmAction,
+  resolveInputCancel,
+  resolveInputSubmission,
+  resolveSelectAction,
+} from "./lib/slack-ui-context.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -757,7 +765,7 @@ function streamArgsForEvent({ channel, threadTs, user, team }) {
   return args;
 }
 
-async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action }) {
+async function runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities }) {
   const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
   const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
@@ -771,17 +779,33 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     trace,
   });
 
+  // Stage 6: per-turn slack UI context for ctx.ui.{confirm,select,input,notify,setStatus}.
+  // The Bolt action/view handlers consult pendingApprovals to resolve the
+  // promise returned to Pi. Dispose at the end of the turn to free any
+  // entries that an extension never followed through on.
+  const slackUI = createSlackUIContext({
+    client,
+    channel,
+    threadTs,
+    requestId,
+    pendingApprovals,
+    surface: mode,
+    assistantSetStatus: utilities?.setStatus,
+    trace,
+  });
+
   await sink.start({ initialText: `👀 Covent Pi is thinking… (req: ${requestId})\n\n` });
 
   let result;
   let runError;
   try {
-    result = await runTurn({ surface: mode, threadTs, prompt, action, sink });
+    result = await runTurn({ surface: mode, threadTs, prompt, action, sink, uiContext: slackUI });
   } catch (err) {
     runError = err;
   }
 
   await sink.stop({ result, error: runError });
+  slackUI.dispose("turn_end");
 
   if (runError) throw runError;
   return result;
@@ -820,6 +844,13 @@ const app = new App({
 const runStore = createRunStore({ path: RUN_STATE_PATH, trace });
 const agentRunner = createAgentRunner({ mode: AGENT_RUNNER_MODE, trace, workdir: REPO_HEALTH_WORKDIR, timeoutMs: AGENT_COMMAND_TIMEOUT_MS });
 const activeRuns = new Map();
+// Stage 6: ExtensionUIContext → Slack approval modals. Pi extensions like
+// permission-gate call ctx.ui.select/confirm/input from inside an agent loop;
+// `lib/slack-ui-context.mjs` translates those into interactive thread
+// messages (and a modal for `input`). The pending-approval registry is a
+// process-global Map keyed by approvalId so the Bolt action/view handlers
+// can resolve the original promise from a button click or view submission.
+const pendingApprovals = new Map();
 
 function isoNow() {
   return new Date().toISOString();
@@ -837,7 +868,7 @@ app.error(async (error) => {
   console.error("[pi-mom] Bolt error", error);
 });
 
-async function handleRequest({ client, event, mode }) {
+async function handleRequest({ client, event, mode, utilities }) {
   const requestId = `req_${Date.now().toString(36)}`;
   const start = Date.now();
   const channel = event.channel;
@@ -963,7 +994,7 @@ async function handleRequest({ client, event, mode }) {
     });
     trace("pi.prompt_built", { requestId, promptLength: prompt.length, route: command.routeKey });
 
-    const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action });
+    const result = await runPiWithSlackStream({ client, event, channel, threadTs, user, prompt, requestId, mode, action, utilities });
     trace("slack.replied_pi_stream", { requestId, durationMs: Date.now() - start, resultLength: result.length });
     if (command.kind === "route" && command.routeKey === "linear") {
       try {
@@ -1183,6 +1214,64 @@ app.action("agent_run_cancel", async ({ ack, body, action, client }) => {
   } else {
     await client.chat.update({ channel: run.channel, ts: run.messageTs, ...buildAgentRunUpdate(run) });
   }
+});
+
+// Stage 6 — ExtensionUIContext approval handlers. These resolve the
+// promise returned to Pi from ctx.ui.{confirm,select,input}. The pending
+// entry is looked up in the global `pendingApprovals` Map by approvalId
+// (embedded in the button value or view.private_metadata). The shared
+// helpers live in lib/slack-ui-context.mjs so the resolution logic can be
+// unit-tested without booting Bolt.
+app.action("pi_uictx_confirm_approve", async ({ ack, body, action, client }) => {
+  await ack();
+  resolveConfirmAction({ pendingApprovals, action, body, client, trace });
+});
+app.action("pi_uictx_confirm_cancel", async ({ ack, body, action, client }) => {
+  await ack();
+  resolveConfirmAction({ pendingApprovals, action, body, client, trace });
+});
+app.action(/^pi_uictx_select_\d+$/, async ({ ack, body, action, client }) => {
+  await ack();
+  resolveSelectAction({ pendingApprovals, action, body, client, trace });
+});
+app.action("pi_uictx_input_launch", async ({ ack, body, action, client }) => {
+  await ack();
+  const approvalId = action.value;
+  const entry = pendingApprovals.get(approvalId);
+  if (!entry || entry._finalized) {
+    trace("slack_ui.input_launch_unknown", { approvalId });
+    return;
+  }
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildInputModalView({ approvalId, title: entry.title, placeholder: entry.placeholder }),
+    });
+    trace("slack_ui.input_launched", { approvalId });
+  } catch (error) {
+    trace("slack_ui.input_launch_failed", { approvalId, error: error?.data?.error || error.message });
+  }
+});
+app.action("pi_uictx_input_skip", async ({ ack, body, action, client }) => {
+  await ack();
+  // The skip button has the same effect as closing the modal: resolve(undefined).
+  // We synthesize the cancel path so the helper can edit the launcher post
+  // and clean up the pending entry without going through views.open.
+  resolveInputCancel({
+    pendingApprovals,
+    view: { private_metadata: action.value },
+    body,
+    client,
+    trace,
+  });
+});
+app.view("pi_uictx_input_modal", async ({ ack, body, view, client }) => {
+  await ack();
+  resolveInputSubmission({ pendingApprovals, view, body, client, trace });
+});
+app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ ack, body, view, client }) => {
+  await ack();
+  resolveInputCancel({ pendingApprovals, view, body, client, trace });
 });
 
 const { dispatchToAction } = createDispatcher({ handleRequest, trace });

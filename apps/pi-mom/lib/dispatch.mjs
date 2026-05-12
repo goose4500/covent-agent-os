@@ -41,7 +41,7 @@ export function createDispatcher({ handleRequest, trace = () => {} } = {}) {
     }
 
     try {
-      await handleRequest({ client, event, mode: surface });
+      await handleRequest({ client, event, mode: surface, utilities });
     } finally {
       if (statusOpened) {
         try {

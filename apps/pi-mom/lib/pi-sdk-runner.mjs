@@ -148,7 +148,7 @@ export function createRunner({
     return loader;
   }
 
-  async function runPi(prompt, { onOutput, signal, sessionManager, tools, sink } = {}) {
+  async function runPi(prompt, { onOutput, signal, sessionManager, tools, sink, uiContext } = {}) {
     const deps = await getDeps();
     if (!deps.model) {
       throw new Error(
@@ -177,11 +177,29 @@ export function createRunner({
       sessionOptions.noTools = "all";
       sessionOptions.resourceLoader = await makeResourceLoader(workdir);
     }
+    // Stage 6: a uiContext (ExtensionUIContext shape) is passed for surfaces
+    // where Pi extensions need to gate dangerous actions through the user —
+    // e.g. permission-gate.ts calling ctx.ui.select("Allow?", ["Yes","No"]).
+    // The runner consumes it via session.bindExtensions; createSession also
+    // accepts uiContext directly per agent-session.d.ts:109. Prefer
+    // bindExtensions so the binding is explicit and easy to swap per turn.
+    if (uiContext) sessionOptions.uiContext = uiContext;
 
     const result = await createSession(sessionOptions);
     const session = result?.session ?? result;
     if (toolsExplicit && tools.length > 0 && typeof session.setActiveToolsByName === "function") {
       session.setActiveToolsByName(tools);
+    }
+    if (uiContext && typeof session.bindExtensions === "function") {
+      try {
+        await session.bindExtensions({ uiContext });
+      } catch (err) {
+        // Non-fatal: bindExtensions can fail if extensions are disabled (the
+        // pi-mom runner sets noTools/no-extensions/no-skills). The
+        // sessionOptions.uiContext path above still applies to anything that
+        // can read ctx.ui, so we just trace and continue.
+        try { onOutput?.(""); } catch {}
+      }
     }
 
     return await new Promise((resolve, reject) => {

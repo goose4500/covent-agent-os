@@ -10,7 +10,7 @@
   "scripts": {
     "start": "bun index.mjs",
     "doctor": "bun doctor.mjs",
-    "check": "bun test-agent-run-card.mjs && bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-idempotency.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-bun-compat.mjs"
+    "check": "bun test-agent-run-card.mjs && bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-idempotency.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-bun-compat.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",

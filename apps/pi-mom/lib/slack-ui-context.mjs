@@ -1,0 +1,451 @@
+// Translates Pi SDK ExtensionUIContext (extensions/types.d.ts:67) into Slack
+// interactive surfaces. Used by extensions like permission-gate.ts whose only
+// ctx.ui call is `select(title, ["Yes","No"])` to gate a dangerous bash.
+//
+// Why buttons-in-thread (and not `views.open`) for confirm/select:
+//   `views.open` requires a `trigger_id` that's only valid for ~3 seconds and
+//   only available right after a user-initiated Slack event. Pi tool callbacks
+//   run asynchronously inside an agent loop — there is no live trigger_id, so
+//   a modal cannot be opened at the moment of the prompt. The workable shape
+//   is to post a blocks-with-buttons message immediately; clicks resolve the
+//   pending promise via the action handlers wired in index.mjs. Modals are
+//   only used for `input` (free text), where a "Provide input" launcher
+//   button gives us a fresh trigger_id to open a modal with a real text
+//   field.
+//
+// Lifecycle:
+//   1. The factory is constructed per-turn in index.mjs.runPiWithSlackStream
+//      with a shared `pendingApprovals` Map (key: approvalId).
+//   2. Each call to confirm/select/input:
+//      - allocates an approvalId,
+//      - posts a Slack message with the right blocks,
+//      - registers a pending entry holding {resolve, type, channel, threadTs,
+//        messageTs, options, defaultValue, signal/timeout teardown} in the
+//        Map,
+//      - returns the awaitable promise.
+//   3. Bolt action/view handlers (registered globally at app startup) look
+//      up the entry by approvalId, edit the original message to show the
+//      resolution, resolve the promise, and delete the entry.
+//   4. opts.signal/opts.timeout (per ExtensionUIDialogOptions) resolve the
+//      promise with the default ("No"/false/undefined) and tear down the
+//      entry.
+//   5. dispose() resolves every still-pending entry registered by this UI
+//      context with the default — called when runTurn settles so a stuck
+//      modal cannot wedge the next turn.
+
+const DEFAULT_NOTIFY_ICONS = { info: "ℹ️", warning: "⚠️", error: "🛑" };
+const NOOP_THEME = Object.freeze({ name: "slack" });
+
+let _approvalCounter = 0;
+function nextApprovalId(requestId) {
+  _approvalCounter += 1;
+  return `appr_${requestId}_${_approvalCounter}_${Date.now().toString(36)}`;
+}
+
+export function _resetApprovalCounterForTests() {
+  _approvalCounter = 0;
+}
+
+export function createSlackUIContext({
+  client,
+  channel,
+  threadTs,
+  requestId,
+  pendingApprovals,
+  surface,
+  assistantSetStatus,
+  trace = () => {},
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
+} = {}) {
+  if (!client || typeof client.chat?.postMessage !== "function") {
+    throw new Error("slack-ui-context: client.chat.postMessage is required");
+  }
+  if (!pendingApprovals || typeof pendingApprovals.set !== "function" || typeof pendingApprovals.get !== "function") {
+    throw new Error("slack-ui-context: pendingApprovals Map is required");
+  }
+  if (!channel || !threadTs || !requestId) {
+    throw new Error("slack-ui-context: channel, threadTs, and requestId are required");
+  }
+
+  const owned = new Set();
+  let disposed = false;
+
+  function register(entry, opts = {}) {
+    pendingApprovals.set(entry.approvalId, entry);
+    owned.add(entry.approvalId);
+
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        finalize(entry.approvalId, "aborted");
+        return;
+      }
+      entry.signal = opts.signal;
+      entry.abortHandler = () => finalize(entry.approvalId, "aborted");
+      opts.signal.addEventListener("abort", entry.abortHandler, { once: true });
+    }
+
+    if (opts.timeout && Number.isFinite(opts.timeout)) {
+      entry.timeoutTimer = setTimeoutFn(() => finalize(entry.approvalId, "timeout"), opts.timeout);
+    }
+  }
+
+  function finalize(approvalId, reason) {
+    const entry = pendingApprovals.get(approvalId);
+    if (!entry) return;
+    if (entry._finalized) return;
+    entry._finalized = true;
+    pendingApprovals.delete(approvalId);
+    owned.delete(approvalId);
+    if (entry.timeoutTimer !== undefined) {
+      clearTimeoutFn(entry.timeoutTimer);
+      entry.timeoutTimer = undefined;
+    }
+    if (entry.signal && entry.abortHandler) {
+      try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
+    }
+    trace("slack_ui.finalized", {
+      requestId,
+      approvalId,
+      reason,
+      type: entry.type,
+    });
+    try { entry.resolve(entry.defaultValue); } catch {}
+  }
+
+  async function confirm(title, message, opts = {}) {
+    if (disposed) return false;
+    const approvalId = nextApprovalId(requestId);
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "confirm",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Approval required"),
+        message: String(message || ""),
+        defaultValue: false,
+        resolve,
+      };
+
+      const blocks = [
+        { type: "header", text: { type: "plain_text", text: entry.title.slice(0, 150) || "Approval required", emoji: true } },
+        { type: "section", text: { type: "mrkdwn", text: entry.message ? entry.message.slice(0, 2900) : "_(no detail)_" } },
+        { type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] },
+        { type: "actions", elements: [
+          { type: "button", action_id: "pi_uictx_confirm_approve", style: "primary", text: { type: "plain_text", text: "Approve" }, value: approvalId },
+          { type: "button", action_id: "pi_uictx_confirm_cancel", style: "danger", text: { type: "plain_text", text: "Cancel" }, value: approvalId },
+        ] },
+      ];
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `⚠️ Approval requested: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.confirm_posted", { requestId, approvalId, messageTs: post.ts });
+      }).catch((err) => {
+        trace("slack_ui.confirm_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(false);
+      });
+    });
+  }
+
+  async function select(title, options, opts = {}) {
+    if (disposed || !Array.isArray(options) || options.length === 0) return undefined;
+    const approvalId = nextApprovalId(requestId);
+    const opts_capped = options.slice(0, 5).map((opt) => String(opt));
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "select",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Choose an option"),
+        options: opts_capped,
+        defaultValue: undefined,
+        resolve,
+      };
+
+      const blocks = [
+        { type: "section", text: { type: "mrkdwn", text: `*${entry.title.slice(0, 280)}*` } },
+        { type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] },
+        { type: "actions", elements: opts_capped.map((opt, idx) => ({
+          type: "button",
+          action_id: `pi_uictx_select_${idx}`,
+          text: { type: "plain_text", text: opt.slice(0, 75) },
+          value: `${approvalId}:${idx}`,
+          style: idx === 0 ? "primary" : undefined,
+        })) },
+      ];
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Select: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.select_posted", { requestId, approvalId, optionCount: opts_capped.length });
+      }).catch((err) => {
+        trace("slack_ui.select_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(undefined);
+      });
+    });
+  }
+
+  async function input(title, placeholder, opts = {}) {
+    if (disposed) return undefined;
+    const approvalId = nextApprovalId(requestId);
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "input",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Input required"),
+        placeholder: placeholder ? String(placeholder) : "",
+        defaultValue: undefined,
+        resolve,
+      };
+
+      const blocks = [
+        { type: "section", text: { type: "mrkdwn", text: `*${entry.title.slice(0, 280)}*${entry.placeholder ? `\n_${entry.placeholder.slice(0, 280)}_` : ""}` } },
+        { type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] },
+        { type: "actions", elements: [
+          { type: "button", action_id: "pi_uictx_input_launch", style: "primary", text: { type: "plain_text", text: "Provide input" }, value: approvalId },
+          { type: "button", action_id: "pi_uictx_input_skip", text: { type: "plain_text", text: "Skip" }, value: approvalId },
+        ] },
+      ];
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Input requested: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.input_posted", { requestId, approvalId });
+      }).catch((err) => {
+        trace("slack_ui.input_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(undefined);
+      });
+    });
+  }
+
+  function notify(message, type = "info") {
+    if (disposed) return;
+    const icon = DEFAULT_NOTIFY_ICONS[type] || DEFAULT_NOTIFY_ICONS.info;
+    const safe = String(message || "").slice(0, 2900);
+    client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: `${icon} ${safe}`,
+    }).catch((err) => trace("slack_ui.notify_failed", { requestId, error: err?.data?.error || err.message }));
+    trace("slack_ui.notify", { requestId, type, messageLength: safe.length });
+  }
+
+  function setStatus(key, text) {
+    if (disposed) return;
+    if (surface === "assistant" && typeof assistantSetStatus === "function" && text) {
+      Promise.resolve(assistantSetStatus(text)).catch(() => {});
+    }
+    trace("slack_ui.setStatus", { requestId, key, text: text || null });
+  }
+
+  function dispose(reason = "dispose") {
+    if (disposed) return;
+    disposed = true;
+    for (const approvalId of [...owned]) finalize(approvalId, reason);
+  }
+
+  return {
+    select,
+    confirm,
+    input,
+    notify,
+    setStatus,
+    onTerminalInput: () => () => {},
+    setWorkingMessage: () => {},
+    setWorkingVisible: () => {},
+    setWorkingIndicator: () => {},
+    setHiddenThinkingLabel: () => {},
+    setWidget: () => {},
+    setFooter: () => {},
+    setHeader: () => {},
+    setTitle: () => {},
+    custom: async () => undefined,
+    pasteToEditor: () => {},
+    setEditorText: () => {},
+    getEditorText: () => "",
+    editor: async () => undefined,
+    addAutocompleteProvider: () => {},
+    setEditorComponent: () => {},
+    getEditorComponent: () => undefined,
+    theme: NOOP_THEME,
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false, error: "Slack UI context does not support themes" }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {},
+    dispose,
+    get _ownedApprovalIds() { return [...owned]; },
+  };
+}
+
+export function resolveSelectAction({ pendingApprovals, action, body, client, trace = () => {} }) {
+  return _resolvePendingFromButton({
+    pendingApprovals,
+    body,
+    client,
+    trace,
+    parse: () => {
+      const [approvalId, idxStr] = String(action.value || "").split(":");
+      const idx = Number(idxStr);
+      return { approvalId, idx };
+    },
+    apply: (entry, parsed) => {
+      const option = entry.options?.[parsed.idx];
+      if (option === undefined) return null;
+      return {
+        resolution: option,
+        outcomeText: `✅ ${entry.title} → ${option}`,
+      };
+    },
+    label: "select",
+  });
+}
+
+export function resolveConfirmAction({ pendingApprovals, action, body, client, trace = () => {} }) {
+  return _resolvePendingFromButton({
+    pendingApprovals,
+    body,
+    client,
+    trace,
+    parse: () => ({
+      approvalId: String(action.value || ""),
+      approved: action.action_id === "pi_uictx_confirm_approve",
+    }),
+    apply: (entry, parsed) => ({
+      resolution: parsed.approved,
+      outcomeText: `${parsed.approved ? "✅" : "❌"} ${entry.title} — ${parsed.approved ? "approved" : "canceled"}${body?.user?.id ? ` by <@${body.user.id}>` : ""}`,
+    }),
+    label: "confirm",
+  });
+}
+
+export function resolveInputSubmission({ pendingApprovals, view, body, client, trace = () => {} }) {
+  const approvalId = view?.private_metadata;
+  const entry = pendingApprovals.get(approvalId);
+  if (!entry || entry._finalized) return false;
+  const value = view?.state?.values?.pi_uictx_input_block?.pi_uictx_input_value?.value || "";
+  entry._finalized = true;
+  pendingApprovals.delete(approvalId);
+  if (entry.timeoutTimer !== undefined) clearTimeout(entry.timeoutTimer);
+  if (entry.signal && entry.abortHandler) {
+    try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
+  }
+  trace("slack_ui.input_submitted", { approvalId, requestId: entry.requestId, length: value.length });
+  if (entry.messageTs) {
+    client.chat.update({
+      channel: entry.channel,
+      ts: entry.messageTs,
+      text: `✅ ${entry.title} — input received${body?.user?.id ? ` from <@${body.user.id}>` : ""}`,
+      blocks: [],
+    }).catch((err) => trace("slack_ui.input_message_update_failed", { approvalId, error: err?.data?.error || err.message }));
+  }
+  try { entry.resolve(value); } catch {}
+  return true;
+}
+
+export function resolveInputCancel({ pendingApprovals, view, body, client, trace = () => {} }) {
+  const approvalId = view?.private_metadata;
+  const entry = pendingApprovals.get(approvalId);
+  if (!entry || entry._finalized) return false;
+  entry._finalized = true;
+  pendingApprovals.delete(approvalId);
+  if (entry.timeoutTimer !== undefined) clearTimeout(entry.timeoutTimer);
+  if (entry.signal && entry.abortHandler) {
+    try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
+  }
+  trace("slack_ui.input_canceled", { approvalId, requestId: entry.requestId });
+  if (entry.messageTs) {
+    client.chat.update({
+      channel: entry.channel,
+      ts: entry.messageTs,
+      text: `❌ ${entry.title} — input canceled${body?.user?.id ? ` by <@${body.user.id}>` : ""}`,
+      blocks: [],
+    }).catch((err) => trace("slack_ui.input_message_update_failed", { approvalId, error: err?.data?.error || err.message }));
+  }
+  try { entry.resolve(undefined); } catch {}
+  return true;
+}
+
+export function buildInputModalView({ approvalId, title, placeholder }) {
+  return {
+    type: "modal",
+    callback_id: "pi_uictx_input_modal",
+    private_metadata: approvalId,
+    notify_on_close: true,
+    title: { type: "plain_text", text: String(title || "Input required").slice(0, 24) },
+    submit: { type: "plain_text", text: "Submit" },
+    close: { type: "plain_text", text: "Cancel" },
+    blocks: [
+      {
+        type: "input",
+        block_id: "pi_uictx_input_block",
+        element: {
+          type: "plain_text_input",
+          action_id: "pi_uictx_input_value",
+          multiline: true,
+          placeholder: placeholder ? { type: "plain_text", text: String(placeholder).slice(0, 150) } : undefined,
+        },
+        label: { type: "plain_text", text: String(title || "Input").slice(0, 75) },
+      },
+    ],
+  };
+}
+
+function _resolvePendingFromButton({ pendingApprovals, body, client, trace, parse, apply, label }) {
+  const parsed = parse();
+  if (!parsed?.approvalId) {
+    trace(`slack_ui.${label}_action_unparsable`, { value: parsed });
+    return false;
+  }
+  const entry = pendingApprovals.get(parsed.approvalId);
+  if (!entry) {
+    trace(`slack_ui.${label}_action_unknown_approval`, { approvalId: parsed.approvalId });
+    return false;
+  }
+  if (entry._finalized) return false;
+  const applied = apply(entry, parsed);
+  if (!applied) {
+    trace(`slack_ui.${label}_action_invalid`, { approvalId: parsed.approvalId, parsed });
+    return false;
+  }
+  entry._finalized = true;
+  pendingApprovals.delete(parsed.approvalId);
+  if (entry.timeoutTimer !== undefined) clearTimeout(entry.timeoutTimer);
+  if (entry.signal && entry.abortHandler) {
+    try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
+  }
+  trace(`slack_ui.${label}_resolved`, { approvalId: parsed.approvalId, requestId: entry.requestId });
+  if (entry.messageTs) {
+    client.chat.update({
+      channel: entry.channel,
+      ts: entry.messageTs,
+      text: applied.outcomeText,
+      blocks: [],
+    }).catch((err) => trace(`slack_ui.${label}_message_update_failed`, { approvalId: parsed.approvalId, error: err?.data?.error || err.message }));
+  }
+  try { entry.resolve(applied.resolution); } catch {}
+  return true;
+}
