@@ -1,0 +1,11 @@
+# Railway NIXPACKS config — bun runtime for covent-pi-mom.
+# Detected automatically from bun.lockb at repo root, but explicit here for clarity.
+
+[phases.setup]
+nixPkgs = ["bun"]
+
+[phases.install]
+cmds = ["bun install --frozen-lockfile"]
+
+[start]
+cmd = "bun apps/pi-mom/index.mjs"

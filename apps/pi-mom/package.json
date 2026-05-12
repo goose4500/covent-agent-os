@@ -5,13 +5,12 @@
   "type": "module",
   "description": "Socket Mode Slack bridge for routing Covent Slack requests into Pi agents.",
   "engines": {
-    "node": ">=22 <25",
-    "npm": ">=10"
+    "bun": ">=1.3.0"
   },
   "scripts": {
-    "start": "node index.mjs",
-    "doctor": "node doctor.mjs",
-    "check": "node --check index.mjs && node --check doctor.mjs && node --check lib/agent-run-card.mjs && node --check lib/agent-run-store.mjs && node --check lib/agent-runners.mjs && node --check lib/slack-canvas.mjs && node --check lib/control-plane/registry-loader.mjs && node --check lib/linear-idempotency.mjs && node --check test-agent-run-card.mjs && node --check test-control-plane-registry.mjs && node --check test-linear-idempotency.mjs && node test-agent-run-card.mjs && node test-control-plane-registry.mjs && node test-linear-idempotency.mjs"
+    "start": "bun index.mjs",
+    "doctor": "bun doctor.mjs",
+    "check": "bun test-agent-run-card.mjs && bun test-control-plane-registry.mjs && bun test-linear-idempotency.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",

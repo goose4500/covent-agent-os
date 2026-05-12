@@ -9,15 +9,15 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "npm run secret-scan && npm run validate:skills && npm run validate:agents && npm run check:pi-mom && npm run typecheck",
-    "doctor": "npm run doctor:pi-mom",
-    "dev:pi-mom": "npm --prefix apps/pi-mom start",
-    "doctor:pi-mom": "npm --prefix apps/pi-mom run doctor",
-    "check:pi-mom": "npm --prefix apps/pi-mom run check",
+    "check": "bun run secret-scan && bun run validate:skills && bun run validate:agents && bun run check:pi-mom && bun run typecheck",
+    "doctor": "bun run doctor:pi-mom",
+    "dev:pi-mom": "cd apps/pi-mom && bun run start",
+    "doctor:pi-mom": "cd apps/pi-mom && bun run doctor",
+    "check:pi-mom": "cd apps/pi-mom && bun run check",
     "typecheck": "tsc --noEmit",
-    "validate:skills": "node scripts/validate-skills.mjs",
-    "validate:agents": "node scripts/validate-agents.mjs",
-    "agent:new": "node scripts/scaffold-agent.mjs",
+    "validate:skills": "bun scripts/validate-skills.mjs",
+    "validate:agents": "bun scripts/validate-agents.mjs",
+    "agent:new": "bun scripts/scaffold-agent.mjs",
     "secret-scan": "bash scripts/secret-scan.sh",
     "install:pi": "bash scripts/install-local.sh"
   },
@@ -41,6 +41,7 @@
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=22 <25"
+    "bun": ">=1.3.0",
+    "node": ">=22"
   }
 }
