@@ -16,6 +16,6 @@
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.73.1",
     "@slack/bolt": "^4.6.0",
-    "yaml": "^2.8.4"
+    "yaml": "^2.9.0"
   }
 }
