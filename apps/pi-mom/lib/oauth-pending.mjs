@@ -14,7 +14,13 @@
 // can't leak forever. Starting a new flow for the same user cancels any
 // in-flight one — last-click-wins matches what the user expects.
 
-const DEFAULT_TTL_MS = 10 * 60 * 1000;
+// Default TTL is 30 minutes — long enough for the user to complete the
+// openai.com auth flow (login + optional 2FA + consent), browse back to
+// Slack, click the paste-launcher, open the modal, and submit. Shorter
+// values bit users who got distracted mid-flow; longer is mostly free
+// since the pending entry is tiny in memory and a new flow always
+// supersedes any stale one, so an unrecoverable wedge can't form.
+const DEFAULT_TTL_MS = 30 * 60 * 1000;
 
 export function createOAuthPendingStore({
   ttlMs = DEFAULT_TTL_MS,

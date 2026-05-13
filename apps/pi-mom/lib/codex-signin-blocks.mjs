@@ -70,7 +70,7 @@ export function buildSignInMessage({ authorizeUrl, requestId } = {}) {
         elements: [
           {
             type: "mrkdwn",
-            text: `_req: ${requestId || "n/a"} • this prompt expires in ~10 min_`,
+            text: `_req: ${requestId || "n/a"} • this prompt expires in ~30 min_`,
           },
         ],
       },
