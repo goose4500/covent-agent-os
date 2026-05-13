@@ -97,6 +97,12 @@ import linearGraphql from "../../../extensions/linear-graphql.ts";
 // shape, an allowlist, and bot-vs-user token selection. See
 // skills/slack-api/SKILL.md for the method catalog and recipes.
 import slackApi from "../../../extensions/slack-api.ts";
+// GitHub: one in-process tool (`github_api`) that fronts both REST and
+// GraphQL, routed by the `path` arg — same shape as `gh api`. Recipes live
+// in skills/github-api/SKILL.md. The tool is intentionally dumb and never
+// prompts on writes; a future sibling guard can read `details.mutation` off
+// the tool_call event to gate writes (see extensions/linear-mcp-guard.ts).
+import githubApi from "../../../extensions/github-api.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -162,7 +168,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearGraphql, slackApi],
+      extensionFactories: [permissionGate, linearGraphql, slackApi, githubApi],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
