@@ -23,6 +23,7 @@ apps/pi-mom/.slack/cache/
 apps/pi-mom/.env.local
 
 # Pi runtime state / logs / artifacts
+.pi/
 sessions/
 transcripts/
 subagent-artifacts/
