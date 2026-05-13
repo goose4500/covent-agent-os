@@ -1,11 +1,11 @@
 ---
 name: github-api
-description: Fundamentals for calling GitHub via the in-process `github_api` Pi tool. One tool, two surfaces (REST + GraphQL), routed by the `path` arg — mirrors the mental model of the `gh api` CLI. Use this skill whenever the user asks Pi to read PRs, issues, checks, branches, files, commits, releases, Actions runs, or anything on github.com; whenever Pi needs to comment on / label / assign / merge an issue or PR; or when Pi needs to stitch together PR state (status checks + reviews + files) in one shot via GraphQL. Default to REST; reach for GraphQL only for Projects v2, multi-resource stitched queries, advanced issue search, and sub-issues.
+description: Recipes and policy for the single generic `github_api` Pi tool. One tool, two surfaces (REST + GraphQL), routed by the `path` arg — mirrors the mental model of the `gh api` CLI. Load this skill whenever you need to read PRs, issues, checks, branches, files, commits, releases, or Actions runs; whenever Pi needs to comment on / label / assign / merge an issue or PR; or when Pi needs to stitch together PR state (status checks + reviews + files) in one shot via GraphQL. Default to REST; reach for GraphQL only for Projects v2, multi-resource stitched queries, advanced issue search, and sub-issues.
 ---
 
 # GitHub API tool — fundamentals
 
-Pi has a single in-process tool for GitHub: **`github_api`**. It is the only correct way to talk to GitHub from a Pi run.
+Pi has a single in-process tool for GitHub: **`github_api`**. It is the only correct way to talk to GitHub from a Pi run. Sibling of `extensions/linear-graphql.ts` (the canonical one-tool-per-vendor reference) and `extensions/slack-api.ts`; the three follow the same idiom.
 
 There is no MCP server, no `gh` shell-out, no per-endpoint wrapper. One tool, two surfaces:
 

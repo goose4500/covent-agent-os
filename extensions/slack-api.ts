@@ -1,50 +1,34 @@
-// Pi custom tool for the Slack Web API. A single in-process tool that fronts
-// the ~220 Slack methods behind one ExtensionAPI surface, mirroring the
-// linear-tools.ts pattern: native, composable, no MCP hop.
+// Pi custom tool for the Slack Web API. One tool, all methods.
 //
-//   slack_api  — POST to https://slack.com/api/<method> with a JSON body and
-//                Authorization: Bearer <token>. The model picks the method
-//                and params; the tool just enforces the allowlist, picks the
-//                right token (bot vs user), surfaces ok/error/rate-limit
-//                signals, and redacts xox*- secrets on the way out.
-//
-// Why a single tool and not 25 per-method tools: Slack methods all share the
-// same wire shape (POST JSON, response {ok:bool, ...}). The model already
-// knows the method catalog from the skill; per-method tool registration
-// would just bloat the tool list without buying anything.
+//   slack_api — single entry point to https://slack.com/api/<method>. The
+//               model picks the method + params; the tool enforces the
+//               allowlist, picks the right token (bot vs user), and surfaces
+//               ok/error/rate-limit signals. Recipes and policy live in the
+//               `slack-api` skill, not in this tool.
 //
 // Env contract:
-//   SLACK_BOT_TOKEN          required — xoxb- bot token used for ~95% of methods
-//   SLACK_USER_TOKEN         optional — xoxp- user token; needed for search.*
-//                            and a few user-scoped reads. Selected when the
-//                            model passes as_user:true.
+//   SLACK_BOT_TOKEN          required — xoxb- bot token (covers ~95% of methods)
+//   SLACK_USER_TOKEN         optional — xoxp- user token; selected when the
+//                            model passes as_user:true (search.* etc.)
 //   SLACK_METHOD_ALLOWLIST   optional CSV — overrides DEFAULT_ALLOWLIST.
 //
 // Mutation classification: write-verb methods (chat.postMessage, reactions.add,
-// pins.add, ...) are surfaced as `mutation: true` on the tool result. The
-// existing extensions/slack-mcp-guard.ts continues to gate the MCP path. A
-// future slack-api-guard.ts can pick up this `mutation: true` signal to gate
-// the native path symmetrically; for v1 the allowlist is the safety floor.
+// pins.add, ...) are surfaced as `details.mutation = true` for a sibling guard
+// to consume (extensions/slack-mcp-guard.ts gates the MCP path today; a future
+// slack-api-guard.ts can mirror it for the native path). The allowlist is the
+// v1 safety floor.
 //
-// Error model:
-//   - Missing env → AgentToolResult { isError: true }
-//   - Method not in allowlist → isError with allowlist hint
-//   - HTTP 429 → isError, Retry-After value surfaced (no auto-retry)
-//   - {ok:false} → isError with .error + .response_metadata.messages[]
-//   - AbortSignal → isError, "Slack request aborted"
-//   - All error text passes through redactSecrets().
+// Not in scope: files.* upload (the 3-step replacement for the dead
+// files.upload is deferred), canvas/list writes, scheduled messages.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const DEFAULT_SLACK_API_URL = "https://slack.com/api";
 
-// v1 allowlist: ~25 high-signal methods that cover thread reads/writes,
-// channel/user lookup, search, reactions, pins, and bookmarks. Anything
-// outside this set requires the operator to opt in via SLACK_METHOD_ALLOWLIST
-// (CSV). files.* upload is intentionally absent — the legacy files.upload
-// died in March 2025 and the 3-step replacement (getUploadURLExternal +
-// PUT + completeUploadExternal) is being deferred to a future pass.
+// v1 allowlist: ~25 high-signal methods covering thread reads/writes,
+// channel/user lookup, search, reactions, pins, bookmarks. Anything outside
+// requires the operator to opt in via SLACK_METHOD_ALLOWLIST.
 const DEFAULT_ALLOWLIST: ReadonlyArray<string> = [
   // Reads
   "auth.test",
@@ -74,10 +58,9 @@ const DEFAULT_ALLOWLIST: ReadonlyArray<string> = [
   "conversations.invite",
 ];
 
-// Exact-match write set. We classify by method name (not heuristics on tokens)
-// because Slack's method namespace is stable and the cost of a misclassified
-// read is "user sees a needless confirm" while the cost of a misclassified
-// write is "silent post". Add new write methods here as the allowlist grows.
+// Exact-match write set. Classify by method name (not heuristics) because the
+// cost of a misclassified write is "silent post"; cost of a misclassified read
+// is "needless confirm".
 const MUTATION_METHODS: ReadonlySet<string> = new Set([
   "chat.postMessage",
   "chat.update",
@@ -98,10 +81,7 @@ function redactSecrets(text: string): string {
 
 function parseAllowlist(csv: string | undefined): ReadonlyArray<string> {
   if (!csv) return DEFAULT_ALLOWLIST;
-  const parts = csv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const parts = csv.split(",").map((s) => s.trim()).filter(Boolean);
   return parts.length > 0 ? parts : DEFAULT_ALLOWLIST;
 }
 
@@ -124,13 +104,9 @@ function errorResult(text: string): AnyResult {
   };
 }
 
-function shortSummary(method: string, payload: any): string {
-  // Method-specific one-liner; falls back to a generic ok summary. Keeps the
-  // model's context tidy when the full payload lands in `details`.
+function summarize(method: string, payload: any): string {
   if (method === "chat.postMessage" || method === "chat.update") {
-    const ts = payload?.ts;
-    const ch = payload?.channel;
-    return `Slack ${method} ok (ts=${ts ?? "?"} channel=${ch ?? "?"}).`;
+    return `Slack ${method} ok (ts=${payload?.ts ?? "?"} channel=${payload?.channel ?? "?"}).`;
   }
   if (method === "chat.delete") {
     return `Slack chat.delete ok (ts=${payload?.ts ?? "?"} channel=${payload?.channel ?? "?"}).`;
@@ -197,16 +173,13 @@ export function createSlackApiFactory({
       }),
       async execute(_toolCallId, params: any, signal) {
         const method = String(params?.method || "").trim();
-        const body = (params?.params && typeof params.params === "object")
-          ? params.params
-          : {};
+        const body = (params?.params && typeof params.params === "object") ? params.params : {};
         const asUser = params?.as_user === true;
 
         if (!method) {
           return errorResult("method is required (e.g. 'chat.postMessage').");
         }
 
-        // Allowlist: explicit env override, otherwise the v1 default set.
         const allowlist = parseAllowlist(env.SLACK_METHOD_ALLOWLIST);
         if (!allowlist.includes(method)) {
           return errorResult(
@@ -214,15 +187,10 @@ export function createSlackApiFactory({
           );
         }
 
-        // Mutation classification surfaced for slack-mcp-guard (or a future
-        // slack-api-guard) to consume — the tool itself does not prompt; the
-        // guard layer owns confirmation UX so it stays consistent with the
-        // MCP path.
         const isMutation = MUTATION_METHODS.has(method);
 
-        // Token resolution. as_user:true ⇒ SLACK_USER_TOKEN; otherwise the
-        // bot token. We fail closed and tell the model exactly which env var
-        // is missing so the user can fix it without dumping a secret.
+        // Fail closed on missing token and name the env var so the user can
+        // fix it without us echoing a secret back.
         const token = asUser ? env.SLACK_USER_TOKEN : env.SLACK_BOT_TOKEN;
         if (!token) {
           const which = asUser ? "SLACK_USER_TOKEN" : "SLACK_BOT_TOKEN";
@@ -247,15 +215,12 @@ export function createSlackApiFactory({
           if (err?.name === "AbortError") {
             return errorResult(`Slack ${method} request aborted before completion.`);
           }
-          return errorResult(
-            `Slack ${method} request error: ${err?.message || String(err)}`,
-          );
+          return errorResult(`Slack ${method} request error: ${err?.message || String(err)}`);
         }
 
-        // HTTP 429: Slack surfaces a real status here (rare — most rate limits
-        // come back as ok:false / "ratelimited", but tier-1 methods can hit
-        // 429 directly). Surface Retry-After verbatim and bail; the caller
-        // decides whether to back off or escalate.
+        // Real HTTP 429 is rare (most rate limits come back as ok:false /
+        // "ratelimited") but tier-1 methods do trip it. Surface Retry-After
+        // verbatim; the caller decides whether to back off or escalate.
         if (response.status === 429) {
           const retryAfter = response.headers?.get?.("retry-after") || "unknown";
           return errorResult(
@@ -279,33 +244,25 @@ export function createSlackApiFactory({
         if (!payload || payload.ok !== true) {
           const code = payload?.error || "unknown_error";
           const messages = payload?.response_metadata?.messages;
-          const detail = Array.isArray(messages) && messages.length > 0
-            ? ` (${messages.join("; ")})`
-            : "";
+          const detail = Array.isArray(messages) && messages.length > 0 ? ` (${messages.join("; ")})` : "";
           return errorResult(`Slack ${method} ok:false — ${code}${detail}`);
         }
 
         return {
-          content: [{ type: "text", text: shortSummary(method, payload) }],
-          details: {
-            method,
-            mutation: isMutation,
-            as_user: asUser,
-            response: payload,
-          },
+          content: [{ type: "text", text: summarize(method, payload) }],
+          details: { method, mutation: isMutation, as_user: asUser, response: payload },
         };
       },
     });
   };
 }
 
-// Default export wires real fetch + process.env so pi-sdk-runner can pass the
-// factory straight into DefaultResourceLoader.extensionFactories alongside
-// linearTools and permissionGate.
+// Default export uses real fetch + process.env so pi-sdk-runner can pass the
+// factory straight into DefaultResourceLoader.extensionFactories.
 export default createSlackApiFactory();
 
-// Test hook: small surface so the test file can exercise the helpers without
-// going through registerTool's typebox machinery.
+// Test hook: lets the test file exercise the helpers without going through
+// registerTool's typebox machinery.
 export const __slackApiTest = {
   DEFAULT_ALLOWLIST,
   MUTATION_METHODS,

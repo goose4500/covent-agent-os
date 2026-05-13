@@ -1,19 +1,16 @@
 ---
 name: slack-api
-description: >-
-  Use when the assistant needs to call the Slack Web API directly via the
-  in-process `slack_api` tool — posting a thread reply, reading messages,
-  looking up a user by email, searching Slack history, adding reactions, or
-  any other Slack read/write that doesn't go through the Slack MCP server.
-  Covers auth (bot vs user token), the {ok:bool} response convention,
-  rate-limit etiquette, mutation safety, and idempotency for thread posts.
+description: Recipes and policy for the single generic `slack_api` Pi tool. Load this skill whenever you need to read from or write to Slack (post a thread reply, read messages, look up a user by email, search history, add reactions, etc.) — it covers auth (bot vs user token), the {ok:bool} response convention, rate-limit etiquette, mutation safety, idempotency for thread posts, and copy-pasteable params for the most common methods.
 ---
+
 # Slack Web API (`slack_api` tool)
 
 Use this skill whenever you need to read or write Slack from inside Pi via
 the native `slack_api` custom tool. The Slack MCP server remains a fallback,
 but `slack_api` is the preferred path: single tool, no MCP hop, predictable
-error shape, and the same allowlist on every call.
+error shape, and the same allowlist on every call. Sibling of
+`extensions/linear-graphql.ts` (the canonical one-tool-per-vendor reference)
+and `extensions/github-api.ts`; the three follow the same idiom.
 
 ## When to use this tool
 
