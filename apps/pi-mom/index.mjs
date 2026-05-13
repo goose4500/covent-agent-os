@@ -139,12 +139,14 @@ function decodeSlackEntities(text = "") {
 
 function stripBotMentions(text = "") {
   return decodeSlackEntities(text)
-    // Drop Slack's "*Sent using* <@bot> [Display]" attribution footer that
-    // Slack appends when a message is posted via an app/integration. Without
-    // this, bash routes (which execute the user text verbatim) interpret the
-    // footer as additional shell tokens — e.g. `*Sent using*` becomes an
-    // extra operand to whatever command was at the end of the line.
-    .replace(/\n+\*Sent using\*\s+<@[A-Z0-9]+(?:\|[^>]+)?>(?:\s+\[[^\]]*\])?\s*$/i, "")
+    // Drop Slack's "*Sent using* …" attribution footer that's appended when a
+    // message is posted via an app/integration. The footer's exact tail varies
+    // (sometimes "<@bot>", sometimes "<@bot> [Display]", sometimes plain text),
+    // so be permissive: anchor on "*Sent using*" and nuke everything from
+    // there to end-of-text. Live smoke test confirmed a tighter regex was not
+    // matching — `echo HELLO` came back as "HELLO *Sent using*" with the
+    // footer surviving into bash.
+    .replace(/\s*\*Sent using\*[\s\S]*$/i, "")
     .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>\s*/g, "")
     .replace(/^@?(?:covent[-\s]?agent|covent\s+pi)\s*/i, "")
     .trim();
