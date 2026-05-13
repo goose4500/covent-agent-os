@@ -31,6 +31,9 @@ import {
   buildSignInResultMessage,
   readPastedCodeFromView,
 } from "./lib/codex-signin-blocks.mjs";
+import { checkPersistence } from "./lib/persistence-check.mjs";
+import { homedir as _piMomHomeDir } from "node:os";
+import { join as _piMomJoin } from "node:path";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -453,6 +456,15 @@ async function preflight() {
     throw new Error(`SLACK_APP_TOKEN cannot open Socket Mode: ${connection.error || "unknown_error"}`);
   }
   console.log("🔌 App-level token can open Socket Mode.");
+
+  // PI_AGENT_DIR must survive Railway redeploys — per-user Codex OAuth
+  // creds live there. Verdict appears in the Railway deploy log; two
+  // consecutive boots are needed for a "persistent" answer.
+  const _piMomAgentDir =
+    process.env.PI_AGENT_DIR ||
+    process.env.PI_CODING_AGENT_DIR ||
+    _piMomJoin(_piMomHomeDir(), ".pi", "agent");
+  checkPersistence({ baseDir: _piMomAgentDir });
 }
 
 const app = new App({
