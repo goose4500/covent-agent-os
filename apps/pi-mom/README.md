@@ -125,7 +125,7 @@ Routed workflow prefixes (defined in `control-plane/registry.yaml`):
 
 ```text
 @Covent Pi summarize: decisions, open questions, and next actions
-@Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
+@Covent Pi linear: create an issue from this thread (uses linear_graphql tool, search-first; see skills/linear-graphql)
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
 @Covent Pi bash: <command>   (runs via the bash tool; rm -rf/sudo/chmod 777/chown 777 require Slack approval)
@@ -137,8 +137,8 @@ In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoki
 
 Linear route behavior in `PI_MOM_MODE=pi`:
 
-- Driven by the modular Linear Pi custom tools (`extensions/linear-tools.ts`): `linear_search_issues`, `linear_create_issue`, `linear_add_comment`.
-- The model's prompt nudges it to search first, then comment-or-create — idempotency lives in the model's reasoning, not in a post-stream guard.
+- Driven by the generic Linear GraphQL Pi custom tool (`extensions/linear-graphql.ts`): the single `linear_graphql` tool posts arbitrary GraphQL to Linear; recipes (search, get, create, comment) and policy (title clamp, env defaults, mutation safety) live in `skills/linear-graphql/SKILL.md`.
+- The model's prompt nudges it to search first via an IssueSearch query, then either comment via CommentCreate or create via IssueCreate — idempotency lives in the model's reasoning, not in a post-stream guard.
 - Default target is Frontend Engineering / `Distribution` / `Backlog` (override with `LINEAR_TEAM_ID` / `LINEAR_PROJECT_ID` / `LINEAR_STATE_ID`).
 - Requires `LINEAR_API_KEY`. Without it, each tool returns an `isError` result and the model reports the missing key to the user.
 

@@ -60,7 +60,7 @@ const ROUTES = {
   },
   linear: {
     label: "Create Linear issue",
-    instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
+    instruction: "Create a Linear issue from the current Slack thread by composing an issueCreate GraphQL mutation through the linear_graphql tool exactly once (see the linear-graphql skill for the recipe). Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
   },
   agenda: {
     label: "Meeting agenda",

@@ -76,11 +76,12 @@ routes:
     systemPromptSuffix: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context."
     approvals: none
   linear:
-    # Linear is driven by Pi custom tools (extensions/linear-tools.ts).
-    # The model invokes them directly; idempotency lives in the model's
-    # reasoning (search first, then comment-or-create).
-    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"]
-    systemPromptSuffix: "The user wants to track something in Linear. ALWAYS call linear_search_issues first with the most distinctive phrase or proper noun from their request. If a clear match comes back, call linear_add_comment on that issue (Markdown body referencing the Slack thread) instead of creating a duplicate. If no relevant match exists, call linear_create_issue exactly once with: title (concise single line), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions), and optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the final tool call, write a short Slack reply quoting the Linear issue identifier and URL (or comment URL). Never call linear_create_issue twice for the same thread."
+    # Linear is driven by the single generic `linear_graphql` Pi custom tool
+    # (extensions/linear-graphql.ts). Recipes and policy live in
+    # skills/linear-graphql/SKILL.md; mutations are gated by
+    # extensions/linear-mcp-guard.ts via the Slack approval modal.
+    tools: ["linear_graphql"]
+    systemPromptSuffix: "The user wants to track something in Linear. Load the linear-graphql skill (see skills/linear-graphql/SKILL.md) for the GraphQL recipes. First run an IssueSearch query (searchableContent.contains on the most distinctive phrase or proper noun, filter by the configured LINEAR_TEAM_ID) to find duplicates. If a clear match comes back, post a CommentCreate mutation against that issue (Markdown body referencing the Slack thread). Otherwise post an IssueCreate mutation exactly once with: teamId (LINEAR_TEAM_ID), projectId (LINEAR_PROJECT_ID), stateId (LINEAR_STATE_ID), title (single line ≤240 chars), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the final mutation, write a short Slack reply quoting the Linear issue identifier and URL (or comment URL). Never run IssueCreate twice for the same thread."
     approvals: tool
   agenda:
     tools: []

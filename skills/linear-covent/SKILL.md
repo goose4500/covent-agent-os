@@ -4,7 +4,12 @@ Use this skill whenever the user asks about Linear, Covent/DispoGenius work trac
 
 ## Available access
 
-Pi has global Linear MCP access through the `mcp` tool and the global server named `linear`.
+Pi has two routes into Linear:
+
+- The generic `linear_graphql` Pi custom tool — single entry point to Linear's GraphQL API. Recipes and policy live in `skills/linear-graphql/SKILL.md`; load that skill for tool reference (auth, the 200-with-errors convention, mutation safety, ready-made queries for search / get / create / comment).
+- Global Linear MCP access through the `mcp` tool and the global server named `linear` — useful when an MCP-side helper already wraps a higher-level operation.
+
+For the MCP route specifically:
 
 - Check status: `mcp({})` or `mcp({ "server": "linear" })`
 - Authenticate if needed: tell the user to run `/mcp-auth linear` in interactive Pi
