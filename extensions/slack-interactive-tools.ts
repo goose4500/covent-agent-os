@@ -124,20 +124,21 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
       if (!ui?.confirmWithPreview) {
         return errorResult(`slack_approval_card requires a Slack-bound Pi turn. ${NOT_SLACK_BOUND_HINT}`);
       }
+      const startedAt = Date.now();
+      const timeoutMs: number | undefined = params.timeout_ms;
       try {
         const ok = await ui.confirmWithPreview(params.title, params.summary, params.preview_md, {
           approveLabel: params.approve_label,
           rejectLabel: params.reject_label,
           signal,
-          timeout: params.timeout_ms,
+          timeout: timeoutMs,
         });
         // The slack-ui-context primitive resolves to `defaultValue` (false)
-        // on signal/timeout/dispose. We can't reliably distinguish 'rejected'
-        // from 'timeout' from the boolean alone, so we report 'rejected' when
-        // false and let the timeout label only apply when there's a strong
-        // signal it was a timeout (signal aborted).
+        // on signal/timeout/dispose. We distinguish 'timeout' from 'rejected'
+        // by checking either signal abort OR elapsed time >= timeoutMs.
         if (ok === true) return textResult("approved");
         if (signal?.aborted) return textResult("timeout");
+        if (timeoutMs && Date.now() - startedAt >= timeoutMs) return textResult("timeout");
         return textResult("rejected");
       } catch (err: any) {
         return errorResult(`slack_approval_card failed: ${err?.message || String(err)}`);
