@@ -2,6 +2,7 @@
 name: team-scout
 description: Read-only project scout for Slack team: context requests. Finds relevant files, symbols, constraints, and validation paths without changing files or external systems.
 tools: read, grep, find, ls
+model: openai-codex/gpt-5.5
 thinking: low
 systemPromptMode: replace
 inheritProjectContext: true

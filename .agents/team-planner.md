@@ -2,6 +2,7 @@
 name: team-planner
 description: Read-only planner for Slack team: plan requests. Converts gathered context into a bounded implementation or verification plan without changing files or external systems.
 tools: read, grep, find, ls
+model: openai-codex/gpt-5.5
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
