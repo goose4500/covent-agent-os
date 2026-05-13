@@ -10,7 +10,7 @@
   "scripts": {
     "start": "bun index.mjs",
     "doctor": "bun doctor.mjs",
-    "check": "bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-graphql.mjs && bun test-slack-api.mjs && bun test-github-api.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-home-view.mjs && bun test-canvas-sink.mjs && bun test-composite-sink.mjs && bun test-bun-compat.mjs"
+    "check": "bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-graphql.mjs && bun test-slack-api.mjs && bun test-github-api.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-home-view.mjs && bun test-canvas-sink.mjs && bun test-composite-sink.mjs && bun test-bun-compat.mjs && bun test-event-receiver.mjs && bun test-destination-resolver.mjs && bun test-synthetic-message.mjs && bun test-event-ledger.mjs && bun test-event-runtime-e2e.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",

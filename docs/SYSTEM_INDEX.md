@@ -74,8 +74,14 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 - `docs/runbooks/covent-slack-mcp-setup.md` — current Slack MCP OAuth/safety runbook.
 - `docs/runbooks/covent-pi-mom-known-good.md` — historical known-good notes; verify against current code before acting.
+- `docs/runbooks/add-event-source.md` — runbook for wiring a new event source (webhook / cron) into the event-driven Pi runtime.
 - `docs/specs/context7-pi-agent-harness-spec.md` — Context7 Pi harness design.
 - `docs/specs/covent-slack-pi-harness.md` — older Slack MCP bearer-token harness spec; treat as historical/staged until reconciled with OAuth runbook.
+
+### ADRs and architecture references
+
+- `docs/adr/0003-event-driven-pi-runs.md` — ADR-0003: every external event becomes a synthetic Slack message handled by the existing pi-sdk-runner.
+- `docs/event-routing.md` — reference for the event-driven runtime (receiver → resolver → synthetic message → runner) and the route-registry shape.
 
 ### History/archive
 

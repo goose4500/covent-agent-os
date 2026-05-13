@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from "node:http";
 import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import { createDispatcher } from "./lib/dispatch.mjs";
@@ -16,6 +17,16 @@ import {
   resolveInputSubmission,
   resolveSelectAction,
 } from "./lib/slack-ui-context.mjs";
+// Event-driven runtime (issue #48). The Slack-only Bolt entrypoint above is
+// unchanged; the webhook surface below activates only when
+// EVENT_RUNTIME_ENABLED is truthy and a LINEAR_WEBHOOK_SECRET is configured.
+import { createEventReceiver } from "./event-receiver.mjs";
+import { createDedupCache } from "./lib/event-dedup.mjs";
+import { createDestinationResolver } from "./lib/destination-resolver.mjs";
+import { createEventLedger } from "./lib/event-ledger.mjs";
+import { createLinearFetch } from "./lib/linear-fetch.mjs";
+import { createEventDispatch } from "./lib/event-dispatch.mjs";
+import { loadRegistry } from "./lib/control-plane/registry-loader.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -782,6 +793,151 @@ const assistant = new Assistant({
 });
 app.assistant(assistant);
 
+// ---------------------------------------------------------------------------
+// Event-driven runtime (issue #48 / ADR-0003)
+// ---------------------------------------------------------------------------
+//
+// The Bolt app above runs in Socket Mode, which has no HTTP listener. We spin
+// up a separate Node `http` server on EVENT_RUNTIME_PORT (default 3030) so
+// external sources can POST webhooks at /webhook/<source>. The two servers
+// share the Pi runtime but are otherwise independent: webhook receiver
+// failures must not affect Slack message handling, and vice versa.
+//
+// Kill switch: `EVENT_RUNTIME_ENABLED=false` skips this wiring entirely
+// (Slack-only mode). When enabled, missing LINEAR_WEBHOOK_SECRET is logged
+// and the linear adapter resolves to 404 for every request (per the
+// receiver's contract).
+//
+// The "Express-compatible" request shape the receiver expects is built by
+// `buildReceiverRequest()` below — we don't actually depend on the `express`
+// package because it's not in pi-mom's dependency tree.
+
+const EVENT_RUNTIME_ENABLED = process.env.EVENT_RUNTIME_ENABLED !== "false";
+const EVENT_RUNTIME_PORT = Number(process.env.EVENT_RUNTIME_PORT || 3030);
+
+function buildReceiverRequest({ source, rawBody, headers }) {
+  // The receiver only reads `req.params.source`, `req.headers`, and
+  // `req.rawBody`. Header keys arriving from `node:http` are already
+  // lowercased, which matches the receiver's `req.headers[adapter.signatureHeader]`
+  // lookup (signature/delivery header constants are lowercase).
+  return { params: { source }, headers, rawBody };
+}
+
+function buildReceiverResponse(httpRes) {
+  // Receiver calls `res.status(code).json(body)`. We adapt that to the
+  // `node:http` response surface (writeHead + end).
+  return {
+    status(code) {
+      this._status = code;
+      return this;
+    },
+    json(body) {
+      const payload = JSON.stringify(body);
+      httpRes.writeHead(this._status || 200, {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": Buffer.byteLength(payload),
+      });
+      httpRes.end(payload);
+      return this;
+    },
+  };
+}
+
+function readRawBody(httpReq) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    httpReq.on("data", (chunk) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    httpReq.on("end", () => resolve(Buffer.concat(chunks)));
+    httpReq.on("error", reject);
+  });
+}
+
+async function startEventRuntime() {
+  if (!EVENT_RUNTIME_ENABLED) {
+    console.warn("[event-runtime] disabled via EVENT_RUNTIME_ENABLED=false; webhook surface not mounted");
+    return null;
+  }
+
+  const secrets = {};
+  if (process.env.LINEAR_WEBHOOK_SECRET) {
+    secrets.linear = process.env.LINEAR_WEBHOOK_SECRET;
+  } else {
+    console.warn("[event-runtime] LINEAR_WEBHOOK_SECRET not set; /webhook/linear will return 404");
+  }
+
+  let registry;
+  try {
+    registry = loadRegistry();
+  } catch (error) {
+    console.error(`[event-runtime] failed to load registry: ${error?.message || error}`);
+    return null;
+  }
+
+  const linearFetch = createLinearFetch();
+  const destinationResolver = createDestinationResolver({ linearFetch });
+  const ledger = createEventLedger({
+    path: process.env.EVENT_LEDGER_PATH || "sessions/event-runs.jsonl",
+  });
+
+  const { dispatch } = createEventDispatch({
+    registry,
+    destinationResolver,
+    runPi,
+    appendLedger: ledger.append,
+  });
+
+  const receiver = createEventReceiver({
+    secrets,
+    dispatch,
+    appendLedger: ledger.append,
+    dedup: createDedupCache(),
+  });
+
+  const server = createHttpServer(async (httpReq, httpRes) => {
+    // Light, single-route HTTP surface. Anything that isn't a POST to
+    // /webhook/<source> is rejected without bothering the receiver, so the
+    // receiver's request shape (req.params.source, req.rawBody) stays valid.
+    try {
+      const url = new URL(httpReq.url || "/", "http://localhost");
+      const match = /^\/webhook\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
+      if (httpReq.method !== "POST" || !match) {
+        httpRes.writeHead(404, { "content-type": "application/json" });
+        httpRes.end(JSON.stringify({ ok: false, error: "not found" }));
+        return;
+      }
+      const source = match[1];
+      const rawBody = await readRawBody(httpReq);
+      const req = buildReceiverRequest({ source, rawBody, headers: httpReq.headers });
+      const res = buildReceiverResponse(httpRes);
+      await receiver.handle(req, res);
+    } catch (err) {
+      // Catch-all so a malformed request can't crash the process.
+      try {
+        console.error(`[event-runtime] request handler error: ${err?.message || err}`);
+        if (!httpRes.headersSent) {
+          httpRes.writeHead(500, { "content-type": "application/json" });
+          httpRes.end(JSON.stringify({ ok: false, error: "internal error" }));
+        }
+      } catch {}
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(EVENT_RUNTIME_PORT, () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
+  });
+
+  console.log(`📬 Event runtime listening on :${EVENT_RUNTIME_PORT}/webhook/<source>`);
+  console.log(`   Linear secret configured: ${secrets.linear ? "yes" : "no"}`);
+
+  return { server, receiver, dispatch, ledger };
+}
+
 (async () => {
   try {
     await preflight();
@@ -792,6 +948,14 @@ app.assistant(assistant);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
+    // Start the webhook runtime AFTER Bolt so a misconfigured webhook surface
+    // can't block Slack from coming online. Errors here are logged and
+    // swallowed; the Slack-only mode keeps working.
+    try {
+      await startEventRuntime();
+    } catch (error) {
+      console.error(`[event-runtime] startup failed (Slack stays online): ${error?.message || error}`);
+    }
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);
     process.exit(1);
