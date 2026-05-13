@@ -8,7 +8,7 @@
 // Section order:
 //   1. Header           — title + last-updated context
 //   2. Quick launch     — buttons hinting at the route prefixes
-//                         (`spec:`, `linear:`, `agenda:`, `summarize:`).
+//                         (`spec:`, `linear:`, `agenda:`, `summarize:`, `team:`).
 //                         Clicks open small read-only "how to" modals so
 //                         users discover the routes without leaving Home.
 //   3. Approvals        — pending Pi tool approvals with per-row
@@ -29,7 +29,7 @@
 //   home_filter_approvals      (new — selected_option.value=all|confirm|select|input)
 //   home_refresh               (new — no value, just re-publish)
 //   home_settings_open         (new — opens settings modal)
-//   home_quick_route           (new — value=spec|linear|agenda|summarize;
+//   home_quick_route           (new — value=spec|linear|agenda|summarize|team;
 //                               opens a tiny "how to use this route" modal)
 //
 // 2026-block fallback: @slack/web-api ^7.15.2 predates `table` / `alert` /
@@ -51,6 +51,7 @@ const QUICK_LAUNCH = [
   { route: "linear", emoji: ":ticket:", label: "Create Linear issue" },
   { route: "agenda", emoji: ":calendar:", label: "Meeting agenda" },
   { route: "summarize", emoji: ":scroll:", label: "Summarize thread" },
+  { route: "team", emoji: ":busts_in_silhouette:", label: "Team subagents" },
 ];
 
 const ROUTE_HOWTO = {
@@ -82,6 +83,16 @@ const ROUTE_HOWTO = {
     body:
       "Inside the thread, post:\n\n`@Covent Pi summarize:`\n\n" +
       "Output: decisions, open questions, owners, risks/blockers, next actions.",
+  },
+  team: {
+    title: "Team subagents",
+    body:
+      "When PI_MOM_SUBAGENTS_ENABLED=true, use read-only team presets from a thread:\n\n" +
+      "`@Covent Pi team: doctor`\n" +
+      "`@Covent Pi team: context apps/pi-mom Slack routing`\n" +
+      "`@Covent Pi team: plan add a focused test`\n" +
+      "`@Covent Pi team: review <target>`\n\n" +
+      "The Slack route stays foreground/read-only and summarizes artifacts back into the thread.",
   },
 };
 
@@ -216,6 +227,7 @@ function statusBlocks({ status }) {
     return [section(":satellite_antenna: *Status* — open settings for full bridge configuration.")];
   }
   const linear = status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key";
+  const subagents = status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled";
   const allowed = status.allowedChannelId ? `\`${status.allowedChannelId}\`` : "any";
   const uptime = Number.isFinite(status.uptimeSeconds) ? `${status.uptimeSeconds}s` : "—";
   return [
@@ -223,6 +235,7 @@ function statusBlocks({ status }) {
       `:satellite_antenna: *Status* · mode \`${status.mode || "?"}\`` +
         ` · allowed channel ${allowed}` +
         ` · Linear ${linear}` +
+        ` · team subagents ${subagents}` +
         ` · uptime ${uptime}`,
     ),
   ];
@@ -274,6 +287,7 @@ export function buildSettingsModalView({ status, prefs } = {}) {
     lines.push(`*Allowed channel*: \`${status.allowedChannelId || "any"}\``);
     lines.push(`*Pi model*: \`${status.piModel || "?"}\` (thinking \`${status.piThinking || "?"}\`)`);
     lines.push(`*Linear*: ${status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key"}`);
+    lines.push(`*Team subagents*: ${status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled"}`);
     lines.push(`*Trace*: \`${status.traceEnabled ? "on" : "off"}\``);
     if (Number.isFinite(status.uptimeSeconds)) lines.push(`*Uptime*: \`${status.uptimeSeconds}s\``);
   } else {

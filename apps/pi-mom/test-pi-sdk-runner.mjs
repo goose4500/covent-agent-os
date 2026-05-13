@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { createRunner } from "./lib/pi-sdk-runner.mjs";
+import {
+  buildPiMomExtensionFactories,
+  buildResourceLoaderOptions,
+  createRunner,
+  subagentsEnabledFromEnv,
+} from "./lib/pi-sdk-runner.mjs";
 
 function fakeSession({ script = [], throwOnPrompt } = {}) {
   const subs = [];
@@ -180,6 +185,50 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   });
   await runPi("multi", { tools: ["read", "bash"] });
   assert.deepEqual(setActiveCalls, [["read", "bash"]]);
+}
+
+// Case 9: subagents loader flag is opt-in and appends exactly one extra extension factory.
+{
+  assert.equal(subagentsEnabledFromEnv({}), false, "subagents disabled by default");
+  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "true" }), true, "true enables subagents");
+
+  let loadCalls = 0;
+  const fakeSubagentExtension = function fakeSubagentExtension() {};
+  const loadSubagents = async () => { loadCalls += 1; return fakeSubagentExtension; };
+
+  const disabledFactories = await buildPiMomExtensionFactories({
+    env: { PI_MOM_SUBAGENTS_ENABLED: "false" },
+    loadSubagents,
+  });
+  assert.equal(disabledFactories.length, 2, "disabled: only linear + Slack interactive factories");
+  assert.equal(loadCalls, 0, "disabled: does not import pi-subagents");
+
+  const enabledFactories = await buildPiMomExtensionFactories({
+    env: { PI_MOM_SUBAGENTS_ENABLED: "true" },
+    loadSubagents,
+  });
+  assert.equal(enabledFactories.length, 3, "enabled: appends pi-subagents factory");
+  assert.equal(enabledFactories[2], fakeSubagentExtension, "enabled: pi-subagents factory is last");
+  assert.equal(loadCalls, 1, "enabled: imports pi-subagents exactly once for this loader build");
+}
+
+// Case 10: default resource loader options keep ambient discovery disabled even when subagents are enabled.
+{
+  const fakeSubagentExtension = function fakeSubagentExtension() {};
+  const options = await buildResourceLoaderOptions({
+    cwd: "/tmp/pi-mom-test",
+    agentDir: "/tmp/pi-agent-test",
+    env: { PI_MOM_SUBAGENTS_ENABLED: "true" },
+    loadSubagents: async () => fakeSubagentExtension,
+  });
+  assert.equal(options.cwd, "/tmp/pi-mom-test");
+  assert.equal(options.agentDir, "/tmp/pi-agent-test");
+  assert.equal(options.noExtensions, true, "ambient extension discovery remains disabled");
+  assert.equal(options.noPromptTemplates, true);
+  assert.equal(options.noThemes, true);
+  assert.equal(options.noContextFiles, true);
+  assert.equal(options.extensionFactories.length, 3);
+  assert.equal(options.extensionFactories[2], fakeSubagentExtension);
 }
 
 console.log("pi-sdk-runner tests passed");
