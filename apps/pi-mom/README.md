@@ -170,6 +170,24 @@ export PI_MOM_TRACE=false
 
 You can pipe logs or `grep "pi-mom-trace"` for easy observability. This gives you clear end-to-end visibility for DX and debugging without external services.
 
+## Codex auth: one shared account for the whole bot
+
+All Slack users transparently run on a **single shared ChatGPT Max account** that Andy owns. There is no per-user OAuth, no sign-in card, no `localhost:1455` paste dance — model calls just work for every member of the workspace.
+
+The mechanism is straightforward:
+
+1. **Bootstrap (one-time)** — on Andy's laptop, run `pi login openai-codex`. This produces `~/.pi/agent/auth.json` containing an `openai-codex` entry with refresh + access tokens for his ChatGPT Max subscription.
+2. **Seed Railway** — base64-encode that file and set it as the `PI_AUTH_JSON_B64` env var on the `covent-pi-mom-v2` Railway service. On cold boot, `lib/pi-sdk-runner.mjs` writes it to `${PI_AGENT_DIR}/auth.json` *only if the file is missing* (so we never clobber rotated tokens).
+3. **Rotation** — Pi's SDK rotates the access token on every model call and writes back to `auth.json`. The Railway volume mounted at `/data/pi-agent` keeps that file across redeploys. Refresh tokens last roughly 90 days; if a rotation fails for that long, Andy re-runs step 1 and reseeds `PI_AUTH_JSON_B64`.
+
+Re-seed shortcut from his laptop:
+
+```bash
+base64 -w0 ~/.pi/agent/auth.json | xclip -selection clipboard   # then paste into Railway env
+```
+
+If you ever see "Codex authentication failed" in the bot logs, that's the signal to redo step 1.
+
 ## Known-good bare-bones state
 
 As of 2026-05-03, the Covent Pi bridge has a working bare-bones path:

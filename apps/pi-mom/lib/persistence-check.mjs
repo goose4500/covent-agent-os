@@ -1,7 +1,10 @@
-// Verifies that PI_AGENT_DIR survives across deploys. The OAuth gate stores
-// per-user auth.json under PI_AGENT_DIR/users/<id>/auth.json — if Railway
+// Verifies that PI_AGENT_DIR survives across deploys. The bot's shared
+// Codex auth.json (seeded from PI_AUTH_JSON_B64 on cold boot, rotated by
+// Pi on every model call) lives at PI_AGENT_DIR/auth.json — if Railway
 // (or whatever host the bot runs on) doesn't mount a persistent volume
-// here, every restart wipes user credentials and forces re-sign-in.
+// here, every restart drops the in-place rotated tokens and forces the
+// seed to be re-applied (so the env var stays load-bearing forever
+// instead of being a one-time bootstrap).
 //
 // Mechanism: write a `.persistence-marker` containing the current boot
 // timestamp on every startup. On the next boot, if the marker exists with
@@ -48,7 +51,7 @@ export function checkPersistence({
   } catch (err) {
     warn(
       `⚠ persistence check: cannot write marker at ${markerPath}: ${err?.message || err}. ` +
-      `Per-user OAuth credentials may not persist.`,
+      `The shared Codex auth.json may not persist across redeploys.`,
     );
     return { persistent: null, markerPath, priorBootIso: null, bootIso, error: String(err?.message || err) };
   }
@@ -63,10 +66,10 @@ export function checkPersistence({
 
   warn(
     `⚠ PI_AGENT_DIR has no prior-boot marker at ${markerPath}. ` +
-    `If this is the first boot after merging the OAuth gate, that's expected — ` +
+    `If this is the first boot after enabling the persistence check, that's expected — ` +
     `redeploy once and re-check. ` +
     `If you see this on every subsequent boot, the volume is NOT mounted and ` +
-    `per-user auth.json will be wiped on every restart.`,
+    `the rotated Codex auth.json will be wiped on every restart.`,
   );
   return { persistent: false, markerPath, priorBootIso: null, bootIso };
 }
