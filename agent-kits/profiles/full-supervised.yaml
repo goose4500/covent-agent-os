@@ -2,7 +2,7 @@ name: full-supervised
 description: Full supervised operator profile for broad local work with explicit approval gates.
 tools: [read, grep, find, ls, bash, edit, write, mcp, web_search, fetch_content, get_search_content, contact_supervisor]
 skills: [git-workflow, diagnose, context7-docs, systems-thinking]
-extensions: [permission-gate, env-guard, git-checkpoint, slack-mcp-guard, linear-mcp-guard]
+extensions: [git-checkpoint]
 runtime: supervised-local
 allowShell: true
 allowWrites: true

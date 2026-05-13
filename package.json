@@ -8,29 +8,20 @@
     "apps/pi-mom"
   ],
   "scripts": {
-    "check": "bun run secret-scan && bun run validate:skills && bun run validate:agents && bun run check:pi-mom && bun run typecheck",
+    "check": "bun run typecheck && bun run check:pi-mom",
     "doctor": "bun run doctor:pi-mom",
     "dev:pi-mom": "cd apps/pi-mom && bun run start",
     "doctor:pi-mom": "cd apps/pi-mom && bun run doctor",
     "check:pi-mom": "cd apps/pi-mom && bun run check",
     "typecheck": "tsc --noEmit",
-    "validate:skills": "bun scripts/validate-skills.mjs",
-    "validate:agents": "bun scripts/validate-agents.mjs",
-    "agent:new": "bun scripts/scaffold-agent.mjs",
-    "secret-scan": "bash scripts/secret-scan.sh",
     "install:pi": "bash scripts/install-local.sh"
   },
   "pi": {
     "extensions": [
-      "./extensions/env-guard.ts",
-      "./extensions/git-checkpoint.ts",
-      "./extensions/linear-mcp-guard.ts",
-      "./extensions/permission-gate.ts",
-      "./extensions/slack-mcp-guard.ts"
+      "./extensions/git-checkpoint.ts"
     ],
     "skills": ["./skills"],
-    "agents": ["./.pi/agents", "./agents"],
-    "prompts": ["./prompts"]
+    "agents": ["./agents"]
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",

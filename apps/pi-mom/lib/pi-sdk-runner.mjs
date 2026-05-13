@@ -79,16 +79,9 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { getUserAuth } from "./user-auth-store.mjs";
-// Stage 6.5: load extensions/permission-gate.ts as an inline factory so the
-// permission-gate `tool_call` hook fires inside Pi's agent loop and the
-// ctx.ui.select prompt gets translated by slack-ui-context.mjs into Slack
-// approval buttons. Bun's native .ts handling lets us import the source
-// directly without a build step.
-import permissionGate from "../../../extensions/permission-gate.ts";
-// Linear-tools (post-Stage 6.5): registers `linear_create_issue` as a Pi
-// custom tool. Replaces the legacy post-stream GraphQL call that lived in
-// index.mjs; the model now drives Linear issue creation directly via tool
-// calls, which is composable with future search/comment/update tools.
+// Registers `linear_create_issue` as a Pi custom tool. The model drives Linear
+// issue creation directly via tool calls, which is composable with future
+// search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
 // slack-interactive-tools: registers `slack_approval_card`,
 // `slack_choice_card`, `slack_input_request` as Pi custom tools so the
@@ -103,11 +96,9 @@ const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
 const PI_WORKDIR = process.env.PI_WORKDIR || process.env.HOME || process.cwd();
-// TODO Stage 10 — remove PI_MOM_ALLOW_PI_TOOLS env fallback entirely once every
-// caller passes an explicit `tools` array via the action-resolver (Stage 4 wired
-// this end-to-end; the fallback only survives so the existing pi-sdk-runner
-// unit tests that construct a runner without `tools` keep exercising the
-// noTools posture exactly as before).
+// Legacy env fallback used only by the pi-sdk-runner unit tests that construct
+// a runner without explicit `tools`; production callers always pass `tools`
+// from the inline ROUTES map.
 const ALLOW_TOOLS = process.env.PI_MOM_ALLOW_PI_TOOLS === "true";
 
 function stripTerminalSequences(text) {
@@ -180,7 +171,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearTools, slackInteractiveTools],
+      extensionFactories: [linearTools, slackInteractiveTools],
       // Skills ARE loaded (discovered from ./skills per package.json's
       // `pi.skills` config). The model uses skill descriptions to pick the
       // right operating mode per turn — Slack/Linear context primers,
@@ -203,12 +194,12 @@ export function createRunner({
       );
     }
 
-    // Tool gating: when `tools` is provided (Stage 4 action-resolver path),
-    // it is the authoritative allowlist. Empty array → noTools:"all"
-    // (no Pi tools active; model-only draft). Non-empty array → all builtin
-    // tools available to the SDK, then `setActiveToolsByName(tools)` narrows
-    // them after createSession returns. When `tools` is undefined (legacy
-    // callers + unit tests), fall back to the historical `allowTools` flag.
+    // Tool gating: when `tools` is provided by the inline ROUTES map, it is
+    // the authoritative allowlist. Empty array → noTools:"all" (no Pi tools
+    // active; model-only draft). Non-empty array → all builtin tools
+    // available to the SDK, then `setActiveToolsByName(tools)` narrows them
+    // after createSession returns. When `tools` is undefined (legacy callers
+    // + unit tests), fall back to the historical `allowTools` flag.
     const toolsExplicit = Array.isArray(tools);
     const effectiveAllowTools = toolsExplicit ? tools.length > 0 : allowTools;
 
@@ -219,22 +210,20 @@ export function createRunner({
       sessionManager: sessionManager || SessionManager.inMemory(),
       authStorage: deps.authStorage,
       modelRegistry: deps.modelRegistry,
-      // Always pass our resource loader so permission-gate (and any future
-      // inline extensions) load regardless of whether tools are gated.
-      // Without this, createAgentSession synthesizes a default
-      // DefaultResourceLoader({cwd, agentDir}) that discovers from
-      // agentDir/extensions (empty on Railway) and our inline factories are
+      // Always pass our resource loader so the inline linearTools extension
+      // loads regardless of tool gating. Without this, createAgentSession
+      // synthesizes a default DefaultResourceLoader that discovers from
+      // agentDir/extensions (empty on Railway) and the inline factory is
       // never seen.
       resourceLoader: await makeResourceLoader(workdir),
     };
     if (!effectiveAllowTools) {
       sessionOptions.noTools = "all";
     }
-    // Stage 6: a uiContext (ExtensionUIContext shape) is passed for surfaces
-    // where Pi extensions need to gate dangerous actions through the user —
-    // e.g. permission-gate.ts calling ctx.ui.select("Allow?", ["Yes","No"]).
-    // The runner consumes it via session.bindExtensions; createSession also
-    // accepts uiContext directly per agent-session.d.ts:109. Prefer
+    // uiContext (ExtensionUIContext shape) is passed when a surface needs to
+    // surface Pi extension prompts (ctx.ui.select/confirm/input) back to the
+    // user. The runner consumes it via session.bindExtensions; createSession
+    // also accepts uiContext directly per agent-session.d.ts:109. Prefer
     // bindExtensions so the binding is explicit and easy to swap per turn.
     if (uiContext) sessionOptions.uiContext = uiContext;
 

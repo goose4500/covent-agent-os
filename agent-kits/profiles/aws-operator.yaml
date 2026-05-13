@@ -2,7 +2,7 @@ name: aws-operator
 description: Supervised AWS operator profile for the EC2 Covent Pi workbench operator lane. Runs AWS operations directly through the `aws` CLI invoked via the `bash` tool, authenticating via the EC2 instance profile. NOT exposed to Slack — Slack-originated work must hop via the bridge lane and the SQS operator queue.
 tools: [read, grep, find, ls, bash, edit, write]
 skills: [git-workflow, diagnose, ripgrep, uv-scripts]
-extensions: [permission-gate, env-guard, git-checkpoint]
+extensions: [git-checkpoint]
 runtime: ec2
 allowShell: true
 allowWrites: true

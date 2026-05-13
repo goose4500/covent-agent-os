@@ -3,9 +3,9 @@
 // creates a fresh one if absent or stale), and delegates the actual
 // streaming to pi-sdk-runner.runPi with the resolved SessionManager.
 //
-// Stage 4: accepts an `action` (from lib/action-resolver.mjs) and forwards
+// Accepts an `action` (from the inline ROUTES map in index.mjs) and forwards
 // `action.tools` to runPi so the SDK can call setActiveToolsByName for
-// per-Action tool gating.
+// per-route tool gating.
 //
 // Public surface:
 //   runTurn({ surface, threadTs, prompt, action, onOutput, signal }) → Promise<string>
