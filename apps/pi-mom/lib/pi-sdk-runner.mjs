@@ -173,7 +173,12 @@ export function createRunner({
       // into run inside the agent loop.
       noExtensions: true,
       extensionFactories: [permissionGate, linearTools],
-      noSkills: true,
+      // Skills ARE loaded (discovered from ./skills per package.json's
+      // `pi.skills` config). The model uses skill descriptions to pick the
+      // right operating mode per turn — Slack/Linear context primers,
+      // repo work patterns, reasoning aids — instead of routing all of
+      // that through hardcoded systemPromptSuffixes in registry.yaml.
+      // Prompts/themes/context-files stay off: they're not the lever here.
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
