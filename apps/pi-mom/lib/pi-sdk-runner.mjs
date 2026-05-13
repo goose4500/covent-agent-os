@@ -90,6 +90,13 @@ import permissionGate from "../../../extensions/permission-gate.ts";
 // recipes and policy live in skills/linear-graphql/SKILL.md and mutation
 // gating lives in extensions/linear-mcp-guard.ts.
 import linearGraphql from "../../../extensions/linear-graphql.ts";
+// Slack-api: registers `slack_api` as a Pi custom tool — a single in-process
+// entry point to the Slack Web API. Complements the Slack MCP path (which
+// stays as an escape hatch via slack-mcp-guard); the native tool is the
+// preferred way for the model to read/write Slack with predictable error
+// shape, an allowlist, and bot-vs-user token selection. See
+// skills/slack-api/SKILL.md for the method catalog and recipes.
+import slackApi from "../../../extensions/slack-api.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -155,7 +162,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearGraphql],
+      extensionFactories: [permissionGate, linearGraphql, slackApi],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
