@@ -194,7 +194,8 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 
 ## Notes
 
-- In Pi mode, the bot streams Pi `text_delta` events into Slack by default; set `PI_MOM_STREAMING=false` for final-answer-only updates.
-- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `control-plane/registry.yaml`'s `routes:` block: routes with `tools: []` (the default for every route shipped today) run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/skills/prompts/themes/context-files — so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Routes that need explicit tool access must declare each tool by name in registry.yaml; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
-- The bridge uses Slack Web API only for the current thread context and final reply.
+- Streaming is always on via `lib/slack-sink.mjs`. The legacy `PI_MOM_STREAMING` knob was removed in Stage 5; there is no `chat.update` fallback path.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `control-plane/registry.yaml`'s `routes:` block: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/skills/prompts/themes/context-files — so private Slack snippets are not persisted in Pi session history and Slack context cannot trigger tool mutations. Routes that need explicit tool access declare each tool by name in registry.yaml; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
+- The `plain` route (bare `@Covent-Agent <prompt>` with no prefix) ships with the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do real work on its machine. The `permission-gate` extension intercepts `rm -rf` / `sudo` / `chmod 777` / `chown 777` via a Slack approval modal before they execute.
+- The bridge uses Slack Web API only for the current thread context, final reply, canvas mirror (spec: route), and approval modals.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.
