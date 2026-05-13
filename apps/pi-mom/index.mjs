@@ -16,6 +16,21 @@ import {
   resolveInputSubmission,
   resolveSelectAction,
 } from "./lib/slack-ui-context.mjs";
+import { hasCodexAuth } from "./lib/user-auth-store.mjs";
+import {
+  startCodexSignIn,
+  submitCodexCode,
+  isCodexSignInPending,
+} from "./lib/codex-signin.mjs";
+import {
+  CODEX_SIGNIN_MODAL_CALLBACK_ID,
+  CODEX_SIGNIN_OPEN_ACTION_ID,
+  CODEX_SIGNIN_PASTE_ACTION_ID,
+  buildPasteModalView,
+  buildSignInMessage,
+  buildSignInResultMessage,
+  readPastedCodeFromView,
+} from "./lib/codex-signin-blocks.mjs";
 
 const requiredEnv = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 for (const key of requiredEnv) {
@@ -405,7 +420,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
   let result;
   let runError;
   try {
-    result = await runTurn({ surface: mode, threadTs, prompt, action, sink, uiContext: slackUI });
+    result = await runTurn({ surface: mode, threadTs, prompt, action, sink, uiContext: slackUI, slackUserId: user });
   } catch (err) {
     runError = err;
   }
@@ -510,6 +525,86 @@ app.error(async (error) => {
   console.error("[pi-mom] Bolt error", error);
 });
 
+// Wraps startCodexSignIn for the first-interaction branch: posts the
+// sign-in card in the thread, hooks up the success/failure follow-ups, and
+// guards against the user spamming the bot before they've completed the
+// flow. The completion promise (onAuth → user pastes code → token exchange
+// → auth.json written) runs in the background so handleRequest can return
+// immediately and the next Slack event (the modal submission) can fire.
+async function ensureCodexSignInPrompt({ client, channel, threadTs, user, requestId }) {
+  if (isCodexSignInPending(user)) {
+    await client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text:
+        "I've already DM'd you a sign-in link — finish that flow first. " +
+        "Click *Paste callback URL* on the original message, or wait for it to time out and mention me again.",
+    });
+    return;
+  }
+
+  let postedSignInTs;
+  let postFailed = false;
+  const { completion } = startCodexSignIn({
+    slackUserId: user,
+    onAuth: async ({ url }) => {
+      try {
+        const res = await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          ...buildSignInMessage({ authorizeUrl: url, requestId }),
+        });
+        postedSignInTs = res?.ts;
+        trace("codex_signin.prompt_posted", { user, requestId, ts: postedSignInTs });
+      } catch (err) {
+        postFailed = true;
+        trace("codex_signin.prompt_post_failed", {
+          user,
+          requestId,
+          error: err?.data?.error || err?.message || String(err),
+        });
+      }
+    },
+  });
+
+  completion.then(
+    async () => {
+      try {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          ...buildSignInResultMessage({ ok: true }),
+        });
+      } catch (err) {
+        trace("codex_signin.success_post_failed", {
+          user,
+          requestId,
+          error: err?.data?.error || err?.message || String(err),
+        });
+      }
+    },
+    async (err) => {
+      if (postFailed) return; // user never saw the prompt; silent retry on next mention
+      try {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          ...buildSignInResultMessage({
+            ok: false,
+            errorMessage: err?.message || String(err),
+          }),
+        });
+      } catch (postErr) {
+        trace("codex_signin.failure_post_failed", {
+          user,
+          requestId,
+          error: postErr?.data?.error || postErr?.message || String(postErr),
+        });
+      }
+    },
+  );
+}
+
 async function handleRequest({ client, event, mode, utilities }) {
   const requestId = `req_${Date.now().toString(36)}`;
   const start = Date.now();
@@ -571,6 +666,18 @@ async function handleRequest({ client, event, mode, utilities }) {
       text: `✅ Covent Pi event received.\nreq: ${requestId}\nmode: ${mode}\nroute: ${command.routeKey || "none"}\ntext: ${text || "(empty)"}`,
     });
     trace("slack.replied_echo", { requestId, durationMs: Date.now() - start, route: command.routeKey });
+    return;
+  }
+
+  // First-interaction Codex sign-in gate. Every Pi-mode model call has to
+  // run on the user's own ChatGPT subscription, so we hard-gate before
+  // building the prompt or touching the runner. The gate is keyed on the
+  // per-user AuthStorage at ${PI_AGENT_DIR}/users/<userId>/auth.json; once
+  // that file holds an `openai-codex` entry, Pi auto-rotates the token from
+  // there forward and this branch never fires for that user again.
+  if (user && !hasCodexAuth(user)) {
+    await ensureCodexSignInPrompt({ client, channel, threadTs, user, requestId });
+    trace("slack.replied_signin_required", { requestId, user, durationMs: Date.now() - start });
     return;
   }
 
@@ -723,6 +830,63 @@ app.view("pi_uictx_input_modal", async ({ ack, body, view, client }) => {
 app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ ack, body, view, client }) => {
   await ack();
   resolveInputCancel({ pendingApprovals, view, body, client, trace });
+});
+
+// Codex sign-in handlers. Three actions wire the OAuth round-trip:
+//   1. codex_signin_open: pure URL button — Slack opens the authorize URL
+//      in the user's browser. We ack so the click is recorded but there's
+//      no server-side work to do (no body to mutate, no promise to resolve).
+//   2. codex_signin_paste: opens the paste modal via views.open. The
+//      modal's private_metadata carries the Slack user_id so the
+//      view_submission handler knows whose pending OAuth flow to feed.
+//   3. codex_signin_modal view_submission: pulls the pasted URL/code out
+//      of the view state and calls submitCodexCode(userId, value), which
+//      resolves the in-flight loginOpenAICodex's onManualCodeInput
+//      promise. Pi finishes the token exchange and writes
+//      ${PI_AGENT_DIR}/users/<userId>/auth.json — the success message is
+//      posted by the .then handler attached in ensureCodexSignInPrompt.
+app.action(CODEX_SIGNIN_OPEN_ACTION_ID, async ({ ack }) => {
+  await ack();
+});
+app.action(CODEX_SIGNIN_PASTE_ACTION_ID, async ({ ack, body, client }) => {
+  await ack();
+  const userId = body?.user?.id;
+  if (!userId) {
+    trace("codex_signin.paste_no_user", { body_type: body?.type });
+    return;
+  }
+  if (!isCodexSignInPending(userId)) {
+    trace("codex_signin.paste_no_pending", { user: userId });
+    return;
+  }
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildPasteModalView({ privateMetadata: userId }),
+    });
+    trace("codex_signin.paste_modal_opened", { user: userId });
+  } catch (error) {
+    trace("codex_signin.paste_modal_open_failed", {
+      user: userId,
+      error: error?.data?.error || error?.message || String(error),
+    });
+  }
+});
+app.view(CODEX_SIGNIN_MODAL_CALLBACK_ID, async ({ ack, body, view }) => {
+  const userId = view?.private_metadata || body?.user?.id;
+  const pasted = readPastedCodeFromView(view);
+  if (!pasted) {
+    await ack({
+      response_action: "errors",
+      errors: {
+        codex_signin_code: "Paste the callback URL or the code value from your browser.",
+      },
+    });
+    return;
+  }
+  await ack();
+  const ok = submitCodexCode(userId, pasted);
+  trace("codex_signin.code_submitted", { user: userId, accepted: ok });
 });
 
 const { dispatchToAction } = createDispatcher({ handleRequest, trace });

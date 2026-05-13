@@ -78,6 +78,7 @@ import {
   createAgentSession,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { getUserAuth } from "./user-auth-store.mjs";
 // Stage 6.5: load extensions/permission-gate.ts as an inline factory so the
 // permission-gate `tool_call` hook fires inside Pi's agent loop and the
 // ctx.ui.select prompt gets translated by slack-ui-context.mjs into Slack
@@ -109,28 +110,45 @@ function stripTerminalSequences(text) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 }
 
-let _depsPromise;
+// Deps cache. Keyed by slackUserId so each Slack user gets their own
+// AuthStorage (file at ${PI_AGENT_DIR}/users/<userId>/auth.json) and a
+// ModelRegistry bound to it. The "__bot__" key reuses the legacy global
+// auth.json (seeded from PI_AUTH_JSON_B64) for codepaths that don't carry
+// a Slack user — echo mode and the unit-test fixtures that pass no userId.
+const _depsByUser = new Map();
+const BOT_KEY = "__bot__";
 
-async function defaultGetDeps() {
-  if (!_depsPromise) {
-    _depsPromise = (async () => {
-      const authStorage = await AuthStorage.create();
-      const modelRegistry = ModelRegistry.create(authStorage);
-      const slash = PI_MODEL.indexOf("/");
-      const provider = slash >= 0 ? PI_MODEL.slice(0, slash) : PI_MODEL;
-      const modelId = slash >= 0 ? PI_MODEL.slice(slash + 1) : "";
-      const model = modelRegistry.find(provider, modelId);
-      return { authStorage, modelRegistry, model, modelId: PI_MODEL };
-    })().catch((err) => {
-      _depsPromise = undefined;
-      throw err;
-    });
-  }
-  return _depsPromise;
+async function defaultGetDeps(slackUserId) {
+  const key = slackUserId || BOT_KEY;
+  const cached = _depsByUser.get(key);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    let authStorage;
+    let modelRegistry;
+    if (slackUserId) {
+      const userAuth = getUserAuth(slackUserId);
+      authStorage = userAuth.authStorage;
+      modelRegistry = userAuth.modelRegistry;
+    } else {
+      authStorage = await AuthStorage.create();
+      modelRegistry = ModelRegistry.create(authStorage);
+    }
+    const slash = PI_MODEL.indexOf("/");
+    const provider = slash >= 0 ? PI_MODEL.slice(0, slash) : PI_MODEL;
+    const modelId = slash >= 0 ? PI_MODEL.slice(slash + 1) : "";
+    const model = modelRegistry.find(provider, modelId);
+    return { authStorage, modelRegistry, model, modelId: PI_MODEL };
+  })().catch((err) => {
+    _depsByUser.delete(key);
+    throw err;
+  });
+  _depsByUser.set(key, promise);
+  return promise;
 }
 
 export function _resetSdkSingletonsForTests() {
-  _depsPromise = undefined;
+  _depsByUser.clear();
 }
 
 export function createRunner({
@@ -164,8 +182,8 @@ export function createRunner({
     return loader;
   }
 
-  async function runPi(prompt, { onOutput, signal, sessionManager, tools, sink, uiContext } = {}) {
-    const deps = await getDeps();
+  async function runPi(prompt, { onOutput, signal, sessionManager, tools, sink, uiContext, slackUserId } = {}) {
+    const deps = await getDeps(slackUserId);
     if (!deps.model) {
       throw new Error(
         `PI_MOM_MODEL '${deps.modelId || PI_MODEL}' not found in registry; check provider API key env var`,

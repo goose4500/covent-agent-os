@@ -31,7 +31,7 @@ export function createSession({
 } = {}) {
   const map = threadSessionMap || createThreadSessionMap();
 
-  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal, sink, uiContext } = {}) {
+  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal, sink, uiContext, slackUserId } = {}) {
     if (!threadTs) throw new Error("runTurn requires threadTs");
     if (typeof prompt !== "string" || !prompt) {
       throw new Error("runTurn requires non-empty prompt");
@@ -69,6 +69,7 @@ export function createSession({
     }
     if (sink) runPiOptions.sink = sink;
     if (uiContext) runPiOptions.uiContext = uiContext;
+    if (slackUserId) runPiOptions.slackUserId = slackUserId;
     const result = await runPi(prompt, runPiOptions);
 
     const sessionFile = sessionManager.getSessionFile?.();
