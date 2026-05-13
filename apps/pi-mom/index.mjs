@@ -1,7 +1,11 @@
 import { App, Assistant, LogLevel } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import { createDispatcher } from "./lib/dispatch.mjs";
-import { buildHomeView } from "./lib/home-view.mjs";
+import {
+  buildHomeView,
+  buildRouteHowtoModalView,
+  buildSettingsModalView,
+} from "./lib/home-view.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { resolveAction } from "./lib/action-resolver.mjs";
@@ -482,24 +486,66 @@ const app = new App({
 // can resolve the original promise from a button click or view submission.
 const pendingApprovals = new Map();
 
-// Stage 7 — App Home cockpit. The Home tab shows a read-only snapshot of
-// pending approvals. Pushes fire from the pendingApprovals set/delete
-// wrappers below. Slack has no broadcast for Home views, so we publish
-// per-user (event.user for app_home_opened, entry.requesterUserId for
-// approval-driven pushes).
+// Stage 7+ — App Home cockpit. The Home tab is interactive:
+//   - approvals appear with Approve/Cancel buttons reusing the existing
+//     pi_uictx_confirm_* handlers,
+//   - a static_select filters the approval list per user (homeUserFilter),
+//   - quick-launch buttons open small "how to use this route" modals,
+//   - a recent-activity ring (homeRecentRuns) shows the last N requests,
+//   - a settings button opens a read-only modal with current bridge config.
+// Slack has no broadcast for Home views, so we publish per-user; pushes
+// fire from the pendingApprovals set/delete wrappers below and from any
+// home_* action handler.
 const homeWatchedUsers = new Set();
+const homeUserFilter = new Map(); // userId → "all" | "confirm" | "select" | "input"
+const HOME_RECENT_CAP = 25;
+const homeRecentRuns = []; // newest first; each entry { route, outcome, durationMs, requestId, permalink?, ts }
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
+
+export function recordRecentRun(entry) {
+  if (!entry || typeof entry !== "object") return;
+  homeRecentRuns.unshift({
+    route: entry.route || "default",
+    outcome: entry.outcome || "ok",
+    durationMs: Number.isFinite(entry.durationMs) ? entry.durationMs : null,
+    requestId: entry.requestId || null,
+    permalink: entry.permalink || null,
+    ts: entry.ts || Date.now(),
+  });
+  if (homeRecentRuns.length > HOME_RECENT_CAP) homeRecentRuns.length = HOME_RECENT_CAP;
+  publishHomeForAllWatched(slackClient);
+}
+
+function buildHomeStatusSnapshot() {
+  return {
+    mode: MODE,
+    allowedChannelId: ALLOWED_CHANNEL_ID || null,
+    piModel: PI_MODEL_LABEL,
+    piThinking: PI_THINKING_LABEL,
+    linearConfigured: Boolean(process.env.LINEAR_API_KEY),
+    traceEnabled: TRACE_ENABLED,
+    uptimeSeconds: Math.round((Date.now() - STARTED_AT.getTime()) / 1000),
+  };
+}
 
 async function publishHomeForUser(client, userId) {
   if (!userId) return;
   homeWatchedUsers.add(userId);
   try {
-    const view = buildHomeView({ pendingApprovals, now: Date.now() });
+    const view = buildHomeView({
+      pendingApprovals,
+      recentRuns: homeRecentRuns,
+      status: buildHomeStatusSnapshot(),
+      filter: homeUserFilter.get(userId) || "all",
+      now: Date.now(),
+    });
     const payloadKb = Math.round(JSON.stringify(view).length / 1024 * 10) / 10;
     await (client || slackClient).views.publish({ user_id: userId, view });
     trace("app_home.published", {
       user: userId,
       approvalCount: pendingApprovals.size,
+      recentRuns: homeRecentRuns.length,
+      filter: homeUserFilter.get(userId) || "all",
       viewKb: payloadKb,
     });
   } catch (error) {
@@ -911,6 +957,64 @@ app.event("app_home_opened", async ({ event, client }) => {
   if (event?.tab && event.tab !== "home") return;
   await publishHomeForUser(client, event?.user);
 });
+
+// Home-tab interactivity. All handlers ack immediately, then update view
+// state and republish. None mutates external systems; they're pure UI.
+app.action("home_filter_approvals", async ({ ack, body, action, client }) => {
+  await ack();
+  const userId = body?.user?.id;
+  const value = action?.selected_option?.value || "all";
+  if (userId) {
+    homeUserFilter.set(userId, value);
+    await publishHomeForUser(client, userId);
+  }
+});
+
+app.action("home_refresh", async ({ ack, body, client }) => {
+  await ack();
+  const userId = body?.user?.id;
+  if (userId) await publishHomeForUser(client, userId);
+});
+
+app.action("home_settings_open", async ({ ack, body, client }) => {
+  await ack();
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildSettingsModalView({ status: buildHomeStatusSnapshot() }),
+    });
+    trace("app_home.settings_opened", { user: body?.user?.id });
+  } catch (error) {
+    trace("app_home.settings_open_failed", {
+      user: body?.user?.id,
+      error: error?.data?.error || error?.message || String(error),
+    });
+  }
+});
+
+app.action("home_quick_route", async ({ ack, body, action, client }) => {
+  await ack();
+  const route = String(action?.value || "");
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildRouteHowtoModalView({ route }),
+    });
+    trace("app_home.route_howto_opened", { user: body?.user?.id, route });
+  } catch (error) {
+    trace("app_home.route_howto_open_failed", {
+      user: body?.user?.id,
+      route,
+      error: error?.data?.error || error?.message || String(error),
+    });
+  }
+});
+
+// Settings/route-howto modals are read-only; if Slack sends a submission
+// (it won't, since neither has a submit button) we ack so Bolt doesn't
+// warn about an unhandled view.
+app.view("home_settings_modal", async ({ ack }) => { await ack(); });
+app.view("home_route_howto_modal", async ({ ack }) => { await ack(); });
 
 app.event("app_mention", async ({ event, client }) => {
   await dispatchToAction({ surface: "app_mention", event, client });
