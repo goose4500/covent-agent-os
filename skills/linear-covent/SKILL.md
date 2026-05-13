@@ -1,3 +1,8 @@
+---
+name: linear-covent
+description: Linear + Covent workflow guidance for Pi. Use this skill whenever the user asks about Linear, Covent/DispoGenius work tracking, issue IDs, tickets, roadmap/project status, sprint/cycle status, wants a Linear comment/status update drafted or posted, or references a Linear issue from Slack. Covers safe read/write posture, issue-driven coding workflow, comment/status formatting, and Linear API best practices (rate limits, GraphQL error shape, 3-minute creation window).
+---
+
 # Linear + Covent Workflow
 
 Use this skill whenever the user asks about Linear, Covent/DispoGenius work tracking, issue IDs, tickets, roadmap/project status, sprint/cycle status, or wants a Linear comment/status update drafted or posted.
