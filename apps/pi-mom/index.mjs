@@ -66,7 +66,10 @@ const ROUTES = {
   plain: {
     label: "Default Pi agent",
     instruction: "",
-    tools: ["bash", "read", "grep", "find", "edit", "write"],
+    tools: [
+      "bash", "read", "grep", "find", "edit", "write",
+      "slack_approval_card", "slack_choice_card", "slack_input_request",
+    ],
   },
   help: { label: "Show help", instruction: "", tools: [] },
   status: { label: "Show bridge status", instruction: "", tools: [] },
@@ -78,7 +81,10 @@ const ROUTES = {
   linear: {
     label: "Create Linear issue",
     instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
-    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"],
+    tools: [
+      "linear_search_issues", "linear_create_issue", "linear_add_comment",
+      "slack_approval_card", "slack_choice_card", "slack_input_request",
+    ],
   },
   agenda: {
     label: "Meeting agenda",
@@ -93,7 +99,7 @@ const ROUTES = {
   bash: {
     label: "Execute bash command",
     instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph.",
-    tools: ["bash"],
+    tools: ["bash", "slack_approval_card", "slack_choice_card", "slack_input_request"],
   },
 };
 
