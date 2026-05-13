@@ -289,4 +289,154 @@ function makeFakeFetch(handler, recorded = []) {
   assert.match(r.content[0].text, /\[REDACTED\]/);
 }
 
+// Case 12: linear_create_issue with params.team_id overrides env.LINEAR_TEAM_ID.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_2", identifier: "FE-2", title: "T", url: "https://linear.app/x/issue/FE-2" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc12", { title: "T", description: "D", team_id: "team-override-1" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.teamId, "team-override-1", "team_id param overrides env");
+  assert.notEqual(calls[0].body.variables.input.teamId, "team-abc");
+}
+
+// Case 13: linear_create_issue with params.project_id overrides env.LINEAR_PROJECT_ID.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_3", identifier: "FE-3", title: "T", url: "https://linear.app/x/issue/FE-3" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc13", { title: "T", description: "D", project_id: "project-override-1" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.projectId, "project-override-1", "project_id param overrides env");
+  assert.notEqual(calls[0].body.variables.input.projectId, "project-xyz");
+}
+
+// Case 14: linear_create_issue with BOTH team_id and project_id overrides.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_4", identifier: "FE-4", title: "T", url: "https://linear.app/x/issue/FE-4" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute(
+    "tc14",
+    { title: "T", description: "D", team_id: "team-both", project_id: "project-both" },
+    undefined,
+    undefined,
+    {},
+  );
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.teamId, "team-both");
+  assert.equal(calls[0].body.variables.input.projectId, "project-both");
+}
+
+// Case 15: linear_create_issue with EMPTY-STRING team_id falls back to env.LINEAR_TEAM_ID.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_5", identifier: "FE-5", title: "T", url: "https://linear.app/x/issue/FE-5" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc15", { title: "T", description: "D", team_id: "" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.teamId, "team-abc", "empty string falls back to env");
+}
+
+// Case 16: linear_create_issue with whitespace-only project_id falls back to env.LINEAR_PROJECT_ID.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_6", identifier: "FE-6", title: "T", url: "https://linear.app/x/issue/FE-6" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc16", { title: "T", description: "D", project_id: "   " }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.projectId, "project-xyz", "whitespace-only falls back to env");
+}
+
+// Case 17: linear_create_issue with no env.LINEAR_TEAM_ID AND no params.team_id → isError.
+{
+  const envNoTeam = { ...baseEnv, LINEAR_TEAM_ID: undefined };
+  const fakePi = makeFakePi();
+  const fakeFetch = makeFakeFetch(() => {
+    throw new Error("fetch should not be called when team is missing");
+  });
+  createLinearToolsFactory({ env: envNoTeam, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc17", { title: "T", description: "D" }, undefined, undefined, {});
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /LINEAR_TEAM_ID is not set/);
+}
+
+// Case 18: linear_create_issue with no env.LINEAR_TEAM_ID but params.team_id="team-xyz" succeeds.
+{
+  const envNoTeam = { ...baseEnv, LINEAR_TEAM_ID: undefined };
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_7", identifier: "FE-7", title: "T", url: "https://linear.app/x/issue/FE-7" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: envNoTeam, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc18", { title: "T", description: "D", team_id: "team-xyz" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.input.teamId, "team-xyz");
+}
+
 console.log("linear-tools tests passed");

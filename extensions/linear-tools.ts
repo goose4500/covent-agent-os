@@ -264,7 +264,7 @@ export function createLinearToolsFactory({
       name: "linear_create_issue",
       label: "Create Linear issue",
       description:
-        "Create a new Linear issue under the configured team/project. Returns the Linear issue URL and identifier. Use this when the user explicitly asks to create/file/open a Linear issue or ticket AND you have already called linear_search_issues to confirm no relevant existing issue exists. Do NOT call this tool more than once in a turn.",
+        "Create a new Linear issue under the configured team/project. Returns the Linear issue URL and identifier. Use this when the user explicitly asks to create/file/open a Linear issue or ticket AND you have already called linear_search_issues to confirm no relevant existing issue exists. Do NOT call this tool more than once in a turn. Optional team_id and project_id parameters override the env defaults (LINEAR_TEAM_ID, LINEAR_PROJECT_ID) for a single call when the user or a structured intake supplies a specific Linear UUID.",
       promptSnippet:
         "linear_create_issue: create a new Linear issue with a concise title and a Markdown description.",
       promptGuidelines: [
@@ -273,6 +273,7 @@ export function createLinearToolsFactory({
         "Title must be a single concise line (≤240 chars). Description is full Markdown.",
         "Include problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion in the description.",
         "After the tool returns, include the issue identifier and URL in your final reply to the user.",
+        "Optional team_id and project_id override the bot's default Linear team/project for this single issue. Pass them only when the user (or a structured intake proposal) provides a specific Linear UUID; otherwise omit so the env defaults apply.",
       ],
       parameters: Type.Object({
         title: Type.String({
@@ -292,22 +293,38 @@ export function createLinearToolsFactory({
             description: "Linear priority: 0=none, 1=urgent, 2=high, 3=medium, 4=low. Defaults to unset (no priority).",
           }),
         ),
+        team_id: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: 64,
+            description:
+              "Override LINEAR_TEAM_ID for this call. If omitted, falls back to env.LINEAR_TEAM_ID.",
+          }),
+        ),
+        project_id: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: 64,
+            description:
+              "Override LINEAR_PROJECT_ID for this call. If omitted, falls back to env.LINEAR_PROJECT_ID.",
+          }),
+        ),
       }),
       async execute(_toolCallId, params: any, signal) {
-        const teamId = env.LINEAR_TEAM_ID;
-        if (!teamId) {
+        const effectiveTeamId = (typeof params.team_id === "string" && params.team_id.trim()) ? params.team_id.trim() : env.LINEAR_TEAM_ID;
+        const effectiveProjectId = (typeof params.project_id === "string" && params.project_id.trim()) ? params.project_id.trim() : env.LINEAR_PROJECT_ID;
+        if (!effectiveTeamId) {
           return errorResult(
             "LINEAR_TEAM_ID is not set in the bot environment; cannot create a Linear issue without a team.",
           );
         }
-        const projectId = env.LINEAR_PROJECT_ID;
         const stateId = env.LINEAR_STATE_ID;
         const title = clampTitle(params.title);
         const description = String(params.description || "").trim();
         const priority = typeof params.priority === "number" ? params.priority : undefined;
 
-        const input: Record<string, unknown> = { teamId, title, description };
-        if (projectId) input.projectId = projectId;
+        const input: Record<string, unknown> = { teamId: effectiveTeamId, title, description };
+        if (effectiveProjectId) input.projectId = effectiveProjectId;
         if (stateId) input.stateId = stateId;
         if (priority !== undefined) input.priority = priority;
 

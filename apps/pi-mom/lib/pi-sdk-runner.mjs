@@ -89,6 +89,11 @@ import permissionGate from "../../../extensions/permission-gate.ts";
 // index.mjs; the model now drives Linear issue creation directly via tool
 // calls, which is composable with future search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
+// Intake-tools: registers `intake_propose_issues` for the PRD-intake route.
+// The model writes a structured proposal array into intakeProposalCapture
+// keyed by process.env._PI_INTAKE_REQUEST_ID, which the intake-orchestrator
+// reads after the Pi run ends to post per-issue Approve/Cancel/Edit cards.
+import intakeTools from "../../../extensions/intake-tools.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -154,7 +159,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearTools],
+      extensionFactories: [permissionGate, linearTools, intakeTools],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,

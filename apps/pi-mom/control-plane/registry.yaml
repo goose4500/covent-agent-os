@@ -102,6 +102,16 @@ routes:
     tools: ["bash"]
     systemPromptSuffix: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. The permission-gate extension may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777 — that's expected; the gate either resumes or blocks the call based on the user's choice."
     approvals: tool
+  # PRD intake route. Fired automatically by the file_shared handler when a
+  # .zip lands in #polaris-prd-intake. The model receives extracted spec text
+  # and proposes one or more Linear issues via the intake_propose_issues
+  # custom tool. The orchestrator then posts per-issue Approve/Cancel/Edit
+  # cards back to the Slack thread. No Linear write happens during this run;
+  # creation is deferred to a human button click on a proposal card.
+  intake:
+    tools: ["intake_propose_issues"]
+    systemPromptSuffix: "You are reviewing extracted PRD/spec text from a zip dropped into #polaris-prd-intake. Propose one or more Linear issues that map to discrete, independently grabbable work items. Each proposal is a tracer-bullet vertical slice that cuts end-to-end through every layer (schema/API/UI/tests), not a horizontal slice of one layer. Prefer many thin slices over a few thick ones; prefer AFK over HITL slices. For each proposal include: a concise single-line title (≤240 chars), a Markdown description covering Problem, Context, What to build, Acceptance criteria, and Blocked by (titles of any prerequisite proposals or 'None'), a Linear priority (0=none, 1=urgent, 2=high, 3=medium, 4=low), and optional suggested_team_id / suggested_project_id Linear UUIDs. Keep the channel's default team_id and project_id (provided in the user prompt) unless the spec text strongly implies a different team. Call the intake_propose_issues tool EXACTLY ONCE with the full array of proposals — do not emit free-text JSON; do not call the tool twice. After the tool returns, write a single one-line summary like '4 proposals captured; cards posted to the thread.' Never claim to have created Linear issues — creation is deferred to a human button click."
+    approvals: none
 
 legacyRoutes:
   - name: help
@@ -154,3 +164,9 @@ legacyRoutes:
       - "Slack message event where channel_type is im and message is not a bot/subtype"
     status: legacy-active
     notes: DM entrypoint; dispatches help/status/prefix routes/plain Pi requests.
+
+  - name: intake
+    triggers:
+      - "Slack event: file_shared in #polaris-prd-intake when the file ends in .zip"
+    status: active
+    notes: Auto-fires on zip upload; runs the intake route to capture proposals via intake_propose_issues; posts per-issue Approve/Cancel/Edit cards back to the thread.
