@@ -8,7 +8,6 @@ import {
 } from "./lib/home-view.mjs";
 import { runPi } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
-import { resolveAction } from "./lib/action-resolver.mjs";
 import { createSlackSink } from "./lib/slack-sink.mjs";
 import { createCanvasSink } from "./lib/canvas-sink.mjs";
 import { createCompositeSink } from "./lib/composite-sink.mjs";
@@ -75,28 +74,52 @@ const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
+// Slack routes. `tools` is the per-route allowlist passed to the SDK's
+// setActiveToolsByName (empty array = noTools:"all"). `instruction` is
+// appended to the Pi prompt by buildPiPrompt() for routes that have one.
 const ROUTES = {
+  plain: {
+    label: "Default Pi agent",
+    instruction: "",
+    tools: ["bash", "read", "grep", "find", "edit", "write"],
+  },
+  help: { label: "Show help", instruction: "", tools: [] },
+  status: { label: "Show bridge status", instruction: "", tools: [] },
   summarize: {
     label: "Thread summary",
     instruction: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.",
+    tools: [],
   },
   linear: {
     label: "Create Linear issue",
     instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
+    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"],
   },
   agenda: {
     label: "Meeting agenda",
     instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
+    tools: [],
   },
   spec: {
     label: "Spec / PRD draft",
     instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
+    tools: [],
   },
   bash: {
-    label: "Execute bash command (gated by permission-gate)",
-    instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. permission-gate may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777.",
+    label: "Execute bash command",
+    instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph.",
+    tools: ["bash"],
   },
 };
+
+function resolveAction(command = {}) {
+  let name = "plain";
+  if (command.kind === "route" && command.routeKey) name = command.routeKey;
+  else if (command.kind === "help") name = "help";
+  else if (command.kind === "status") name = "status";
+  const route = ROUTES[name] || ROUTES.plain;
+  return { name, tools: route.tools ? [...route.tools] : [] };
+}
 
 function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
@@ -259,7 +282,7 @@ async function formatStatus(client) {
     `• test channel target: \`#${TEST_CHANNEL_NAME}\`\n` +
     `• allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi model: \`${PI_MODEL_LABEL}\` (thinking: \`${PI_THINKING_LABEL}\`)\n` +
-    `• pi tools: per-route from \`control-plane/registry.yaml\`\n` +
+    `• pi tools: per-route from inline ROUTES in index.mjs\n` +
     `• Linear issue creation: \`${process.env.LINEAR_API_KEY ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${LINEAR_TEAM_ID}\`, project \`${LINEAR_PROJECT_ID}\`, state \`${LINEAR_STATE_ID}\`\n` +
     `• trace: \`${TRACE_ENABLED ? "on" : "off"}\`\n` +
@@ -486,12 +509,12 @@ const app = new App({
   logLevel: process.env.PI_MOM_DEBUG === "true" ? LogLevel.DEBUG : LogLevel.INFO,
 });
 
-// Stage 6: ExtensionUIContext → Slack approval modals. Pi extensions like
-// permission-gate call ctx.ui.select/confirm/input from inside an agent loop;
-// `lib/slack-ui-context.mjs` translates those into interactive thread
-// messages (and a modal for `input`). The pending-approval registry is a
-// process-global Map keyed by approvalId so the Bolt action/view handlers
-// can resolve the original promise from a button click or view submission.
+// ExtensionUIContext → Slack approval modals. Pi extensions that call
+// ctx.ui.select/confirm/input from inside an agent loop get translated by
+// `lib/slack-ui-context.mjs` into interactive thread messages (and a modal
+// for `input`). The pending-approval registry is a process-global Map keyed
+// by approvalId so the Bolt action/view handlers can resolve the original
+// promise from a button click or view submission.
 const pendingApprovals = new Map();
 
 // Stage 7+ — App Home cockpit. The Home tab is interactive:

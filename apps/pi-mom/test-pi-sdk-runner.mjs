@@ -102,10 +102,10 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
 }
 
 // Case 4: tools/extensions posture — allowTools=true skips noTools but the
-// resourceLoader is ALWAYS passed (Stage 6.5 change). The loader carries the
-// inline permission-gate factory, so it must be wired even when tools are
-// allowed; otherwise createAgentSession synthesizes its own default loader
-// and our extensions never load.
+// resourceLoader is ALWAYS passed. The loader carries the inline
+// linearTools factory, so it must be wired even when tools are allowed;
+// otherwise createAgentSession synthesizes its own default loader and our
+// inline extensions never load.
 {
   const session = fakeSession({ script: [{ type: "agent_end", messages: [] }] });
   let captured;
@@ -117,7 +117,7 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   });
   await runPi("noop");
   assert.equal(captured.noTools, undefined, "posture: noTools omitted when allowTools=true");
-  assert.deepEqual(captured.resourceLoader, { marker: "loader" }, "posture: resourceLoader always passed (carries inline permission-gate factory)");
+  assert.deepEqual(captured.resourceLoader, { marker: "loader" }, "posture: resourceLoader always passed (carries inline linearTools factory)");
 }
 
 // Case 5: model not found — getDeps returns no model, runPi rejects with PI_MOM_MODEL message.

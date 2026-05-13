@@ -130,10 +130,10 @@ Routed workflow prefixes (defined in `control-plane/registry.yaml`):
 @Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
-@Covent Pi bash: <command>   (runs via the bash tool; rm -rf/sudo/chmod 777/chown 777 require Slack approval)
+@Covent Pi bash: <command>   (runs via the bash tool)
 ```
 
-Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine; the permission-gate extension intercepts dangerous shell commands.
+Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine.
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
@@ -197,7 +197,7 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 ## Notes
 
 - Streaming is always on via `lib/slack-sink.mjs`. The legacy `PI_MOM_STREAMING` knob was removed in Stage 5; there is no `chat.update` fallback path.
-- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `control-plane/registry.yaml`'s `routes:` block: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/prompts/themes/context-files but loads skills from `./skills` so the agent can pick the right operating mode (Slack/Linear primers, repo work patterns, reasoning aids) without hardcoded prompt suffixes carrying that weight. Private Slack snippets are still not persisted in Pi session history and Slack context cannot trigger tool mutations because the tool allowlist is authoritative. Routes that need explicit tool access declare each tool by name in registry.yaml; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
-- The `plain` route (bare `@Covent-Agent <prompt>` with no prefix) ships with the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do real work on its machine. The `permission-gate` extension intercepts `rm -rf` / `sudo` / `chmod 777` / `chown 777` via a Slack approval modal before they execute.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via the inline `ROUTES` map in `index.mjs`: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/prompts/themes/context-files but loads skills from `./skills` so the agent can pick the right operating mode (Slack/Linear primers, repo work patterns, reasoning aids). Private Slack snippets are still not persisted in Pi session history and Slack context cannot trigger tool mutations because the tool allowlist is authoritative. Routes that need explicit tool access declare each tool by name in `ROUTES`; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
+- The `plain` route (bare `@Covent-Agent <prompt>` with no prefix) ships with the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do real work on its machine. Trusted-operator + channel-allowlist + Codex sign-in are the perimeter; in-process safety extensions are not loaded in this POC.
 - The bridge uses Slack Web API only for the current thread context, final reply, canvas mirror (spec: route), and approval modals.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

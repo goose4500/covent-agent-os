@@ -10,12 +10,11 @@
   "scripts": {
     "start": "bun index.mjs",
     "doctor": "bun doctor.mjs",
-    "check": "bun test-control-plane-registry.mjs && bun test-action-resolver.mjs && bun test-linear-tools.mjs && bun test-slack-interactive-tools.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-home-view.mjs && bun test-canvas-sink.mjs && bun test-composite-sink.mjs && bun test-bun-compat.mjs && bun test-oauth-pending.mjs && bun test-user-auth-store.mjs && bun test-codex-signin.mjs && bun test-persistence-check.mjs"
+    "check": "bun test-linear-tools.mjs && bun test-slack-interactive-tools.mjs && bun test-pi-sdk-runner.mjs && bun test-dispatch.mjs && bun test-thread-session-map.mjs && bun test-pi-session.mjs && bun test-slack-sink.mjs && bun test-slack-ui-context.mjs && bun test-home-view.mjs && bun test-canvas-sink.mjs && bun test-composite-sink.mjs && bun test-bun-compat.mjs && bun test-oauth-pending.mjs && bun test-user-auth-store.mjs && bun test-codex-signin.mjs && bun test-persistence-check.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@slack/bolt": "^4.6.0",
-    "@slack/web-api": "^7.15.2",
-    "yaml": "^2.8.4"
+    "@slack/web-api": "^7.15.2"
   }
 }

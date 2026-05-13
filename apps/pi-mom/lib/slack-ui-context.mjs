@@ -1,6 +1,6 @@
 // Translates Pi SDK ExtensionUIContext (extensions/types.d.ts:67) into Slack
-// interactive surfaces. Used by extensions like permission-gate.ts whose only
-// ctx.ui call is `select(title, ["Yes","No"])` to gate a dangerous bash.
+// interactive surfaces. Used by Pi extensions that call ctx.ui.select /
+// confirm / input from inside an agent loop.
 //
 // Why buttons-in-thread (and not `views.open`) for confirm/select:
 //   `views.open` requires a `trigger_id` that's only valid for ~3 seconds and

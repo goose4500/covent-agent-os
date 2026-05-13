@@ -18,7 +18,6 @@
         "@earendil-works/pi-coding-agent": "^0.74.0",
         "@slack/bolt": "^4.6.0",
         "@slack/web-api": "^7.15.2",
-        "yaml": "^2.8.4",
       },
     },
   },
