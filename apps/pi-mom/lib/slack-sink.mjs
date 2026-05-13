@@ -240,7 +240,7 @@ export function createSlackSink({
       appendTaskUpdate({
         id: evt.toolCall.toolCallId || evt.toolCall.id || `tool_${streamedChars}`,
         title: evt.toolCall.toolName || "tool",
-        status: evt.error || evt.toolCall?.errorMessage ? "failed" : "complete",
+        status: evt.error || evt.toolCall?.errorMessage ? "error" : "complete",
       });
     }
   }
