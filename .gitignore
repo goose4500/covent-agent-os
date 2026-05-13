@@ -49,3 +49,6 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+
+# Claude Code local state (worktrees from isolated agents, etc.)
+.claude/
