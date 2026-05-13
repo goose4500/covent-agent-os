@@ -11,7 +11,7 @@ import {
   CODEX_SIGNIN_MODAL_CALLBACK_ID,
   CODEX_SIGNIN_OPEN_ACTION_ID,
   CODEX_SIGNIN_PASTE_ACTION_ID,
-} from "./lib/codex-signin-blocks.mjs";
+} from "./views/codex-signin-blocks.mjs";
 
 function deferred() {
   let resolve;

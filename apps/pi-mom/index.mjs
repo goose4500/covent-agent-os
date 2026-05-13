@@ -30,7 +30,7 @@ import {
   buildSignInMessage,
   buildSignInResultMessage,
   readPastedCodeFromView,
-} from "./lib/codex-signin-blocks.mjs";
+} from "./views/codex-signin-blocks.mjs";
 import { checkPersistence } from "./lib/persistence-check.mjs";
 import { homedir as _piMomHomeDir } from "node:os";
 import { join as _piMomJoin } from "node:path";
