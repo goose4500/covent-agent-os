@@ -1,8 +1,8 @@
 version: 2
 updates:
-  # Root npm workspace — covers root deps + every package under packages/* and apps/*
-  # that are part of the workspaces array. apps/pi-mom keeps its own lockfile so it
-  # gets a separate entry below.
+  # Root npm workspace — covers root deps and every workspace listed in the root
+  # package.json "workspaces" array. apps/pi-mom keeps its own lockfile so it gets
+  # a separate entry below.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -10,8 +10,6 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     groups:
-      aws-sdk:
-        patterns: ["@aws-sdk/*"]
       pi-stack:
         patterns: ["@mariozechner/*", "typebox", "jiti"]
       types:
