@@ -45,7 +45,9 @@ export function buildSignInMessage({ authorizeUrl, requestId } = {}) {
             "`localhost:1455` page that *will fail to load* — that's expected.\n" +
             "3. Copy the *entire failed URL* from the address bar (it contains " +
             "`?code=...&state=...`).\n" +
-            "4. Click *Paste callback URL* and submit the URL.",
+            "4. *Paste it right here in this thread* (just reply with the URL) — " +
+            "I'll detect it and finish sign-in. Or click *Paste callback URL* " +
+            "below to submit via a modal.",
         },
       },
       {

@@ -31,6 +31,10 @@ import {
   buildSignInResultMessage,
   readPastedCodeFromView,
 } from "./lib/codex-signin-blocks.mjs";
+import {
+  extractCallbackValue,
+  looksLikeCodexCallback,
+} from "./lib/codex-paste-extract.mjs";
 import { checkPersistence } from "./lib/persistence-check.mjs";
 import { homedir as _piMomHomeDir } from "node:os";
 import { join as _piMomJoin } from "node:path";
@@ -642,6 +646,38 @@ async function handleRequest({ client, event, mode, utilities }) {
     toolCount: action.tools.length,
   });
 
+  // Codex OAuth paste interception. The public Codex OAuth client's
+  // redirect URI is hard-coded to `http://localhost:1455/auth/callback`,
+  // so we cannot host the callback on Railway — users will always need to
+  // copy the failed-load URL back to us. The natural way for them to do
+  // that is to paste it directly into the thread (see #idea-specs
+  // 2026-05-13: Arbaz did exactly that and the bot ignored it). When a
+  // user with a pending sign-in flow pastes something that looks like the
+  // callback, route it to submitCodexCode instead of the LLM. This runs
+  // before the channel allowlist so a paste in a non-allowed channel
+  // *still* completes the user's auth — losing the paste is worse than
+  // bending the allowlist.
+  if (user && isCodexSignInPending(user) && looksLikeCodexCallback(rawText)) {
+    const extracted = extractCallbackValue(rawText);
+    if (extracted) {
+      const accepted = submitCodexCode(user, extracted);
+      trace("slack.codex_paste_intercepted", { requestId, user, accepted });
+      try {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: accepted
+            ? "👀 Got it — finishing sign-in. I'll DM you when it's done."
+            : "Hmm, that didn't look like an active sign-in. Mention me again to restart.",
+        });
+      } catch {
+        // Posting the ack is best-effort; the auth completion handler
+        // posts the real success message regardless.
+      }
+      return;
+    }
+  }
+
   // Channel allowlist applies to channel mentions. DMs (direct_message) and the
   // Assistant chat tab (assistant) are private to one user and bypass the gate.
   if (mode === "app_mention" && !isAllowedChannel(channel)) {
@@ -918,8 +954,23 @@ app.event("app_mention", async ({ event, client }) => {
 
 app.message(async ({ message, client }) => {
   if (message.subtype || message.bot_id) return;
-  if (message.channel_type !== "im") return;
-  await dispatchToAction({ surface: "direct_message", event: message, client });
+
+  // DM path — the original behavior.
+  if (message.channel_type === "im") {
+    await dispatchToAction({ surface: "direct_message", event: message, client });
+    return;
+  }
+
+  // Codex OAuth paste interception for channel messages. We deliberately
+  // skip the channel allowlist gate here: if the user is mid-flow and
+  // pasted the callback URL anywhere we can see it, completing their auth
+  // is the right move. Anything that's NOT a paste from a pending user
+  // is dropped — we don't want to start handling random channel chatter.
+  const userId = message.user;
+  if (!userId) return;
+  if (!isCodexSignInPending(userId)) return;
+  if (!looksLikeCodexCallback(message.text || "")) return;
+  await dispatchToAction({ surface: "app_mention", event: message, client });
 });
 
 // Bolt 4.7 Assistant container — the modern Slack agent surface. Activated by
