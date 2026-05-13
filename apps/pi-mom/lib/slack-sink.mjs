@@ -11,6 +11,14 @@
 // thinking…") refreshes so the thinking pill stays warm; app_mention /
 // direct_message surfaces use the markdown_text + heartbeat path only.
 //
+// Streaming "thinking surface":
+//   When `planTitle` is supplied, the stream starts with
+//   task_display_mode="plan" and emits a `plan_update` chunk so Slack
+//   renders Covent Pi's run as a collapsible plan card with tool tasks
+//   underneath. Without `planTitle` we keep the legacy timeline layout.
+//   See https://docs.slack.dev/changelog/2026/02/11/task-cards-plan-blocks/
+//   and chunk.d.ts (PlanUpdateChunk, TaskUpdateChunk).
+//
 // DI-friendly: tests inject a fake client.chatStream() returning a
 // minimal { append, stop } object plus a fake timers pair.
 
@@ -37,6 +45,7 @@ export function createSlackSink({
   surface,
   setStatus,
   requestId,
+  planTitle,
   trace = () => {},
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   heartbeatThresholdMs = DEFAULT_HEARTBEAT_THRESHOLD_MS,
@@ -73,6 +82,10 @@ export function createSlackSink({
       args.recipient_user_id = recipient.user_id;
       args.recipient_team_id = recipient.team_id;
     }
+    // Plan mode collapses tool calls into a single plan card; timeline (the
+    // implicit default) renders them inline. We only flip into plan mode
+    // when the caller has named the plan.
+    if (planTitle) args.task_display_mode = "plan";
     return args;
   }
 
@@ -127,13 +140,32 @@ export function createSlackSink({
 
   function appendTaskUpdate(task) {
     touch();
+    // Slack's chat.appendStream expects per-event chunks under a `chunks`
+    // array. The previous shape (`{ task_update: task }`) was a guess at an
+    // older API and silently failed server-side (the catch below swallowed
+    // the rejection). See @slack/types chunk.d.ts → TaskUpdateChunk.
+    const chunk = { type: "task_update", ...task };
     streamChain = streamChain
-      .then(() => stream.append({ task_update: task }))
+      .then(() => stream.append({ chunks: [chunk] }))
       .catch((err) => {
         trace("slack.stream_task_error", {
           requestId,
           error: err?.data?.error || err.message,
           taskId: task?.id,
+        });
+      });
+    return streamChain;
+  }
+
+  function appendPlanUpdate(title) {
+    if (!title) return streamChain;
+    touch();
+    streamChain = streamChain
+      .then(() => stream.append({ chunks: [{ type: "plan_update", title: String(title) }] }))
+      .catch((err) => {
+        trace("slack.stream_plan_error", {
+          requestId,
+          error: err?.data?.error || err.message,
         });
       });
     return streamChain;
@@ -175,7 +207,12 @@ export function createSlackSink({
       requestId,
       hasRecipient: Boolean(streamArgs.recipient_user_id),
       surface,
+      planMode: Boolean(planTitle),
     });
+    if (planTitle) {
+      appendPlanUpdate(planTitle);
+      await streamChain;
+    }
     if (initialText) {
       appendNow(initialText);
       await streamChain;
@@ -203,7 +240,7 @@ export function createSlackSink({
       appendTaskUpdate({
         id: evt.toolCall.toolCallId || evt.toolCall.id || `tool_${streamedChars}`,
         title: evt.toolCall.toolName || "tool",
-        status: evt.error || evt.toolCall?.errorMessage ? "failed" : "complete",
+        status: evt.error || evt.toolCall?.errorMessage ? "error" : "complete",
       });
     }
   }
@@ -261,6 +298,7 @@ export function createSlackSink({
     start,
     handle,
     stop,
+    updatePlan: appendPlanUpdate,
     get streamError() { return streamError; },
     get streamedChars() { return streamedChars; },
     get started() { return started; },

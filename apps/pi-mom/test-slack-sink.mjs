@@ -56,7 +56,8 @@ function makeFakeTimers() {
   assert.deepEqual(fakeStream.appends[1], { markdown_text: "hello world" }, "batched flush emits combined text");
 }
 
-// Case 2: tool_execution_start / _end emit task_update chunks with status.
+// Case 2: tool_execution_start / _end emit task_update chunks via chunks[]
+// (Slack's chat.appendStream contract).
 {
   const fakeStream = makeFakeStream();
   const client = makeFakeClient({ streamFactory: () => fakeStream });
@@ -69,12 +70,45 @@ function makeFakeTimers() {
   sink.handle({ type: "tool_execution_start", toolCall: { toolCallId: "tc1", toolName: "read" } });
   sink.handle({ type: "tool_execution_end", toolCall: { toolCallId: "tc1", toolName: "read" } });
   await new Promise((r) => setImmediate(r));
-  const tasks = fakeStream.appends.filter((a) => a.task_update);
-  assert.equal(tasks.length, 2, "two task_update chunks");
-  assert.equal(tasks[0].task_update.status, "in_progress");
-  assert.equal(tasks[1].task_update.status, "complete");
-  assert.equal(tasks[0].task_update.id, "tc1");
-  assert.equal(tasks[0].task_update.title, "read");
+  const taskChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "task_update");
+  assert.equal(taskChunks.length, 2, "two task_update chunks");
+  assert.equal(taskChunks[0].status, "in_progress");
+  assert.equal(taskChunks[1].status, "complete");
+  assert.equal(taskChunks[0].id, "tc1");
+  assert.equal(taskChunks[0].title, "read");
+}
+
+// Case 2b: planTitle opts the stream into plan mode + emits a plan_update.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: (args) => { fakeStream._args = args; return fakeStream; } });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C2b", threadTs: "2.1",
+    surface: "app_mention", requestId: "req_t2b",
+    planTitle: "Covent Pi · Spec / PRD draft", ...T,
+  });
+  await sink.start({});
+  // chatStream() was called with task_display_mode="plan".
+  assert.equal(fakeStream._args?.task_display_mode, "plan");
+  // First append carries a plan_update chunk with the supplied title.
+  const planChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "plan_update");
+  assert.equal(planChunks.length, 1, "one plan_update chunk emitted at start");
+  assert.equal(planChunks[0].title, "Covent Pi · Spec / PRD draft");
+  // Caller can update the plan mid-run via the exposed helper.
+  await sink.updatePlan("Covent Pi · Spec / PRD draft (revising)");
+  const after = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "plan_update");
+  assert.equal(after.length, 2);
+  assert.match(after[1].title, /revising/);
 }
 
 // Case 3: heartbeat emits a zero-width-space when idle exceeds threshold.

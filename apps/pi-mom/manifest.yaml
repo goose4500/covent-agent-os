@@ -1,12 +1,23 @@
 _metadata:
   major_version: 2
-  minor_version: 1
+  minor_version: 2
 display_information:
   background_color: '#2E2B5F'
   description: Local Pi AI agent bridge for Covent Slack testing.
   long_description: Covent Pi is a local, human-in-the-loop AI agent bridge for testing Pi coding and research agents from Slack. It runs through Socket Mode, replies in threads, keeps tokens local, and starts with a small private-channel testing surface before broader rollout.
   name: Covent Pi
 features:
+  agent_view:
+    agent_description: Covent Pi — internal cockpit for spec drafts, Linear filing, meeting agendas, thread summaries, and bounded Pi agent runs.
+    suggested_prompts:
+      - title: Draft a spec
+        message: "spec: "
+      - title: Create a Linear issue
+        message: "linear: "
+      - title: Meeting agenda
+        message: "agenda: "
+      - title: Summarize a thread
+        message: "summarize: paste the thread URL or context"
   app_home:
     home_tab_enabled: true
     messages_tab_enabled: true
@@ -81,6 +92,9 @@ settings:
   event_subscriptions:
     bot_events:
     - app_mention
+    - app_home_opened
+    - assistant_thread_context_changed
+    - assistant_thread_started
     - message.im
   interactivity:
     is_enabled: true

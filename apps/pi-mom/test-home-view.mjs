@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { buildHomeView } from "./lib/home-view.mjs";
+import {
+  buildHomeView,
+  buildRouteHowtoModalView,
+  buildSettingsModalView,
+} from "./lib/home-view.mjs";
 
 const NOW = Date.parse("2026-05-11T20:00:00.000Z");
 
@@ -77,6 +81,121 @@ function viewText(view) {
   assert.match(text, /…and 6 more/);
   assert.ok(!text.includes("a".repeat(150)), "long titles should be truncated");
   assert.ok(view.blocks.length < 30, `block count grew unexpectedly: ${view.blocks.length}`);
+}
+
+// ---------- case 6: approvals carry Approve/Cancel buttons reusing existing action_ids ----------
+{
+  const view = buildHomeView({
+    pendingApprovals: [{ approvalId: "appr_42", type: "confirm", title: "dangerous bash", requestId: "req_42" }],
+    now: NOW,
+  });
+  const actionBlocks = view.blocks.filter((b) => b.type === "actions");
+  const ids = new Set(actionBlocks.flatMap((b) => b.elements.map((e) => e.action_id)));
+  assert.ok(ids.has("pi_uictx_confirm_approve"), "Approve button must reuse existing action_id");
+  assert.ok(ids.has("pi_uictx_confirm_cancel"), "Cancel button must reuse existing action_id");
+  // Approve button must carry the approvalId so the resolver can look it up.
+  const approveBtn = actionBlocks
+    .flatMap((b) => b.elements)
+    .find((e) => e.action_id === "pi_uictx_confirm_approve");
+  assert.equal(approveBtn?.value, "appr_42");
+}
+
+// ---------- case 7: quick launch + filter + settings buttons present ----------
+{
+  const view = buildHomeView({
+    pendingApprovals: [{ approvalId: "a", type: "confirm", title: "t", requestId: "r" }],
+    now: NOW,
+  });
+  const allIds = new Set();
+  for (const b of view.blocks) {
+    if (b.type === "actions") for (const e of b.elements) allIds.add(e.action_id);
+    if (b.type === "section" && b.accessory?.action_id) allIds.add(b.accessory.action_id);
+  }
+  assert.ok(allIds.has("home_quick_route"), "quick launch buttons must be present");
+  assert.ok(allIds.has("home_filter_approvals"), "filter select must be present when approvals exist");
+  assert.ok(allIds.has("home_settings_open"), "settings button must be present");
+  assert.ok(allIds.has("home_refresh"), "refresh button must be present");
+}
+
+// ---------- case 8: filter narrows the rendered list but keeps total count ----------
+{
+  const pending = [
+    { approvalId: "c1", type: "confirm", title: "confirm one", requestId: "r1" },
+    { approvalId: "s1", type: "select", title: "select one", requestId: "r2" },
+  ];
+  const all = buildHomeView({ pendingApprovals: pending, filter: "all", now: NOW });
+  const only = buildHomeView({ pendingApprovals: pending, filter: "confirm", now: NOW });
+  assert.match(viewText(all), /2 approvals waiting/);
+  // Filter doesn't change the total — total reflects unfiltered count.
+  assert.match(viewText(only), /2 approvals waiting/);
+  // But the select entry text should no longer appear in the filtered view's cards.
+  assert.match(viewText(all), /select one/);
+  assert.doesNotMatch(viewText(only), /select one/);
+}
+
+// ---------- case 9: recent-runs section shows entries when provided ----------
+{
+  const view = buildHomeView({
+    pendingApprovals: [],
+    recentRuns: [
+      { route: "linear", outcome: "ok", durationMs: 2300, requestId: "req_a", permalink: "https://slack/permalink/a" },
+      { route: "spec", outcome: "error", durationMs: 4100, requestId: "req_b" },
+    ],
+    now: NOW,
+  });
+  const text = viewText(view);
+  assert.match(text, /Recent activity/);
+  assert.match(text, /linear/);
+  assert.match(text, /req_a/);
+  assert.match(text, /open thread/);
+  assert.match(text, /spec/);
+}
+
+// ---------- case 10: status section reflects snapshot ----------
+{
+  const view = buildHomeView({
+    pendingApprovals: [],
+    status: {
+      mode: "pi",
+      allowedChannelId: "C123",
+      linearConfigured: true,
+      uptimeSeconds: 42,
+    },
+    now: NOW,
+  });
+  const text = viewText(view);
+  assert.match(text, /mode `pi`/);
+  assert.match(text, /C123/);
+  assert.match(text, /Linear :white_check_mark: configured/);
+  assert.match(text, /uptime 42s/);
+}
+
+// ---------- case 11: settings modal builder shape ----------
+{
+  const modal = buildSettingsModalView({
+    status: { mode: "echo", linearConfigured: false, traceEnabled: true, uptimeSeconds: 9 },
+  });
+  assert.equal(modal.type, "modal");
+  assert.equal(modal.callback_id, "home_settings_modal");
+  assert.ok(modal.blocks.length > 0);
+  const text = JSON.stringify(modal);
+  assert.match(text, /Mode/);
+  assert.match(text, /echo/);
+  assert.match(text, /missing key/);
+}
+
+// ---------- case 12: route howto modal builder shape ----------
+{
+  for (const route of ["spec", "linear", "agenda", "summarize"]) {
+    const modal = buildRouteHowtoModalView({ route });
+    assert.equal(modal.type, "modal");
+    assert.equal(modal.callback_id, "home_route_howto_modal");
+    assert.ok(modal.blocks.length > 0, `${route} modal must have blocks`);
+  }
+  // Unknown route falls back to a generic message rather than throwing.
+  const unknown = buildRouteHowtoModalView({ route: "nope" });
+  assert.equal(unknown.type, "modal");
+  assert.ok(unknown.blocks.length > 0);
 }
 
 console.log("home-view tests passed");
