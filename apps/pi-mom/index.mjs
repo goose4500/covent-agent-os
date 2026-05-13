@@ -358,6 +358,13 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
   const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
   const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
+  // Route label becomes the Slack stream's plan title — Slack renders the
+  // run as a collapsible plan card with tool invocations as task entries.
+  // When the route is unknown (bare mention, free-form prompt) we leave
+  // planTitle unset so the sink stays in timeline mode.
+  const routeLabel = ROUTES[action?.name]?.label || ROUTES[action?.routeKey]?.label;
+  const planTitle = routeLabel ? `Covent Pi · ${routeLabel}` : undefined;
+
   const slackSink = createSlackSink({
     client,
     channel,
@@ -365,6 +372,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     recipient,
     surface: mode,
     requestId,
+    planTitle,
     trace,
   });
 

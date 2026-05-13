@@ -9,8 +9,10 @@ Open your Slack app settings → **App Manifest** → paste `manifest.yaml` → 
 This enables:
 - Socket Mode
 - bot user `Covent Pi`
-- `app_mention` events
+- `app_mention` + `app_home_opened` events
 - DM events via `message.im`
+- Assistant container events (`assistant_thread_started`, `assistant_thread_context_changed`)
+- Agents & AI Apps surface (top-bar entry + split-view + Chat/History tabs in App Home) via `features.agent_view` with the four canonical suggested prompts (spec, linear, agenda, summarize)
 - slash command `/thread-spec`
 - private-channel thread context for channels the app is invited into
 
