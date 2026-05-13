@@ -7,8 +7,7 @@
 ### Top-level
 
 - `README.md` — repo overview + quick start + production deploy table.
-- `BOUNDARY.md` — authority model + mutation boundaries.
-- `SECURITY.md` — secret handling.
+- `BOUNDARY.md` — authority model, mutation boundaries, and secret/data handling.
 - `LOCAL_DX.md` — local development commands.
 - `MIGRATION_MAP.md` — historical bootstrap evidence (the `~/.pi/agent` → repo copy).
 

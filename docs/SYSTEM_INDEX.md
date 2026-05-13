@@ -55,8 +55,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Safety and authority
 
-- [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, route-policy requirements.
-- [`SECURITY.md`](../SECURITY.md) — secret handling, required scans, and data-as-data rule.
+- [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, route-policy requirements, secret handling, and data-as-data rule.
 - `.gitignore` — local/runtime state that must stay out of git.
 - `scripts/secret-scan.sh` — lightweight pre-commit secret scan.
 
@@ -215,7 +214,7 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 
 ## Required before meaningful changes
 
-1. Read `BOUNDARY.md` and `SECURITY.md`.
+1. Read `BOUNDARY.md`.
 2. Read `docs/AGENT_CONTEXT.md` and `docs/architecture.md`.
 3. Inspect current code for behavior; docs may lag.
 4. Run validation before commit/push:

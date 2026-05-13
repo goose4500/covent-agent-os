@@ -135,7 +135,7 @@ Start here:
 - [`docs/architecture.md`](docs/architecture.md) — canonical post-rebuild architecture (the file tree, route table, env vars, extensions, deploy lifecycle).
 - [`docs/SYSTEM_INDEX.md`](docs/SYSTEM_INDEX.md) — system-wide source-of-truth map across Slack, Pi, Linear, Git, Railway, Whimsical.
 - [`docs/AGENT_CONTEXT.md`](docs/AGENT_CONTEXT.md) — read-first operating context for future agents.
-- [`BOUNDARY.md`](BOUNDARY.md) and [`SECURITY.md`](SECURITY.md) — authority and secret-handling rules.
+- [`BOUNDARY.md`](BOUNDARY.md) — authority, mutation boundaries, and secret/data-handling rules.
 - [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/runbooks/foundation-v2-cutover-2026-05-12.md) — the cutover lifecycle (also the reusable pattern for future blue-green Railway migrations).
 
 ## Operating spine
@@ -150,4 +150,4 @@ Railway  = runtime/deployment state
 Docs     = canonical system memory (this folder)
 ```
 
-Read `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, `BOUNDARY.md`, and `SECURITY.md` before adding write-capable automation.
+Read `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, and `BOUNDARY.md` before adding write-capable automation.

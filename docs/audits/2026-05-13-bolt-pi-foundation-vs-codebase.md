@@ -259,7 +259,7 @@ This is the largest single absence vs. the guide. The codebase explicitly stops 
 
 | Guide point | Codebase reality | Verdict | Nuance |
 |---|---|---|---|
-| Three layers: thread session memory (Pi JSONL), project memory (repo docs / `.pi/skills`), company memory (docs of principles, conventions, policies) | Thread session: Pi SessionManager JSONL (per-thread, persisted under `PI_AGENT_DIR`). Project memory: `docs/`, `.pi/agents/`, `skills/`. Company memory: `BOUNDARY.md`, `SECURITY.md`, `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, `docs/adr/**`. | **Match** | All three layers exist as files. |
+| Three layers: thread session memory (Pi JSONL), project memory (repo docs / `.pi/skills`), company memory (docs of principles, conventions, policies) | Thread session: Pi SessionManager JSONL (per-thread, persisted under `PI_AGENT_DIR`). Project memory: `docs/`, `.pi/agents/`, `skills/`. Company memory: `BOUNDARY.md`, `docs/SYSTEM_INDEX.md`, `docs/AGENT_CONTEXT.md`, `docs/adr/**`. | **Match** | All three layers exist as files. |
 | Don't rely on one giant forever context | Pi handles its own per-turn context; the bridge does not inject the whole skills tree (`noSkills: true`). | **Match** | — |
 | Never hide critical business rules only in model memory | Codified in repo docs. | **Match** | — |
 | Compaction | No compaction logic in pi-mom; Pi SDK may compact internally per-session. | **Partial** | — |
