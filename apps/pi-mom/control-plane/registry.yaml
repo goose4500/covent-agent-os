@@ -54,40 +54,48 @@ actions:
 # runner uses `tools` to call `setActiveToolsByName` (empty array = no Pi
 # tools active, identical to legacy noTools:"all" posture). `approvals` is
 # advisory until the modal gate lands in a later stage.
+#
+# Slack interactive tools — slack_approval_card / slack_choice_card /
+# slack_input_request — are model-callable interactivity primitives backed
+# by extensions/slack-interactive-tools.ts. They are listed on every route
+# (including text-only routes with no other tools) so the model can pause
+# and ask the human regardless of which route it is running under. The
+# tools are no-ops outside a Slack-bound turn (echo mode / unit tests
+# return an isError result).
 routes:
   # Unprefixed mentions — give Pi the full default agentic toolset so it can
   # actually do work on the machine. permission-gate intercepts rm -rf /
   # sudo / chmod 777 / chown 777 via a Slack approval modal before the call
   # executes; everything else runs without prompting.
   plain:
-    tools: ["bash", "read", "grep", "find", "edit", "write"]
+    tools: ["bash", "read", "grep", "find", "edit", "write", "slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: ""
     approvals: tool
   help:
-    tools: []
+    tools: ["slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: ""
     approvals: none
   status:
-    tools: []
+    tools: ["slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: ""
     approvals: none
   summarize:
-    tools: []
+    tools: ["slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context."
     approvals: none
   linear:
     # Linear is driven by Pi custom tools (extensions/linear-tools.ts).
     # The model invokes them directly; idempotency lives in the model's
     # reasoning (search first, then comment-or-create).
-    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"]
+    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment", "slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: "The user wants to track something in Linear. ALWAYS call linear_search_issues first with the most distinctive phrase or proper noun from their request. If a clear match comes back, call linear_add_comment on that issue (Markdown body referencing the Slack thread) instead of creating a duplicate. If no relevant match exists, call linear_create_issue exactly once with: title (concise single line), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions), and optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the final tool call, write a short Slack reply quoting the Linear issue identifier and URL (or comment URL). Never call linear_create_issue twice for the same thread."
     approvals: tool
   agenda:
-    tools: []
+    tools: ["slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes."
     approvals: none
   spec:
-    tools: []
+    tools: ["slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions."
     approvals: none
   # Stage 6.5: bash route with the built-in `bash` tool active. The
@@ -99,7 +107,7 @@ routes:
   # without an approval workflow — restrict to test channels and trusted
   # operators.
   bash:
-    tools: ["bash"]
+    tools: ["bash", "slack_approval_card", "slack_choice_card", "slack_input_request"]
     systemPromptSuffix: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. The permission-gate extension may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777 — that's expected; the gate either resumes or blocks the call based on the user's choice."
     approvals: tool
 

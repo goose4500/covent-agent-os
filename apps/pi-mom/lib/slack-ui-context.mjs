@@ -200,6 +200,180 @@ export function createSlackUIContext({
     });
   }
 
+  // Richer block-kit variant of confirm: header + short summary + scrollable
+  // preview body + approve/reject buttons. Reuses the existing
+  // pi_uictx_confirm_approve / pi_uictx_confirm_cancel Bolt handlers via the
+  // same pendingApprovals lifecycle as `confirm()`. Returned promise resolves
+  // to true on approve, false on reject, false on signal/timeout/dispose.
+  async function confirmWithPreview(title, summary, previewMd, opts = {}) {
+    if (disposed) return false;
+    const approvalId = nextApprovalId(requestId);
+    const approveLabel = String(opts.approveLabel || "Approve").slice(0, 75) || "Approve";
+    const rejectLabel = String(opts.rejectLabel || "Cancel").slice(0, 75) || "Cancel";
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "confirm",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Approval required"),
+        message: String(summary || ""),
+        defaultValue: false,
+        resolve,
+      };
+
+      const headerText = entry.title.slice(0, 150) || "Approval required";
+      const summaryText = entry.message ? entry.message.slice(0, 2900) : "_(no summary)_";
+      const previewText = previewMd ? String(previewMd).slice(0, 2900) : "_(no preview)_";
+      const blocks = [
+        { type: "header", text: { type: "plain_text", text: headerText, emoji: true } },
+        { type: "section", text: { type: "mrkdwn", text: summaryText } },
+        { type: "divider" },
+        { type: "section", text: { type: "mrkdwn", text: previewText } },
+        { type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] },
+        { type: "actions", elements: [
+          { type: "button", action_id: "pi_uictx_confirm_approve", style: "primary", text: { type: "plain_text", text: approveLabel }, value: approvalId },
+          { type: "button", action_id: "pi_uictx_confirm_cancel", style: "danger", text: { type: "plain_text", text: rejectLabel }, value: approvalId },
+        ] },
+      ];
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `⚠️ Approval requested: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.confirm_with_preview_posted", { requestId, approvalId, messageTs: post.ts });
+      }).catch((err) => {
+        trace("slack_ui.confirm_with_preview_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(false);
+      });
+    });
+  }
+
+  // Richer block-kit variant of select: each option carries its own markdown
+  // context block above the button. Returns the opaque `id` of the chosen
+  // option (not the label) — the caller owns the namespace. Reuses the
+  // existing pi_uictx_select_${idx} Bolt handler; the resolver branches on
+  // entry.optionsRich to return id instead of label (see resolveSelectAction).
+  async function selectWithContext(title, summary, options, opts = {}) {
+    if (disposed || !Array.isArray(options) || options.length === 0) return undefined;
+    const approvalId = nextApprovalId(requestId);
+    const optionsRich = options.slice(0, 5).map((opt) => ({
+      id: String(opt?.id ?? "").slice(0, 64),
+      label: String(opt?.label ?? "").slice(0, 75),
+      context_md: opt?.context_md ? String(opt.context_md).slice(0, 600) : "",
+    }));
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "select",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Choose an option"),
+        // Keep `options` for backward-compat consumers but the resolver
+        // prefers `optionsRich` when present.
+        options: optionsRich.map((o) => o.label),
+        optionsRich,
+        defaultValue: undefined,
+        resolve,
+      };
+
+      const blocks = [
+        { type: "header", text: { type: "plain_text", text: entry.title.slice(0, 150) || "Choose an option", emoji: true } },
+      ];
+      if (summary) {
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: String(summary).slice(0, 2900) } });
+      }
+      blocks.push({ type: "divider" });
+      optionsRich.forEach((rich, idx) => {
+        if (rich.context_md) {
+          blocks.push({ type: "section", text: { type: "mrkdwn", text: rich.context_md } });
+        }
+        blocks.push({
+          type: "actions",
+          elements: [{
+            type: "button",
+            action_id: `pi_uictx_select_${idx}`,
+            text: { type: "plain_text", text: rich.label || `Option ${idx + 1}` },
+            value: `${approvalId}:${idx}`,
+            style: idx === 0 ? "primary" : undefined,
+          }],
+        });
+      });
+      blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] });
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Select: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.select_with_context_posted", { requestId, approvalId, optionCount: optionsRich.length });
+      }).catch((err) => {
+        trace("slack_ui.select_with_context_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(undefined);
+      });
+    });
+  }
+
+  // Richer variant of input: same launcher-button → modal flow as `input()`,
+  // but the launcher message includes a markdown framing block above the
+  // buttons so the agent can explain what it's asking for. Reuses
+  // pi_uictx_input_launch / pi_uictx_input_skip / pi_uictx_input_modal
+  // handlers; the modal itself is unchanged.
+  async function inputRequest(title, prompt, opts = {}) {
+    if (disposed) return undefined;
+    const approvalId = nextApprovalId(requestId);
+    return new Promise((resolve) => {
+      const entry = {
+        approvalId,
+        type: "input",
+        channel,
+        threadTs,
+        requestId,
+        title: String(title || "Input required"),
+        placeholder: opts.placeholder ? String(opts.placeholder) : "",
+        multiline: opts.multiline !== false,
+        defaultValue: undefined,
+        resolve,
+      };
+
+      const promptText = prompt ? String(prompt).slice(0, 2900) : "";
+      const blocks = [
+        { type: "header", text: { type: "plain_text", text: entry.title.slice(0, 150) || "Input required", emoji: true } },
+      ];
+      if (promptText) {
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: promptText } });
+      }
+      blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] });
+      blocks.push({ type: "actions", elements: [
+        { type: "button", action_id: "pi_uictx_input_launch", style: "primary", text: { type: "plain_text", text: "Provide input" }, value: approvalId },
+        { type: "button", action_id: "pi_uictx_input_skip", text: { type: "plain_text", text: "Skip" }, value: approvalId },
+      ] });
+
+      client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: `Input requested: ${entry.title}`,
+        blocks,
+      }).then((post) => {
+        entry.messageTs = post.ts;
+        register(entry, opts);
+        trace("slack_ui.input_request_posted", { requestId, approvalId });
+      }).catch((err) => {
+        trace("slack_ui.input_request_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
+        resolve(undefined);
+      });
+    });
+  }
+
   async function input(title, placeholder, opts = {}) {
     if (disposed) return undefined;
     const approvalId = nextApprovalId(requestId);
@@ -271,6 +445,9 @@ export function createSlackUIContext({
     select,
     confirm,
     input,
+    confirmWithPreview,
+    selectWithContext,
+    inputRequest,
     notify,
     setStatus,
     onTerminalInput: () => () => {},
@@ -313,6 +490,16 @@ export function resolveSelectAction({ pendingApprovals, action, body, client, tr
       return { approvalId, idx };
     },
     apply: (entry, parsed) => {
+      // selectWithContext: resolve to the option's opaque id, but show the
+      // human-readable label in the outcome message edit.
+      if (Array.isArray(entry.optionsRich)) {
+        const rich = entry.optionsRich[parsed.idx];
+        if (!rich) return null;
+        return {
+          resolution: rich.id,
+          outcomeText: `✅ ${entry.title} → ${rich.label || rich.id}`,
+        };
+      }
       const option = entry.options?.[parsed.idx];
       if (option === undefined) return null;
       return {

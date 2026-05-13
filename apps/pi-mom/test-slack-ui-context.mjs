@@ -335,4 +335,226 @@ function makeTimerHarness() {
   assert.equal(client.updates.length, 0);
 }
 
+// Case 14: confirmWithPreview posts header + summary + preview + buttons; reuses pi_uictx_confirm_* handlers.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C14", threadTs: "14.0",
+    requestId: "req_p14", pendingApprovals,
+  });
+
+  const pending = ui.confirmWithPreview(
+    "Create Linear issue?",
+    "Filing in Backlog/FE",
+    "**Title:** Stream rotation bug\n\nDescription...",
+    { approveLabel: "File it", rejectLabel: "Hold" },
+  );
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(client.postMessages.length, 1);
+  const posted = client.postMessages[0];
+  // Blocks in order: header, section(summary), divider, section(preview), context, actions.
+  assert.equal(posted.blocks[0].type, "header");
+  assert.equal(posted.blocks[0].text.text, "Create Linear issue?");
+  assert.equal(posted.blocks[1].type, "section");
+  assert.match(posted.blocks[1].text.text, /Filing in Backlog/);
+  assert.equal(posted.blocks[2].type, "divider");
+  assert.equal(posted.blocks[3].type, "section");
+  assert.match(posted.blocks[3].text.text, /Stream rotation bug/);
+  assert.equal(posted.blocks[4].type, "context");
+  assert.equal(posted.blocks[5].type, "actions");
+
+  const approveBtn = posted.blocks[5].elements.find((e) => e.action_id === "pi_uictx_confirm_approve");
+  const cancelBtn = posted.blocks[5].elements.find((e) => e.action_id === "pi_uictx_confirm_cancel");
+  assert.ok(approveBtn && cancelBtn, "approve+cancel buttons present");
+  assert.equal(approveBtn.text.text, "File it");
+  assert.equal(cancelBtn.text.text, "Hold");
+  assert.equal(approveBtn.style, "primary");
+  assert.equal(cancelBtn.style, "danger");
+
+  // Resolve via existing handler.
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  resolveConfirmAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_confirm_approve", value: approvalId },
+    body: { user: { id: "U" } },
+    client,
+  });
+  assert.equal(await pending, true);
+  assert.equal(pendingApprovals.size, 0);
+}
+
+// Case 15: confirmWithPreview resolves false on Cancel.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C15", threadTs: "15.0",
+    requestId: "req_p15", pendingApprovals,
+  });
+
+  const pending = ui.confirmWithPreview("X", "Y", "Z");
+  await new Promise((r) => setImmediate(r));
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  resolveConfirmAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_confirm_cancel", value: approvalId },
+    body: { user: { id: "U" } },
+    client,
+  });
+  assert.equal(await pending, false);
+}
+
+// Case 16: selectWithContext posts per-option section+actions blocks; resolves to id (not label).
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C16", threadTs: "16.0",
+    requestId: "req_p16", pendingApprovals,
+  });
+
+  const options = [
+    { id: "fe-100", label: "FE-100", context_md: "*FE-100* — Stream rotation bug (Backlog)" },
+    { id: "fe-99", label: "FE-99", context_md: "*FE-99* — Slack streaming retry (In Progress)" },
+    { id: "fe-12", label: "FE-12" }, // No context_md.
+  ];
+  const pending = ui.selectWithContext("Pick a Linear issue", "Found 3 matches", options);
+  await new Promise((r) => setImmediate(r));
+
+  const posted = client.postMessages[0];
+  assert.equal(posted.blocks[0].type, "header");
+  assert.equal(posted.blocks[1].type, "section");
+  assert.match(posted.blocks[1].text.text, /Found 3 matches/);
+  assert.equal(posted.blocks[2].type, "divider");
+
+  // Each option emits its own section (if context_md present) + actions block.
+  // Expected per option: option 1 → section + actions, option 2 → section + actions, option 3 → actions only (no context).
+  // Followed by a single trailing context block (req · approval).
+  const trailing = posted.blocks[posted.blocks.length - 1];
+  assert.equal(trailing.type, "context");
+
+  const buttons = posted.blocks
+    .filter((b) => b.type === "actions")
+    .flatMap((b) => b.elements);
+  assert.equal(buttons.length, 3, "one button per option");
+  assert.equal(buttons[0].action_id, "pi_uictx_select_0");
+  assert.equal(buttons[1].action_id, "pi_uictx_select_1");
+  assert.equal(buttons[2].action_id, "pi_uictx_select_2");
+  assert.equal(buttons[0].style, "primary");
+  // Each button value is `${approvalId}:${idx}`.
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  assert.equal(buttons[1].value, `${approvalId}:1`);
+
+  // Resolve via the existing select handler — should return the id, not the label.
+  resolveSelectAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_select_1", value: `${approvalId}:1` },
+    body: { user: { id: "U" } },
+    client,
+  });
+  const result = await pending;
+  assert.equal(result, "fe-99", "resolves to opaque id");
+  // The outcome message edit should use the human label, not the id.
+  assert.match(client.updates[0].text, /FE-99/);
+}
+
+// Case 17: backward-compat — flat select() still resolves to label, not id.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C17", threadTs: "17.0",
+    requestId: "req_p17", pendingApprovals,
+  });
+
+  const pending = ui.select("Pick", ["Yes", "No", "Maybe"]);
+  await new Promise((r) => setImmediate(r));
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  resolveSelectAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_select_2", value: `${approvalId}:2` },
+    body: { user: { id: "U" } },
+    client,
+  });
+  assert.equal(await pending, "Maybe", "flat select still resolves to label");
+}
+
+// Case 18: inputRequest posts header + prompt section + launcher buttons; resolves via existing input handlers.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C18", threadTs: "18.0",
+    requestId: "req_p18", pendingApprovals,
+  });
+
+  const pending = ui.inputRequest(
+    "What's the issue priority?",
+    "Pick *one* of P0–P4 with a one-line justification.",
+    { placeholder: "P1 — blocks release", multiline: false },
+  );
+  await new Promise((r) => setImmediate(r));
+
+  const posted = client.postMessages[0];
+  assert.equal(posted.blocks[0].type, "header");
+  assert.equal(posted.blocks[1].type, "section");
+  assert.match(posted.blocks[1].text.text, /P0–P4/);
+  const launchBtn = posted.blocks
+    .filter((b) => b.type === "actions")
+    .flatMap((b) => b.elements)
+    .find((e) => e.action_id === "pi_uictx_input_launch");
+  assert.ok(launchBtn, "launcher button present");
+  const skipBtn = posted.blocks
+    .filter((b) => b.type === "actions")
+    .flatMap((b) => b.elements)
+    .find((e) => e.action_id === "pi_uictx_input_skip");
+  assert.ok(skipBtn, "skip button present");
+
+  // Resolve via existing input submission helper.
+  const [[approvalId, entry]] = [...pendingApprovals.entries()];
+  assert.equal(entry.type, "input");
+  assert.equal(entry.multiline, false);
+  assert.equal(entry.placeholder, "P1 — blocks release");
+
+  resolveInputSubmission({
+    pendingApprovals,
+    view: {
+      private_metadata: approvalId,
+      state: { values: { pi_uictx_input_block: { pi_uictx_input_value: { value: "P1 — blocks the launch" } } } },
+    },
+    body: { user: { id: "U" } },
+    client,
+  });
+  assert.equal(await pending, "P1 — blocks the launch");
+}
+
+// Case 19: inputRequest "Skip" path resolves to undefined.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C19", threadTs: "19.0",
+    requestId: "req_p19", pendingApprovals,
+  });
+
+  const pending = ui.inputRequest("Title?", "Give me a one-liner");
+  await new Promise((r) => setImmediate(r));
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  resolveInputCancel({
+    pendingApprovals,
+    view: { private_metadata: approvalId },
+    body: { user: { id: "U" } },
+    client,
+  });
+  assert.equal(await pending, undefined);
+}
+
 console.log("slack-ui-context tests passed");

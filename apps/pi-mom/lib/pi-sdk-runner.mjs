@@ -90,6 +90,14 @@ import permissionGate from "../../../extensions/permission-gate.ts";
 // index.mjs; the model now drives Linear issue creation directly via tool
 // calls, which is composable with future search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
+// slack-interactive-tools: registers `slack_approval_card`,
+// `slack_choice_card`, `slack_input_request` as Pi custom tools so the
+// model can post polished Block Kit interactivity (approval previews,
+// choice cards, input modals) mid-turn. Backed by the
+// confirmWithPreview / selectWithContext / inputRequest methods on
+// slack-ui-context.mjs which the SDK threads through as ctx.ui to every
+// extension and tool handler.
+import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -172,7 +180,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearTools],
+      extensionFactories: [permissionGate, linearTools, slackInteractiveTools],
       // Skills ARE loaded (discovered from ./skills per package.json's
       // `pi.skills` config). The model uses skill descriptions to pick the
       // right operating mode per turn — Slack/Linear context primers,
