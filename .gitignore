@@ -46,6 +46,9 @@ Thumbs.db
 .vscode/settings.json
 .idea/
 
+# Claude Code harness state (subagent worktrees, etc.)
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]
