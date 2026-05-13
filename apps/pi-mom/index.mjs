@@ -17,15 +17,21 @@ import {
   resolveSelectAction,
 } from "./lib/slack-ui-context.mjs";
 import { handleIntakeZip } from "./lib/intake-orchestrator.mjs";
-import { buildProposalCardBlocks } from "./lib/intake-card.mjs";
 import {
+  PI_INTAKE_ACTION_IDS,
+  buildProposalCardBlocks,
+} from "./lib/intake-card.mjs";
+import {
+  PI_INTAKE_EDIT_MODAL_CALLBACK_ID,
   buildEditModalView,
   parseEditModalSubmission,
 } from "./lib/intake-edit-modal.mjs";
 import {
+  INTAKE_STATUS,
   claim,
   finalize,
   getProposal,
+  isFinalized,
   markStatus,
   release,
 } from "./lib/intake-proposal-store.mjs";
@@ -65,8 +71,8 @@ const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-4921-9996-8c
 const LINEAR_PROJECT_ID = process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"; // Distribution
 const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"; // Backlog
 const INTAKE_CHANNEL_ID = process.env.SLACK_INTAKE_CHANNEL_ID || "";
-const INTAKE_DEFAULT_TEAM_ID = process.env.INTAKE_DEFAULT_TEAM_ID || "";
-const INTAKE_DEFAULT_PROJECT_ID = process.env.INTAKE_DEFAULT_PROJECT_ID || "";
+const INTAKE_TEAM_ID = process.env.INTAKE_DEFAULT_TEAM_ID || LINEAR_TEAM_ID;
+const INTAKE_PROJECT_ID = process.env.INTAKE_DEFAULT_PROJECT_ID || LINEAR_PROJECT_ID;
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
@@ -477,8 +483,12 @@ const pendingApprovals = new Map();
 
 // Slack delivers `file_shared` more than once for the same upload (channel
 // share + comment + thread mirror). The bridge processes each file_id at
-// most once per FILE_DEDUPE_TTL_MS window.
+// most once per FILE_DEDUPE_TTL_MS window. Cap the LRU to RECENT_FILE_CAP
+// entries so a workspace that uploads thousands of files doesn't grow the
+// Map unbounded; Map iteration order is insertion order, so dropping the
+// oldest is one .keys().next() call.
 const FILE_DEDUPE_TTL_MS = 5 * 60_000;
+const RECENT_FILE_CAP = 1024;
 const recentFileIds = new Map();
 function shouldProcessFile(fileId, now = Date.now()) {
   if (!fileId) return false;
@@ -486,6 +496,11 @@ function shouldProcessFile(fileId, now = Date.now()) {
     if (now - ts > FILE_DEDUPE_TTL_MS) recentFileIds.delete(k);
   }
   if (recentFileIds.has(fileId)) return false;
+  while (recentFileIds.size >= RECENT_FILE_CAP) {
+    const oldest = recentFileIds.keys().next().value;
+    if (oldest === undefined) break;
+    recentFileIds.delete(oldest);
+  }
   recentFileIds.set(fileId, now);
   return true;
 }
@@ -525,19 +540,35 @@ function publishHomeForAllWatched(client) {
   }
 }
 
+// Coalesce bursts of pendingApprovals.set/.delete mutations into one
+// per-watcher views.publish: registering N intake-proposal cards in a tight
+// loop would otherwise fire N*W publishes for W watched users. Microtask
+// debounce → at most one publish per watcher per tick, with the latest
+// state.
+let _homePublishScheduled = false;
+function schedulePublishHomeForAllWatched(client) {
+  if (_homePublishScheduled) return;
+  _homePublishScheduled = true;
+  queueMicrotask(() => {
+    _homePublishScheduled = false;
+    publishHomeForAllWatched(client);
+  });
+}
+
 // Wrap pendingApprovals.set/.delete so any code path (slack-ui-context,
-// future producers) that mutates the Map automatically triggers a Home
-// republish. Keeps lib/slack-ui-context.mjs ignorant of App Home concerns.
+// intake-proposal-store, future producers) that mutates the Map triggers a
+// debounced Home republish. Keeps the cockpit code path ignorant of App
+// Home concerns.
 const _origApprovalsSet = pendingApprovals.set.bind(pendingApprovals);
 const _origApprovalsDelete = pendingApprovals.delete.bind(pendingApprovals);
 pendingApprovals.set = function (key, value) {
   const result = _origApprovalsSet(key, value);
-  publishHomeForAllWatched(slackClient);
+  schedulePublishHomeForAllWatched(slackClient);
   return result;
 };
 pendingApprovals.delete = function (key) {
   const result = _origApprovalsDelete(key);
-  if (result) publishHomeForAllWatched(slackClient);
+  if (result) schedulePublishHomeForAllWatched(slackClient);
   return result;
 };
 
@@ -794,8 +825,8 @@ app.event("file_shared", async ({ event, client }) => {
       { client, event, fileInfo },
       {
         pendingApprovals,
-        defaultTeamId: INTAKE_DEFAULT_TEAM_ID || LINEAR_TEAM_ID,
-        defaultProjectId: INTAKE_DEFAULT_PROJECT_ID || LINEAR_PROJECT_ID,
+        defaultTeamId: INTAKE_TEAM_ID,
+        defaultProjectId: INTAKE_PROJECT_ID,
         trace,
       },
     );
@@ -828,11 +859,7 @@ async function rerenderIntakeCard(client, entry, overrides = {}) {
 async function fileApprovedIntakeIssue({ client, entry, actorUserId, proposalOverride, statusLabel }) {
   const proposal = proposalOverride || entry.proposal;
   const result = await createLinearIssueFromProposal(proposal, {
-    defaults: {
-      teamId: INTAKE_DEFAULT_TEAM_ID || LINEAR_TEAM_ID,
-      projectId: INTAKE_DEFAULT_PROJECT_ID || LINEAR_PROJECT_ID,
-      stateId: LINEAR_STATE_ID,
-    },
+    defaults: { teamId: INTAKE_TEAM_ID, projectId: INTAKE_PROJECT_ID, stateId: LINEAR_STATE_ID },
   });
   if (!result.ok) {
     trace("intake.linear_create_failed", { approvalId: entry.approvalId, error: result.error });
@@ -859,34 +886,33 @@ async function fileApprovedIntakeIssue({ client, entry, actorUserId, proposalOve
   return true;
 }
 
-app.action("pi_intake_approve", async ({ ack, body, action, client }) => {
+app.action(PI_INTAKE_ACTION_IDS.APPROVE, async ({ ack, body, action, client }) => {
   await ack();
   const approvalId = action.value;
   const entry = getProposal(pendingApprovals, approvalId);
-  if (!entry || entry.status === "approved" || entry.status === "edited" || entry.status === "canceled") {
+  if (!entry || isFinalized(entry)) {
     trace("intake.approve_idempotent", { approvalId, status: entry?.status });
     return;
   }
   const actorUserId = body?.user?.id;
-  await fileApprovedIntakeIssue({ client, entry, actorUserId, statusLabel: "approved" });
+  await fileApprovedIntakeIssue({ client, entry, actorUserId, statusLabel: INTAKE_STATUS.APPROVED });
 });
 
-app.action("pi_intake_cancel", async ({ ack, body, action, client }) => {
+app.action(PI_INTAKE_ACTION_IDS.CANCEL, async ({ ack, body, action, client }) => {
   await ack();
   const approvalId = action.value;
   const entry = getProposal(pendingApprovals, approvalId);
-  if (!entry || entry.status === "approved" || entry.status === "edited" || entry.status === "canceled") {
+  if (!entry || isFinalized(entry)) {
     trace("intake.cancel_idempotent", { approvalId, status: entry?.status });
     return;
   }
   const actorUserId = body?.user?.id;
-  markStatus(pendingApprovals, approvalId, "canceled", { canceledBy: actorUserId });
-  await rerenderIntakeCard(client, entry, { status: "canceled", actorUserId });
+  await rerenderIntakeCard(client, entry, { status: INTAKE_STATUS.CANCELED, actorUserId });
   finalize(pendingApprovals, approvalId);
   trace("intake.canceled", { approvalId, by: actorUserId });
 });
 
-app.action("pi_intake_edit_launch", async ({ ack, body, action, client }) => {
+app.action(PI_INTAKE_ACTION_IDS.EDIT, async ({ ack, body, action, client }) => {
   await ack();
   const approvalId = action.value;
   const actorUserId = body?.user?.id;
@@ -910,31 +936,30 @@ app.action("pi_intake_edit_launch", async ({ ack, body, action, client }) => {
     return;
   }
   const entry = claimResult.entry;
-  // Re-render the card to show "Being edited by …" while the modal is open.
-  await rerenderIntakeCard(client, entry, { status: "claimed", actorUserId });
+  await rerenderIntakeCard(client, entry, { status: INTAKE_STATUS.CLAIMED, actorUserId });
   try {
     await client.views.open({
       trigger_id: body.trigger_id,
       view: buildEditModalView({
         approvalId,
         proposal: entry.proposal,
-        defaultTeamId: INTAKE_DEFAULT_TEAM_ID || LINEAR_TEAM_ID,
-        defaultProjectId: INTAKE_DEFAULT_PROJECT_ID || LINEAR_PROJECT_ID,
+        defaultTeamId: INTAKE_TEAM_ID,
+        defaultProjectId: INTAKE_PROJECT_ID,
       }),
     });
     trace("intake.edit_modal_opened", { approvalId, by: actorUserId });
   } catch (error) {
     trace("intake.edit_modal_open_failed", { approvalId, error: error?.data?.error || error?.message });
     release(pendingApprovals, approvalId);
-    await rerenderIntakeCard(client, entry, { status: "pending" });
+    await rerenderIntakeCard(client, entry, { status: INTAKE_STATUS.PENDING });
   }
 });
 
-app.view("pi_intake_edit_modal", async ({ ack, body, view, client }) => {
+app.view(PI_INTAKE_EDIT_MODAL_CALLBACK_ID, async ({ ack, body, view, client }) => {
   await ack();
   const approvalId = view?.private_metadata;
   const entry = getProposal(pendingApprovals, approvalId);
-  if (!entry || entry.status === "approved" || entry.status === "edited" || entry.status === "canceled") {
+  if (!entry || isFinalized(entry)) {
     trace("intake.edit_submit_idempotent", { approvalId, status: entry?.status });
     return;
   }
@@ -948,17 +973,16 @@ app.view("pi_intake_edit_modal", async ({ ack, body, view, client }) => {
     suggested_team_id: edits.team_id !== undefined ? edits.team_id : entry.proposal.suggested_team_id,
     suggested_project_id: edits.project_id !== undefined ? edits.project_id : entry.proposal.suggested_project_id,
   };
-  await fileApprovedIntakeIssue({ client, entry, actorUserId, proposalOverride: merged, statusLabel: "edited" });
+  await fileApprovedIntakeIssue({ client, entry, actorUserId, proposalOverride: merged, statusLabel: INTAKE_STATUS.EDITED });
 });
 
-app.view({ callback_id: "pi_intake_edit_modal", type: "view_closed" }, async ({ ack, view, body, client }) => {
+app.view({ callback_id: PI_INTAKE_EDIT_MODAL_CALLBACK_ID, type: "view_closed" }, async ({ ack, view, body, client }) => {
   await ack();
   const approvalId = view?.private_metadata;
   const entry = getProposal(pendingApprovals, approvalId);
-  if (!entry) return;
-  if (entry.status === "approved" || entry.status === "edited" || entry.status === "canceled") return;
+  if (!entry || isFinalized(entry)) return;
   release(pendingApprovals, approvalId);
-  await rerenderIntakeCard(client, entry, { status: "pending" });
+  await rerenderIntakeCard(client, entry, { status: INTAKE_STATUS.PENDING });
   trace("intake.edit_modal_closed", { approvalId, by: body?.user?.id });
 });
 

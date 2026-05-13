@@ -24,6 +24,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { clampTitle } from "./linear-tools.ts";
 
 export interface IntakeProposal {
   title: string;
@@ -63,12 +64,6 @@ function errorResult(text: string): AnyResult {
     details: undefined,
     isError: true,
   };
-}
-
-function clampTitle(title: string): string {
-  const oneLine = String(title || "").replace(/\s+/g, " ").trim();
-  if (!oneLine) return "";
-  return oneLine.length <= 240 ? oneLine : `${oneLine.slice(0, 237)}...`;
 }
 
 export function createIntakeToolsFactory({
@@ -169,8 +164,9 @@ export function createIntakeToolsFactory({
         const cleaned: IntakeProposal[] = [];
         for (const raw of rawIssues) {
           if (!raw || typeof raw !== "object") continue;
-          const title = clampTitle(raw.title);
-          if (!title) continue; // silently drop empty-title entries
+          const rawTitleTrimmed = String(raw.title || "").trim();
+          if (!rawTitleTrimmed) continue; // silently drop empty-title entries
+          const title = clampTitle(rawTitleTrimmed);
           const description = String(raw.description || "").trim();
           if (!description) continue;
           const proposal: IntakeProposal = { title, description };

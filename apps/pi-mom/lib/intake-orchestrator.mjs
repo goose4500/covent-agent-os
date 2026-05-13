@@ -1,38 +1,14 @@
-// PRD-intake orchestrator. Wave 1 module called by the Slack `file_shared`
-// handler in apps/pi-mom/index.mjs (handler wiring lives in Wave 3 — not
-// touched here).
+// PRD-intake orchestrator: download a Slack-hosted zip, extract its text,
+// run the Pi `intake` route to capture proposals via intake_propose_issues,
+// then post one parent summary + one Approve/Cancel/Edit card per proposal.
 //
-// Responsibilities:
-//   1. Download the zip Slack attached to the event via downloadSlackFile.
-//   2. Extract its text via extractZipBuffer (binary entries listed but their
-//      text payload is dropped from the prompt — orchestration only logs the
-//      filename + media type for those).
-//   3. Build a Pi prompt that includes the channel-default team/project ids,
-//      the per-file extracted text (clamped per-file and aggregate), and a
-//      skipped-files manifest.
-//   4. Stash a per-run request id in process.env._PI_INTAKE_REQUEST_ID so the
-//      intake_propose_issues custom tool (extensions/intake-tools.ts) can key
-//      its proposal capture map on it.
-//   5. Run Pi on the `intake` route (force-list the intake_propose_issues
-//      tool) and harvest the captured proposals from the capture map.
-//   6. Post one parent summary message + one card per proposal back into the
-//      Slack thread (the zip's message_ts). Register every card into
-//      pendingApprovals so the App Home cockpit + the Approve/Cancel/Edit
-//      handlers can resolve them.
-//
-// Design rules:
-//   - Every piece of I/O is dependency-injected so tests can run without a
-//     real Slack/Pi/network. The defaults wire up the real Slack/Pi paths.
-//   - Logging is structural only (counts/sizes/IDs). NEVER log file content
-//     or proposal payloads — those are user-trusted data flowing through the
-//     bot and would otherwise leak into local trace files / stdout.
-//   - process.env._PI_INTAKE_REQUEST_ID is set before runTurn and ALWAYS
-//     cleared in a finally block, even on errors. The intake tool reads it
-//     synchronously inside execute() so concurrent intake turns must not
-//     overlap on a single bot process — Slack's file_shared events fan out
-//     serially per channel which keeps that invariant easy to honor.
-//   - The handler never invents Linear writes; per-issue Approve clicks (in a
-//     separate file_shared / button handler) do that.
+// Invariants worth knowing:
+//   - All I/O is dependency-injected so tests run without real Slack/Pi.
+//   - Trace payloads are structural only — never log file/proposal content.
+//   - intake runs are serialized via withIntakeRunLock; the intake tool reads
+//     process.env._PI_INTAKE_REQUEST_ID at execute() time, so concurrent
+//     runs would otherwise clobber each other's requestId.
+//   - The orchestrator never writes to Linear; that's the Approve handler.
 
 import {
   downloadSlackFile as defaultDownloadSlackFile,
@@ -48,23 +24,22 @@ import {
 } from "./intake-proposal-store.mjs";
 import { resolveAction as defaultResolveAction } from "./action-resolver.mjs";
 import { runTurn as defaultRunTurn } from "./pi-session.mjs";
-import intakeToolsModule from "../../../extensions/intake-tools.ts";
+import { intakeProposalCapture } from "../../../extensions/intake-tools.ts";
 
-// The intake-tools module's default export is the FACTORY (createIntakeToolsFactory()).
-// The Map itself is a named export. We resolve it lazily so a test caller
-// can inject its own map without paying the import cost up-front.
-async function defaultProposalCapture() {
-  const mod = await import("../../../extensions/intake-tools.ts");
-  return mod.intakeProposalCapture;
-}
-
-// Suppress unused-import warning under bun: the static import gives the
-// runtime a chance to surface a clearer error if the path breaks; the actual
-// reference goes through the dynamic import above.
-void intakeToolsModule;
-
-export const TEXT_PER_FILE_LIMIT = 200_000;
 export const PROMPT_AGGREGATE_LIMIT = 120_000;
+
+// Per-process serializer for intake runs. The intake_propose_issues tool
+// reads process.env._PI_INTAKE_REQUEST_ID at execute() time, so two
+// concurrent runs would clobber each other's requestId. Bolt event
+// handlers run concurrently in JS, so a simple Promise-chain mutex is the
+// minimum needed to keep the env-var contract sound.
+let _intakeRunQueue = Promise.resolve();
+function withIntakeRunLock(fn) {
+  const prev = _intakeRunQueue;
+  let release;
+  _intakeRunQueue = new Promise((r) => { release = r; });
+  return prev.then(fn).finally(() => release());
+}
 
 function safeTrace(trace, event, payload) {
   try {
@@ -138,11 +113,7 @@ Slack context:
     // typical usage, but we belt-and-suspenders.
     if (typeof f.text !== "string" || f.text.length === 0) continue;
 
-    let body = f.text;
-    if (body.length > TEXT_PER_FILE_LIMIT) {
-      body = body.slice(0, TEXT_PER_FILE_LIMIT);
-    }
-
+    const body = f.text;
     const truncatedFlag = f.truncated === true ? ", truncated" : "";
     const sectionHeader = `### ${f.relPath || f.name || "(unnamed)"} (${
       f.mediaType || "text"
@@ -328,14 +299,12 @@ export async function handleIntakeZip({ client, event, fileInfo } = {}, options 
     return { requestId, files: [], skipped: [], proposalCount: 0 };
   }
 
-  // 3) Resolve action + 4) build prompt.
+  // 3) Resolve action + 4) build prompt. The builder drops binary entries
+  // (text=null) on its own — no need to pre-filter here.
   const action = resolveAction({ kind: "route", routeKey: "intake" });
-  // Drop binaries from prompt input (they have text=null from intake-zip).
-  const textFiles = files.filter((f) => typeof f?.text === "string" && f.text.length > 0);
-
   const prompt = buildIntakePrompt({
     zipFilename: fileName,
-    files: textFiles,
+    files,
     skipped,
     defaultTeamId,
     defaultProjectId,
@@ -348,41 +317,44 @@ export async function handleIntakeZip({ client, event, fileInfo } = {}, options 
   safeTrace(trace, "intake.prompt_built", {
     requestId,
     promptBytes: prompt.length,
-    textFiles: textFiles.length,
   });
 
-  // 5) Stash request id, run, harvest.
+  // 5) Stash request id, run, harvest. Serialized across concurrent intakes
+  // so the process.env handoff into intake_propose_issues stays sound.
   let proposals = [];
   let runError;
-  const captureMap = proposalCapture || (await defaultProposalCapture());
+  const captureMap = proposalCapture || intakeProposalCapture;
 
-  const prevEnv = process.env._PI_INTAKE_REQUEST_ID;
-  process.env._PI_INTAKE_REQUEST_ID = requestId;
-  try {
-    await runTurn({
-      surface: "intake_file",
-      threadTs: zipMessageTs || channel,
-      prompt,
-      action,
-    });
-    proposals = captureMap.get(requestId) || [];
-    safeTrace(trace, "intake.run_complete", {
-      requestId,
-      proposalCount: proposals.length,
-    });
-  } catch (error) {
-    runError = error;
-    safeTrace(trace, "intake.run_failed", {
-      requestId,
-      error: shortMessage(error),
-    });
-  } finally {
-    if (prevEnv === undefined) {
-      delete process.env._PI_INTAKE_REQUEST_ID;
-    } else {
-      process.env._PI_INTAKE_REQUEST_ID = prevEnv;
+  await withIntakeRunLock(async () => {
+    const prevEnv = process.env._PI_INTAKE_REQUEST_ID;
+    process.env._PI_INTAKE_REQUEST_ID = requestId;
+    try {
+      await runTurn({
+        surface: "intake_file",
+        threadTs: zipMessageTs || channel,
+        prompt,
+        action,
+      });
+      proposals = captureMap.get(requestId) || [];
+      safeTrace(trace, "intake.run_complete", {
+        requestId,
+        proposalCount: proposals.length,
+      });
+    } catch (error) {
+      runError = error;
+      safeTrace(trace, "intake.run_failed", {
+        requestId,
+        error: shortMessage(error),
+      });
+    } finally {
+      captureMap.delete(requestId);
+      if (prevEnv === undefined) {
+        delete process.env._PI_INTAKE_REQUEST_ID;
+      } else {
+        process.env._PI_INTAKE_REQUEST_ID = prevEnv;
+      }
     }
-  }
+  });
 
   if (runError) {
     await postPlainText(

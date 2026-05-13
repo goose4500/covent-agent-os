@@ -1,29 +1,26 @@
-// Light wrapper around the global `pendingApprovals` Map (declared in
-// apps/pi-mom/index.mjs) for the PRD-intake proposal flow. Each entry has
-// shape:
-//
-//   {
-//     type: "intake_proposal",
-//     approvalId,
-//     channel,
-//     threadTs,           // root ts of the Slack thread (the zip's message ts)
-//     parentMessageTs,    // ts of the orchestrator's summary post
-//     cardMessageTs,      // ts of the per-issue card we'll later edit on Approve/Cancel
-//     proposal,           // IntakeProposal from extensions/intake-tools.ts
-//     proposalIndex,      // 1-based
-//     proposalTotal,
-//     requestId,
-//     status,             // "pending" | "approved" | "canceled" | "edited" | "claimed"
-//     claimedBy,          // userId of the person mid-action (Edit modal open)
-//     claimedAt,          // ms epoch
-//     title,              // for App Home cockpit (home-view.mjs reads `title` and `type`)
-//   }
-//
-// Because the `pendingApprovals.set` / `.delete` wrappers in index.mjs already
-// re-publish the App Home view, every helper here triggers a cockpit refresh
-// for free.
+// PRD-intake proposal lifecycle on top of the shared `pendingApprovals` Map.
+// The Map's `set`/`delete` wrappers in index.mjs re-publish the App Home
+// view, so every helper here also keeps the cockpit in sync.
 
-const CLAIM_TTL_MS = 60_000;
+const DEFAULT_CLAIM_TTL_MS = 60_000;
+
+export const INTAKE_STATUS = Object.freeze({
+  PENDING: "pending",
+  CLAIMED: "claimed",
+  APPROVED: "approved",
+  CANCELED: "canceled",
+  EDITED: "edited",
+});
+
+const FINALIZED_STATUSES = new Set([
+  INTAKE_STATUS.APPROVED,
+  INTAKE_STATUS.CANCELED,
+  INTAKE_STATUS.EDITED,
+]);
+
+export function isFinalized(entry) {
+  return Boolean(entry && FINALIZED_STATUSES.has(entry.status));
+}
 
 let _approvalCounter = 0;
 export function nextIntakeApprovalId(requestId) {
@@ -39,7 +36,7 @@ export function registerProposal(pendingApprovals, entry) {
   if (!entry?.approvalId) throw new Error("registerProposal: approvalId required");
   const stored = {
     type: "intake_proposal",
-    status: "pending",
+    status: INTAKE_STATUS.PENDING,
     title: entry.proposal?.title ? `Intake proposal — ${entry.proposal.title}` : "Intake proposal",
     ...entry,
   };
@@ -58,18 +55,23 @@ export function getProposal(pendingApprovals, approvalId) {
 //   { ok: false, reason: "missing" }                     → no such approval
 //   { ok: false, reason: "finalized" }                   → already approved/canceled
 //   { ok: false, reason: "claimed", claimedBy, ageMs }   → someone else is editing
-export function claim(pendingApprovals, approvalId, userId, { now = Date.now() } = {}) {
+export function claim(
+  pendingApprovals,
+  approvalId,
+  userId,
+  { now = Date.now(), claimTtlMs = DEFAULT_CLAIM_TTL_MS } = {},
+) {
   const entry = getProposal(pendingApprovals, approvalId);
   if (!entry) return { ok: false, reason: "missing" };
-  if (entry.status === "approved" || entry.status === "canceled" || entry.status === "edited") {
+  if (isFinalized(entry)) {
     return { ok: false, reason: "finalized", status: entry.status };
   }
-  if (entry.claimedBy && entry.claimedBy !== userId && (now - (entry.claimedAt || 0)) < CLAIM_TTL_MS) {
+  if (entry.claimedBy && entry.claimedBy !== userId && (now - (entry.claimedAt || 0)) < claimTtlMs) {
     return { ok: false, reason: "claimed", claimedBy: entry.claimedBy, ageMs: now - entry.claimedAt };
   }
   entry.claimedBy = userId;
   entry.claimedAt = now;
-  entry.status = "claimed";
+  entry.status = INTAKE_STATUS.CLAIMED;
   return { ok: true, entry };
 }
 
@@ -78,7 +80,7 @@ export function release(pendingApprovals, approvalId) {
   if (!entry) return false;
   entry.claimedBy = undefined;
   entry.claimedAt = undefined;
-  if (entry.status === "claimed") entry.status = "pending";
+  if (entry.status === INTAKE_STATUS.CLAIMED) entry.status = INTAKE_STATUS.PENDING;
   return true;
 }
 
@@ -90,10 +92,6 @@ export function markStatus(pendingApprovals, approvalId, status, extras = {}) {
   return entry;
 }
 
-// Finalize → delete the pending entry (which triggers App Home re-publish via
-// the wrapped pendingApprovals.delete in index.mjs).
 export function finalize(pendingApprovals, approvalId) {
   return pendingApprovals.delete(approvalId);
 }
-
-export const _CLAIM_TTL_MS_FOR_TESTS = CLAIM_TTL_MS;

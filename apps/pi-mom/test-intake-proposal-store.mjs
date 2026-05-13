@@ -6,15 +6,17 @@
 import assert from "node:assert/strict";
 import {
   _resetIntakeApprovalCounterForTests,
-  _CLAIM_TTL_MS_FOR_TESTS,
   claim,
   finalize,
   getProposal,
+  isFinalized,
   markStatus,
   nextIntakeApprovalId,
   registerProposal,
   release,
 } from "./lib/intake-proposal-store.mjs";
+
+const CLAIM_TTL_MS = 60_000;
 
 function makeMap() {
   return new Map();
@@ -118,7 +120,7 @@ function makeEntry(overrides = {}) {
   const map = makeMap();
   registerProposal(map, makeEntry({ approvalId: "appr-6" }));
   claim(map, "appr-6", "U_alice", { now: 1_000_000 });
-  const res2 = claim(map, "appr-6", "U_bob", { now: 1_000_000 + _CLAIM_TTL_MS_FOR_TESTS + 1 });
+  const res2 = claim(map, "appr-6", "U_bob", { now: 1_000_000 + CLAIM_TTL_MS + 1 });
   assert.equal(res2.ok, true);
   assert.equal(res2.entry.claimedBy, "U_bob");
 }
@@ -179,6 +181,27 @@ function makeEntry(overrides = {}) {
   assert.ok(getProposal(map, "appr-11"));
   finalize(map, "appr-11");
   assert.equal(getProposal(map, "appr-11"), undefined);
+}
+
+// 15. isFinalized covers approved/canceled/edited and rejects pending/claimed/missing.
+{
+  const map = makeMap();
+  registerProposal(map, makeEntry({ approvalId: "appr-fin-1" }));
+  registerProposal(map, makeEntry({ approvalId: "appr-fin-2" }));
+  registerProposal(map, makeEntry({ approvalId: "appr-fin-3" }));
+  registerProposal(map, makeEntry({ approvalId: "appr-fin-4" }));
+  registerProposal(map, makeEntry({ approvalId: "appr-fin-5" }));
+  markStatus(map, "appr-fin-1", "approved");
+  markStatus(map, "appr-fin-2", "canceled");
+  markStatus(map, "appr-fin-3", "edited");
+  markStatus(map, "appr-fin-4", "claimed");
+  // appr-fin-5 stays pending
+  assert.equal(isFinalized(getProposal(map, "appr-fin-1")), true);
+  assert.equal(isFinalized(getProposal(map, "appr-fin-2")), true);
+  assert.equal(isFinalized(getProposal(map, "appr-fin-3")), true);
+  assert.equal(isFinalized(getProposal(map, "appr-fin-4")), false);
+  assert.equal(isFinalized(getProposal(map, "appr-fin-5")), false);
+  assert.equal(isFinalized(undefined), false);
 }
 
 console.log("✅ intake-proposal-store tests pass");

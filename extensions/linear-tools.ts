@@ -32,7 +32,7 @@ import { Type } from "typebox";
 
 const DEFAULT_LINEAR_API_URL = "https://api.linear.app/graphql";
 
-const ISSUE_CREATE_MUTATION = `
+export const ISSUE_CREATE_MUTATION = `
   mutation IssueCreate($input: IssueCreateInput!) {
     issueCreate(input: $input) {
       success
@@ -69,16 +69,63 @@ const ISSUE_SEARCH_QUERY = `
   }
 `;
 
-function clampTitle(title: string): string {
+export function clampTitle(title: string): string {
   const oneLine = String(title || "").replace(/\s+/g, " ").trim();
   if (!oneLine) return "Untitled issue";
   return oneLine.length <= 240 ? oneLine : `${oneLine.slice(0, 237)}...`;
 }
 
-function redactSecrets(text: string): string {
+export function redactSecrets(text: string): string {
   return String(text || "")
     .replace(/lin_api_[A-Za-z0-9_-]+/g, "lin_api_[REDACTED]")
     .replace(/Authorization:\s*[^\s'"`]+/gi, "Authorization: [REDACTED]");
+}
+
+// Low-level GraphQL caller for the Linear API. Returns the raw payload data
+// on success or a redacted error string on failure. Used internally by the
+// Pi tools and by the intake bridge's direct IssueCreate path.
+export async function linearGraphQL(
+  query: string,
+  variables: Record<string, unknown>,
+  opts: {
+    env?: Record<string, string | undefined>;
+    fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+    label?: string;
+  } = {},
+): Promise<{ data: any } | { error: string }> {
+  const env = opts.env || process.env;
+  const fetchImpl = opts.fetchImpl || fetch;
+  const label = opts.label || "graphql";
+  const apiKey = env.LINEAR_API_KEY;
+  if (!apiKey) {
+    return { error: `LINEAR_API_KEY is not set; cannot ${label}.` };
+  }
+  const apiUrl = env.LINEAR_API_URL || DEFAULT_LINEAR_API_URL;
+  try {
+    const response = await fetchImpl(apiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: opts.signal,
+    });
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok || (payload && Array.isArray(payload.errors) && payload.errors.length > 0)) {
+      const reason =
+        (payload?.errors || []).map((e: any) => e?.message).filter(Boolean).join("; ") ||
+        `HTTP ${response.status}`;
+      return { error: `Linear ${label} failed: ${redactSecrets(reason)}` };
+    }
+    return { data: payload?.data || {} };
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { error: `Linear ${label} aborted before completion.` };
+    }
+    return { error: `Linear ${label} request error: ${redactSecrets(err?.message || String(err))}` };
+  }
 }
 
 export interface LinearToolsOptions {
@@ -100,9 +147,7 @@ function errorResult(text: string): AnyResult {
   };
 }
 
-// Shared GraphQL caller. Centralizes env check, fetch error handling, and
-// AbortSignal/HTTP/GraphQL error → AgentToolResult shaping so each tool's
-// execute() can stay focused on its own variables + payload extraction.
+// Wraps linearGraphQL into the AgentToolResult shape Pi expects.
 function makeLinearCall({
   fetchImpl,
   env,
@@ -116,47 +161,9 @@ function makeLinearCall({
     signal: AbortSignal | undefined,
     label: string,
   ): Promise<{ data: any } | { error: AnyResult }> {
-    const apiKey = env.LINEAR_API_KEY;
-    if (!apiKey) {
-      return {
-        error: errorResult(
-          `LINEAR_API_KEY is not set in the bot environment; cannot ${label}. Tell the user to set the env var.`,
-        ),
-      };
-    }
-    const apiUrl = env.LINEAR_API_URL || DEFAULT_LINEAR_API_URL;
-    try {
-      const response = await fetchImpl(apiUrl, {
-        method: "POST",
-        headers: {
-          Authorization: apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query, variables }),
-        signal,
-      });
-      const payload: any = await response.json().catch(() => ({}));
-      if (!response.ok || (payload && Array.isArray(payload.errors) && payload.errors.length > 0)) {
-        const reason =
-          (payload?.errors || []).map((e: any) => e?.message).filter(Boolean).join("; ") ||
-          `HTTP ${response.status}`;
-        return {
-          error: errorResult(`Linear ${label} failed: ${redactSecrets(reason)}`),
-        };
-      }
-      return { data: payload?.data || {} };
-    } catch (err: any) {
-      if (err?.name === "AbortError") {
-        return {
-          error: errorResult(`Linear ${label} aborted before completion.`),
-        };
-      }
-      return {
-        error: errorResult(
-          `Linear ${label} request error: ${redactSecrets(err?.message || String(err))}`,
-        ),
-      };
-    }
+    const result = await linearGraphQL(query, variables, { fetchImpl, env, signal, label });
+    if ("error" in result) return { error: errorResult(result.error) };
+    return { data: result.data };
   };
 }
 

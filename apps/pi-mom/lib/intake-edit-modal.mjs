@@ -10,6 +10,8 @@
 // multi-field form. Block IDs and action IDs are exported so the view
 // handler in `index.mjs` can find values without hard-coding strings twice.
 
+export const PI_INTAKE_EDIT_MODAL_CALLBACK_ID = "pi_intake_edit_modal";
+
 export const PI_INTAKE_EDIT_BLOCKS = Object.freeze({
   TITLE: "pi_intake_edit_title",
   DESCRIPTION: "pi_intake_edit_description",
@@ -85,7 +87,7 @@ export function buildEditModalView({
 
   const view = {
     type: "modal",
-    callback_id: "pi_intake_edit_modal",
+    callback_id: PI_INTAKE_EDIT_MODAL_CALLBACK_ID,
     private_metadata: String(approvalId ?? ""),
     notify_on_close: true,
     title: plainText("Edit proposal", 24),

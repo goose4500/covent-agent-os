@@ -1,63 +1,22 @@
-// Direct Linear IssueCreate helper used by the intake Approve/Edit button
-// handlers in index.mjs. We use a direct GraphQL call (not a Pi tool round
-// trip) here because we already have a fully-formed proposal payload from
-// the human-approved card and a button click is not the right surface to
-// spin up a model loop.
-//
-// Mirrors the env contract and redaction discipline from
-// extensions/linear-tools.ts (LINEAR_API_KEY, LINEAR_TEAM_ID,
-// LINEAR_PROJECT_ID, LINEAR_STATE_ID, LINEAR_API_URL) so an approved intake
-// proposal lands in the same place a model-driven `linear_create_issue`
-// call would.
+// Direct Linear IssueCreate path used by the intake Approve/Edit-submit
+// button handlers in index.mjs. A button click is not the right surface to
+// spin up a model loop, so we call Linear's GraphQL directly with the
+// already-human-approved proposal. Reuses the canonical helpers from
+// extensions/linear-tools.ts so this stays one source of truth.
 
-const DEFAULT_LINEAR_API_URL = "https://api.linear.app/graphql";
+import {
+  ISSUE_CREATE_MUTATION,
+  clampTitle,
+  linearGraphQL,
+} from "../../../extensions/linear-tools.ts";
 
-const ISSUE_CREATE_MUTATION = `
-  mutation IssueCreate($input: IssueCreateInput!) {
-    issueCreate(input: $input) {
-      success
-      issue { id identifier title url }
-    }
-  }
-`;
-
-function redactSecrets(text) {
-  return String(text || "")
-    .replace(/lin_api_[A-Za-z0-9_-]+/g, "lin_api_[REDACTED]")
-    .replace(/Authorization:\s*[^\s'"`]+/gi, "Authorization: [REDACTED]");
-}
-
-function clampTitle(title) {
-  const oneLine = String(title || "").replace(/\s+/g, " ").trim();
-  if (!oneLine) return "Untitled issue";
-  return oneLine.length <= 240 ? oneLine : `${oneLine.slice(0, 237)}...`;
-}
-
-// Create one Linear issue from an intake proposal.
-//
-// proposal = { title, description, priority?, suggested_team_id?, suggested_project_id? }
-// options:
-//   env          — defaults to process.env
-//   fetchImpl    — defaults to global fetch
-//   signal       — AbortSignal forwarded to fetch
-//   defaults     — { teamId, projectId, stateId } fallbacks layered ABOVE env
-//
-// Resolution order for team_id / project_id / state_id (most specific wins):
-//   1. proposal.suggested_team_id / suggested_project_id   (model suggestion)
-//   2. defaults.teamId / defaults.projectId / defaults.stateId   (channel intake defaults)
-//   3. env.LINEAR_TEAM_ID / env.LINEAR_PROJECT_ID / env.LINEAR_STATE_ID
-//
-// Returns { ok: true, issue: { identifier, url, id, title } }
-//      or { ok: false, error: "..." }.
+// Resolve team_id / project_id / state_id (most specific wins):
+//   1. proposal.suggested_*               (model suggestion)
+//   2. defaults.{teamId,projectId,stateId} (channel intake defaults)
+//   3. env.LINEAR_*                       (bot-wide defaults)
 export async function createLinearIssueFromProposal(proposal, options = {}) {
   const env = options.env || process.env;
-  const fetchImpl = options.fetchImpl || fetch;
   const defaults = options.defaults || {};
-  const apiKey = env.LINEAR_API_KEY;
-  if (!apiKey) {
-    return { ok: false, error: "LINEAR_API_KEY is not set; cannot file the issue." };
-  }
-
   const teamId = pickFirstString(
     proposal?.suggested_team_id,
     defaults.teamId,
@@ -86,34 +45,18 @@ export async function createLinearIssueFromProposal(proposal, options = {}) {
     input.priority = proposal.priority;
   }
 
-  const apiUrl = env.LINEAR_API_URL || DEFAULT_LINEAR_API_URL;
-  try {
-    const response = await fetchImpl(apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query: ISSUE_CREATE_MUTATION, variables: { input } }),
-      signal: options.signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || (Array.isArray(payload?.errors) && payload.errors.length > 0)) {
-      const reason = (payload?.errors || []).map((e) => e?.message).filter(Boolean).join("; ")
-        || `HTTP ${response.status}`;
-      return { ok: false, error: `Linear issueCreate failed: ${redactSecrets(reason)}` };
-    }
-    const created = payload?.data?.issueCreate;
-    if (!created?.success || !created?.issue) {
-      return { ok: false, error: "Linear issueCreate returned success=false." };
-    }
-    return { ok: true, issue: created.issue };
-  } catch (err) {
-    if (err?.name === "AbortError") {
-      return { ok: false, error: "Linear issueCreate aborted before completion." };
-    }
-    return { ok: false, error: `Linear issueCreate request error: ${redactSecrets(err?.message || String(err))}` };
+  const result = await linearGraphQL(ISSUE_CREATE_MUTATION, { input }, {
+    env,
+    fetchImpl: options.fetchImpl,
+    signal: options.signal,
+    label: "issueCreate",
+  });
+  if ("error" in result) return { ok: false, error: result.error };
+  const created = result.data?.issueCreate;
+  if (!created?.success || !created?.issue) {
+    return { ok: false, error: "Linear issueCreate returned success=false." };
   }
+  return { ok: true, issue: created.issue };
 }
 
 function pickFirstString(...values) {

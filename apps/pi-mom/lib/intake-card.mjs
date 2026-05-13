@@ -92,7 +92,7 @@ export function buildProposalCardBlocks(proposal = {}, opts = {}) {
   const priority = safeProposal.priority;
   const teamId = safeProposal.suggested_team_id;
   const projectId = safeProposal.suggested_project_id;
-  const requestId = safeProposal.requestId || opts.requestId; // tolerate either source
+  const requestId = opts.requestId;
 
   const blocks = [];
 
