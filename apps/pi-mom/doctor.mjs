@@ -1,5 +1,7 @@
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { WebClient } from "@slack/web-api";
+import { spawnSync } from "node:child_process";
+import { subagentsEnabledFromEnv } from "./lib/routes.mjs";
 
 const required = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 let ok = true;
@@ -49,6 +51,24 @@ console.log(`Linear target state: ${process.env.LINEAR_STATE_ID || "adfdb6e9-b11
 console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ? "disabled" : "enabled"}`);
 console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
 console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
+
+const subagentsEnabled = subagentsEnabledFromEnv(process.env);
+console.log(`Team subagents route: ${subagentsEnabled ? "enabled" : "disabled"}`);
+if (subagentsEnabled) {
+  const piProbe = spawnSync("pi", ["--version"], { encoding: "utf-8" });
+  if (piProbe.error?.code === "ENOENT") {
+    console.error("✗ PI_MOM_SUBAGENTS_ENABLED=true but `pi` is not on PATH; child subagent runs will fail");
+    ok = false;
+  } else if (piProbe.error) {
+    console.error(`✗ Failed to probe \`pi\` CLI for subagents: ${piProbe.error.message}`);
+    ok = false;
+  } else {
+    const versionText = (piProbe.stdout || piProbe.stderr || "found").trim().split("\n")[0];
+    console.log(`✓ pi CLI available for child subagent runs: ${versionText}`);
+  }
+} else {
+  console.log("! team: route will acknowledge as disabled; set PI_MOM_SUBAGENTS_ENABLED=true only after canary verification");
+}
 
 try {
   const auth = await AuthStorage.create();

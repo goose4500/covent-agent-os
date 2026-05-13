@@ -13,10 +13,10 @@
 // PI_OFFLINE=1 disables the SDK's "install user-scope packages from settings.json"
 // path that runs at first session creation. The default user settings list
 // `npm:pi-web-access`, `npm:pi-subagents`, etc., which trip `npm install -g`
-// (EACCES on Railway/WSL non-root). The bot doesn't use those packages — it
-// passes `noTools: "all"` + an explicit resource loader. Set this BEFORE the
-// SDK is invoked. Override with PI_OFFLINE=0 only if you specifically need
-// global package installs at runtime.
+// (EACCES on Railway/WSL non-root). The bot loads any approved packages from
+// app dependencies via an explicit resource loader instead of ambient global
+// discovery. Set this BEFORE the SDK is invoked. Override with PI_OFFLINE=0
+// only if you specifically need global package installs at runtime.
 if (process.env.PI_OFFLINE === undefined || process.env.PI_OFFLINE === "") {
   process.env.PI_OFFLINE = "1";
 }
@@ -91,13 +91,60 @@ import linearTools from "../../../extensions/linear-tools.ts";
 // extension and tool handler.
 import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
 
+export function subagentsEnabledFromEnv(env = process.env) {
+  return String(env.PI_MOM_SUBAGENTS_ENABLED || "").toLowerCase() === "true";
+}
+
+async function loadSubagentsExtension() {
+  const mod = await import("pi-subagents/src/extension/index.ts");
+  return mod.default || mod;
+}
+
+export async function buildPiMomExtensionFactories({
+  env = process.env,
+  loadSubagents = loadSubagentsExtension,
+} = {}) {
+  const factories = [linearTools, slackInteractiveTools];
+  if (subagentsEnabledFromEnv(env)) {
+    factories.push(await loadSubagents());
+  }
+  return factories;
+}
+
+export async function buildResourceLoaderOptions({
+  cwd,
+  agentDir = getAgentDir(),
+  env = process.env,
+  loadSubagents = loadSubagentsExtension,
+} = {}) {
+  return {
+    cwd,
+    agentDir,
+    // Skip filesystem discovery of extensions (extensionPaths empty) but
+    // still load the inline factories below. This keeps the bot's
+    // surface area predictable — only the extensions we explicitly opt
+    // into run inside the agent loop.
+    noExtensions: true,
+    extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents }),
+    // Skills ARE loaded (discovered from ./skills per package.json's
+    // `pi.skills` config). The model uses skill descriptions to pick the
+    // right operating mode per turn — Slack/Linear context primers,
+    // repo work patterns, reasoning aids — instead of routing all of
+    // that through hardcoded route instructions alone.
+    // Prompts/themes/context-files stay off: they're not the lever here.
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  };
+}
+
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
 const PI_WORKDIR = process.env.PI_WORKDIR || process.env.HOME || process.cwd();
 // Legacy env fallback used only by the pi-sdk-runner unit tests that construct
 // a runner without explicit `tools`; production callers always pass `tools`
-// from the inline ROUTES map.
+// from the lib/routes.mjs route map.
 const ALLOW_TOOLS = process.env.PI_MOM_ALLOW_PI_TOOLS === "true";
 
 function stripTerminalSequences(text) {
@@ -149,25 +196,7 @@ export function createRunner({
 } = {}) {
   async function makeResourceLoader(cwd) {
     if (buildResourceLoader) return buildResourceLoader(cwd);
-    const loader = new DefaultResourceLoader({
-      cwd,
-      agentDir: getAgentDir(),
-      // Skip filesystem discovery of extensions (extensionPaths empty) but
-      // still load the inline factories below. This keeps the bot's
-      // surface area predictable — only the extensions we explicitly opt
-      // into run inside the agent loop.
-      noExtensions: true,
-      extensionFactories: [linearTools, slackInteractiveTools],
-      // Skills ARE loaded (discovered from ./skills per package.json's
-      // `pi.skills` config). The model uses skill descriptions to pick the
-      // right operating mode per turn — Slack/Linear context primers,
-      // repo work patterns, reasoning aids — instead of routing all of
-      // that through hardcoded systemPromptSuffixes in registry.yaml.
-      // Prompts/themes/context-files stay off: they're not the lever here.
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-    });
+    const loader = new DefaultResourceLoader(await buildResourceLoaderOptions({ cwd }));
     await loader.reload();
     return loader;
   }
@@ -180,7 +209,7 @@ export function createRunner({
       );
     }
 
-    // Tool gating: when `tools` is provided by the inline ROUTES map, it is
+    // Tool gating: when `tools` is provided by the lib/routes.mjs route map, it is
     // the authoritative allowlist. Empty array → noTools:"all" (no Pi tools
     // active; model-only draft). Non-empty array → all builtin tools
     // available to the SDK, then `setActiveToolsByName(tools)` narrows them

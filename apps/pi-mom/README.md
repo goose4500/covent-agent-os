@@ -123,17 +123,18 @@ Fallback slash command:
 
 Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
 
-Routed workflow prefixes (defined in `control-plane/registry.yaml`):
+Routed workflow prefixes (defined in `lib/routes.mjs`):
 
 ```text
 @Covent Pi summarize: decisions, open questions, and next actions
 @Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
+@Covent Pi team: doctor | context <scope> | plan <task> | review <target>   (feature-flagged read-only subagents)
 @Covent Pi bash: <command>   (runs via the bash tool)
 ```
 
-Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine.
+Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine. The `subagent` tool is intentionally **not** on the plain route.
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
@@ -144,10 +145,18 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 - Default target is Frontend Engineering / `Distribution` / `Backlog` (override with `LINEAR_TEAM_ID` / `LINEAR_PROJECT_ID` / `LINEAR_STATE_ID`).
 - Requires `LINEAR_API_KEY`. Without it, each tool returns an `isError` result and the model reports the missing key to the user.
 
+Team subagents route behavior in `PI_MOM_MODE=pi`:
+
+- Disabled by default with `PI_MOM_SUBAGENTS_ENABLED=false`.
+- When enabled, the `team:` route exposes only `subagent` plus Slack interactive tools. The plain route never gets `subagent`.
+- The route prompt restricts Slack usage to foreground/read-only presets: `doctor`, `context`, `plan`, and `review`.
+- Project-owned read-only subagent profiles live in `.agents/team-*.md`; they intentionally omit write/edit/bash tools.
+- `pi-subagents` child runs spawn the `pi` CLI, so the deployment image must have `pi` on PATH before enabling this in Railway.
+
 Streaming behavior in `PI_MOM_MODE=pi`:
 
 - Streaming is always on via `lib/slack-sink.mjs` (Stage 5). It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep Slack's stream session alive across long thinking runs.
-- Pi tool gating is per-route via `control-plane/registry.yaml`. Routes with `tools: []` run with `noTools: "all"`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. The `DefaultResourceLoader` is configured with `noExtensions/noPromptTemplates/noThemes/noContextFiles` but **skills are loaded** (from `./skills` per `package.json#pi.skills`) — the model uses skill descriptions to select operating modes per turn rather than relying solely on hardcoded `systemPromptSuffix` strings. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
+- Pi tool gating is per-route via `lib/routes.mjs`. Routes with `tools: []` run with `noTools: "all"`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. The `DefaultResourceLoader` keeps ambient extension discovery disabled (`noExtensions: true`) and loads only explicit app factories: Linear tools, Slack interactive tools, and `pi-subagents` only when `PI_MOM_SUBAGENTS_ENABLED=true`. Skills are still loaded (from `./skills` per `package.json#pi.skills`) so the agent can pick the right operating mode. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
 
 ## Observability & Tracing (DX)
 
@@ -215,7 +224,7 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 ## Notes
 
 - Streaming is always on via `lib/slack-sink.mjs`. The legacy `PI_MOM_STREAMING` knob was removed in Stage 5; there is no `chat.update` fallback path.
-- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via the inline `ROUTES` map in `index.mjs`: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables extensions/prompts/themes/context-files but loads skills from `./skills` so the agent can pick the right operating mode (Slack/Linear primers, repo work patterns, reasoning aids). Private Slack snippets are still not persisted in Pi session history and Slack context cannot trigger tool mutations because the tool allowlist is authoritative. Routes that need explicit tool access declare each tool by name in `ROUTES`; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `lib/routes.mjs`: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables ambient extension discovery/prompts/themes/context-files but loads explicit app extension factories and skills from `./skills`. Private Slack snippets are still not persisted in Pi session history and Slack context cannot trigger tools outside the route allowlist. Routes that need explicit tool access declare each tool by name; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
 - The `plain` route (bare `@Covent-Agent <prompt>` with no prefix) ships with the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do real work on its machine. Trusted-operator + channel-allowlist + Codex sign-in are the perimeter; in-process safety extensions are not loaded in this POC.
 - The bridge uses Slack Web API only for the current thread context, final reply, canvas mirror (spec: route), and approval modals.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

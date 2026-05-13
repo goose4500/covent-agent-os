@@ -8,7 +8,7 @@ Private monorepo for Covent's AI automation operating layer — the Slack ↔ Pi
 
 - **Slack bridge runtime**: `apps/pi-mom/` — Bolt 4.7 Assistant container + `app_mention` parity, surfaces Pi agent execution into Slack threads.
 - **Pi agent layer**: `extensions/`, `skills/`, `agents/`, `packages/` — Pi custom tools (Linear, permission-gate, env-guard, browser access) and reusable operating modes.
-- **Control plane**: `apps/pi-mom/control-plane/registry.yaml` — single declarative file for routes, per-Action tool gating, system-prompt suffixes, and approval posture.
+- **Route control**: `apps/pi-mom/lib/routes.mjs` — pure route catalog for per-Action tool gating, Slack help/status text, and feature-flagged workflows.
 - **Operating docs**: `docs/` — architecture, ADRs, runbooks, specs, source-of-truth, and historical research.
 
 ## Three primitives
@@ -19,7 +19,7 @@ The bridge is wired on three primitives. Nothing bespoke duplicates what they al
 |---|---|
 | [`@earendil-works/pi-coding-agent@0.74`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | Pi SDK, **embedded in-process** via `createAgentSession` + `SessionManager` + `setActiveToolsByName`. No subprocess. |
 | [`@slack/bolt@4.7`](https://slack.dev/bolt-js/) + [`@slack/web-api@7.15.2`](https://slack.dev/node-slack-sdk/web-api) | Slack runtime. `Assistant` container + `app_mention` adapter share one `dispatchToAction`. `chat.startStream` + `canvases.{create,edit}`. |
-| `apps/pi-mom/control-plane/registry.yaml` | Per-route declarative config. Dispatcher + SDK runner read the same file. |
+| `apps/pi-mom/lib/routes.mjs` | Per-route config. Dispatcher/help/status/tests read the same route catalog. |
 
 Runtime: **bun 1.3+**.
 
@@ -51,7 +51,7 @@ Engineers ask `@Covent-Agent` for outcomes; the bot resolves the message to an *
 
 ```text
 Covent Agent = the Slack app engineers use
-Actions      = bounded things it can do (defined in registry.yaml)
+Actions      = bounded things it can do (defined in lib/routes.mjs)
 Runs         = one execution of an Action
 Approvals    = Slack modals before risky tool calls (e.g. rm -rf via permission-gate)
 Artifacts    = source-linked results: Slack thread + optional canvas + Linear comment/issue
@@ -60,10 +60,10 @@ Artifacts    = source-linked results: Slack thread + optional canvas + Linear co
 Core loop:
 
 ```text
-Slack mention → dispatchToAction → action-resolver(registry.yaml) → runTurn(session, sink) → stream + tools → result
+Slack mention → dispatchToAction → route config(lib/routes.mjs) → runTurn(session, sink) → stream + tools → result
 ```
 
-Active routes (`apps/pi-mom/control-plane/registry.yaml`):
+Active routes (`apps/pi-mom/lib/routes.mjs`):
 
 | Route | tools active | What it does |
 |---|---|---|
@@ -74,7 +74,8 @@ Active routes (`apps/pi-mom/control-plane/registry.yaml`):
 | `linear` | `linear_search_issues` + `linear_create_issue` + `linear_add_comment` | Search-first idempotency → comment-or-create |
 | `agenda` | — | Thread → meeting agenda |
 | `spec` | — | Thread → PRD draft (mirrors to a Slack canvas via canvas-sink) |
-| `bash` | `bash` | Explicit shell; `permission-gate` intercepts `rm -rf` / `sudo` / `chmod 777` / `chown 777` |
+| `team` | disabled by default; when enabled: `subagent` + Slack interactive tools | Read-only foreground team subagent presets (`doctor`, `context`, `plan`, `review`) |
+| `bash` | `bash` | Explicit shell route |
 
 ## Production deploy
 
@@ -103,6 +104,7 @@ PI_MOM_THINKING_LEVEL              high
 PI_MOM_TRACE                       true
 PI_TIMEOUT_MS                      180000   wall-clock per Pi run
 PI_OFFLINE                         1        no SDK auto-npm-install
+PI_MOM_SUBAGENTS_ENABLED           false    enables team: subagent route only after canary
 PI_AUTH_JSON_B64                   base64(~/.pi/agent/auth.json) — seeded on cold boot
 PI_AGENT_DIR                       /data/pi-agent   persistent volume
 
@@ -141,7 +143,7 @@ Start here:
 ```text
 Slack    = cockpit / intake / approvals
 Pi SDK   = reasoning + execution runtime (in-process under bun)
-registry = single source of truth for routes/tools/approvals
+routes   = single source of truth for Slack route tools/help/status (`apps/pi-mom/lib/routes.mjs`)
 Linear   = execution truth (issues + comments) via modular Pi custom tools
 GitHub   = code truth
 Railway  = runtime/deployment state

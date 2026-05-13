@@ -159,6 +159,7 @@ function viewText(view) {
       mode: "pi",
       allowedChannelId: "C123",
       linearConfigured: true,
+      subagentsEnabled: true,
       uptimeSeconds: 42,
     },
     now: NOW,
@@ -167,13 +168,14 @@ function viewText(view) {
   assert.match(text, /mode `pi`/);
   assert.match(text, /C123/);
   assert.match(text, /Linear :white_check_mark: configured/);
+  assert.match(text, /team subagents :white_check_mark: enabled/);
   assert.match(text, /uptime 42s/);
 }
 
 // ---------- case 11: settings modal builder shape ----------
 {
   const modal = buildSettingsModalView({
-    status: { mode: "echo", linearConfigured: false, traceEnabled: true, uptimeSeconds: 9 },
+    status: { mode: "echo", linearConfigured: false, subagentsEnabled: false, traceEnabled: true, uptimeSeconds: 9 },
   });
   assert.equal(modal.type, "modal");
   assert.equal(modal.callback_id, "home_settings_modal");
@@ -182,17 +184,27 @@ function viewText(view) {
   assert.match(text, /Mode/);
   assert.match(text, /echo/);
   assert.match(text, /missing key/);
+  assert.match(text, /Team subagents/);
+  assert.match(text, /disabled/);
 }
 
 // ---------- case 12: route howto modal builder shape ----------
 {
-  for (const route of ["spec", "linear", "agenda", "summarize"]) {
+  for (const route of ["spec", "linear", "agenda", "summarize", "team"]) {
     const modal = buildRouteHowtoModalView({ route });
     assert.equal(modal.type, "modal");
     assert.equal(modal.callback_id, "home_route_howto_modal");
     assert.ok(modal.blocks.length > 0, `${route} modal must have blocks`);
   }
   // Unknown route falls back to a generic message rather than throwing.
+  const team = buildRouteHowtoModalView({ route: "team" });
+  assert.match(JSON.stringify(team), /Team subagents/);
+  assert.match(JSON.stringify(team), /team: doctor/);
+  assert.match(JSON.stringify(team), /PI_MOM_SUBAGENTS_ENABLED=true/);
+
+  const homeText = viewText(buildHomeView({ now: NOW }));
+  assert.match(homeText, /Team subagents/);
+
   const unknown = buildRouteHowtoModalView({ route: "nope" });
   assert.equal(unknown.type, "modal");
   assert.ok(unknown.blocks.length > 0);
