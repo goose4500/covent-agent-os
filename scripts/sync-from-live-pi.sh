@@ -16,6 +16,5 @@ rsync "${RSYNC_FLAGS[@]}" -L /home/jfloyd/.pi/agent/extensions/ "$ROOT/extension
 rsync "${RSYNC_FLAGS[@]}" /home/jfloyd/.pi/agent/lib/ "$ROOT/lib/"
 rsync "${RSYNC_FLAGS[@]}" /home/jfloyd/.pi/agent/agents/ "$ROOT/agents/"
 rsync "${RSYNC_FLAGS[@]}" /home/jfloyd/.pi/agent/skills/ "$ROOT/skills/"
-rsync "${RSYNC_FLAGS[@]}" /home/jfloyd/.pi/agent/packages/pi-chrome-access/ "$ROOT/packages/pi-chrome-access/"
 
 echo "sync-from-live-pi complete ($MODE)"
