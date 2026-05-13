@@ -138,10 +138,17 @@ export async function buildResourceLoaderOptions({
   };
 }
 
+export function resolvePiWorkdir(env = process.env, cwd = process.cwd()) {
+  // Prefer the actual app checkout so project-owned `.agents/` profiles are
+  // discoverable by pi-subagents. HOME is `/root` on Railway, which hides the
+  // repo and makes `team:` subagent presets fall back to builtin-only discovery.
+  return env.PI_WORKDIR || cwd || env.HOME;
+}
+
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
-const PI_WORKDIR = process.env.PI_WORKDIR || process.env.HOME || process.cwd();
+const PI_WORKDIR = resolvePiWorkdir();
 // Legacy env fallback used only by the pi-sdk-runner unit tests that construct
 // a runner without explicit `tools`; production callers always pass `tools`
 // from the lib/routes.mjs route map.

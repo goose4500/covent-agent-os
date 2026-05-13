@@ -3,6 +3,7 @@ import {
   buildPiMomExtensionFactories,
   buildResourceLoaderOptions,
   createRunner,
+  resolvePiWorkdir,
   subagentsEnabledFromEnv,
 } from "./lib/pi-sdk-runner.mjs";
 
@@ -187,7 +188,13 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.deepEqual(setActiveCalls, [["read", "bash"]]);
 }
 
-// Case 9: subagents loader flag is opt-in and appends exactly one extra extension factory.
+// Case 9: default workdir prefers the app checkout over HOME so project `.agents/` are discoverable.
+{
+  assert.equal(resolvePiWorkdir({ HOME: "/root" }, "/app/apps/pi-mom"), "/app/apps/pi-mom");
+  assert.equal(resolvePiWorkdir({ PI_WORKDIR: "/workspace", HOME: "/root" }, "/app/apps/pi-mom"), "/workspace");
+}
+
+// Case 10: subagents loader flag is opt-in and appends exactly one extra extension factory.
 {
   assert.equal(subagentsEnabledFromEnv({}), false, "subagents disabled by default");
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "true" }), true, "true enables subagents");
@@ -212,7 +219,7 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.equal(loadCalls, 1, "enabled: imports pi-subagents exactly once for this loader build");
 }
 
-// Case 10: default resource loader options keep ambient discovery disabled even when subagents are enabled.
+// Case 11: default resource loader options keep ambient discovery disabled even when subagents are enabled.
 {
   const fakeSubagentExtension = function fakeSubagentExtension() {};
   const options = await buildResourceLoaderOptions({
