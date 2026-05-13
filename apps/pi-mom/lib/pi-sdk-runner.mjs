@@ -89,6 +89,14 @@ import permissionGate from "../../../extensions/permission-gate.ts";
 // index.mjs; the model now drives Linear issue creation directly via tool
 // calls, which is composable with future search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
+// Phase 3 (long-thread + multimodal context handling): registers the
+// `read_image_content` Pi tool so the agent can pull a Slack-attached
+// image into the prompt as a native vision block when the inline
+// AI-generated description isn't enough. The default factory wires
+// `process.env.SLACK_BOT_TOKEN` only; the Slack `WebClient` injection
+// lands in Phase 4 (Worker F). Existing pi-sdk-runner unit tests stub
+// `buildResourceLoader`, so adding to `extensionFactories` is safe.
+import imageReader from "../../../extensions/image-reader.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -154,7 +162,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearTools],
+      extensionFactories: [permissionGate, linearTools, imageReader],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,

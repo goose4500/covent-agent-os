@@ -60,7 +60,7 @@ routes:
   # sudo / chmod 777 / chown 777 via a Slack approval modal before the call
   # executes; everything else runs without prompting.
   plain:
-    tools: ["bash", "read", "grep", "find", "edit", "write"]
+    tools: ["bash", "read", "grep", "find", "edit", "write", "read_image_content"]
     systemPromptSuffix: ""
     approvals: tool
   help:
@@ -79,7 +79,7 @@ routes:
     # Linear is driven by Pi custom tools (extensions/linear-tools.ts).
     # The model invokes them directly; idempotency lives in the model's
     # reasoning (search first, then comment-or-create).
-    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment"]
+    tools: ["linear_search_issues", "linear_create_issue", "linear_add_comment", "read_image_content"]
     systemPromptSuffix: "The user wants to track something in Linear. ALWAYS call linear_search_issues first with the most distinctive phrase or proper noun from their request. If a clear match comes back, call linear_add_comment on that issue (Markdown body referencing the Slack thread) instead of creating a duplicate. If no relevant match exists, call linear_create_issue exactly once with: title (concise single line), description (Markdown with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions), and optional priority (0=none, 1=urgent, 2=high, 3=medium, 4=low). After the final tool call, write a short Slack reply quoting the Linear issue identifier and URL (or comment URL). Never call linear_create_issue twice for the same thread."
     approvals: tool
   agenda:
@@ -87,7 +87,7 @@ routes:
     systemPromptSuffix: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes."
     approvals: none
   spec:
-    tools: []
+    tools: ["read_image_content"]
     systemPromptSuffix: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions."
     approvals: none
   # Stage 6.5: bash route with the built-in `bash` tool active. The
