@@ -104,6 +104,38 @@ routes:
     systemPromptSuffix: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph. The permission-gate extension may pause for a Slack approval click before rm -rf / sudo / chmod 777 / chown 777 — that's expected; the gate either resumes or blocks the call based on the user's choice."
     approvals: tool
 
+# Event-triggered routes (issue #48 / ADR-0003). Each entry opts into the
+# event-driven runtime via a `trigger:` block. The webhook receiver matches
+# incoming events from a `trigger.source` (e.g. linear, github) against the
+# `trigger.when` tokens (formatted "<Type>.<action>"), resolves a Slack
+# destination via `destination.resolver`, and hands a synthetic Slack turn to
+# pi-sdk-runner. Routes WITHOUT a `trigger:` block live in the `routes:` map
+# above and continue to behave as Slack-message-only.
+eventRoutes:
+  # First production loop: a Linear comment lands → Pi posts a structured
+  # summary back into the Slack thread captured as a Linear attachment on the
+  # parent issue. Exercises both the destination resolver (attachment lookback)
+  # and the bounded mutation surface (one chat.postMessage). The integrator in
+  # Phase 3 fills in `destination.fallback_channel` with the real
+  # #pi-event-runtime channel ID.
+  - name: linear-comment-sync
+    trigger:
+      source: linear
+      when: ["Comment.create"]
+      idempotency: webhookDelivery
+    destination:
+      resolver: linear_attachment_thread
+      fallback_channel: TBD-CHANNEL-ID
+    tools: [linear_graphql, slack_api]
+    systemPromptSuffix: |
+      You woke up because Linear emitted a Comment.create event.
+      The event payload is in the user turn. Read the parent issue
+      context via linear_graphql, then post a structured reply into the
+      linked Slack thread via slack_api with chat.postMessage. Scan the
+      thread first (conversations.replies) for any prior Pi reply that
+      already covers this comment; if found, abort. Include the Linear
+      comment author, a body excerpt, and a permalink back to Linear.
+
 legacyRoutes:
   - name: help
     triggers:
