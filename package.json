@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Private Covent AI automation operating layer for Slack, Pi, skills, agents, and bounded tools.",
   "workspaces": [
-    "apps/pi-mom",
-    "packages/*"
+    "apps/pi-mom"
   ],
   "scripts": {
     "check": "bun run secret-scan && bun run validate:skills && bun run validate:agents && bun run check:pi-mom && bun run typecheck",
@@ -27,8 +26,7 @@
       "./extensions/git-checkpoint.ts",
       "./extensions/linear-mcp-guard.ts",
       "./extensions/permission-gate.ts",
-      "./extensions/slack-mcp-guard.ts",
-      "./packages/pi-ext-covent-aws/src/index.ts"
+      "./extensions/slack-mcp-guard.ts"
     ],
     "skills": ["./skills"],
     "agents": ["./.pi/agents", "./agents"],
