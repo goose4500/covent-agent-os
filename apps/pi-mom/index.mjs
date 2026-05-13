@@ -545,7 +545,7 @@ async function ensureCodexSignInPrompt({ client, channel, threadTs, user, reques
 
   let postedSignInTs;
   let postFailed = false;
-  const { completion } = startCodexSignIn({
+  const { completion } = await startCodexSignIn({
     slackUserId: user,
     onAuth: async ({ url }) => {
       try {
@@ -675,7 +675,7 @@ async function handleRequest({ client, event, mode, utilities }) {
   // per-user AuthStorage at ${PI_AGENT_DIR}/users/<userId>/auth.json; once
   // that file holds an `openai-codex` entry, Pi auto-rotates the token from
   // there forward and this branch never fires for that user again.
-  if (user && !hasCodexAuth(user)) {
+  if (user && !(await hasCodexAuth(user))) {
     await ensureCodexSignInPrompt({ client, channel, threadTs, user, requestId });
     trace("slack.replied_signin_required", { requestId, user, durationMs: Date.now() - start });
     return;

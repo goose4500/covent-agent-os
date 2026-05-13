@@ -127,7 +127,7 @@ async function defaultGetDeps(slackUserId) {
     let authStorage;
     let modelRegistry;
     if (slackUserId) {
-      const userAuth = getUserAuth(slackUserId);
+      const userAuth = await getUserAuth(slackUserId);
       authStorage = userAuth.authStorage;
       modelRegistry = userAuth.modelRegistry;
     } else {

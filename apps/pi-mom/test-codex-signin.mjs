@@ -51,7 +51,7 @@ function deferred() {
     hasPending: pending.hasPending,
   });
 
-  const { completion } = service.startSignIn({
+  const { completion } = await service.startSignIn({
     slackUserId: "U1",
     onAuth: async ({ url }) => { onAuthCalls.push(url); },
   });
@@ -101,7 +101,7 @@ function deferred() {
     cancelPending: pending.cancelPending,
     hasPending: pending.hasPending,
   });
-  const { completion } = service.startSignIn({
+  const { completion } = await service.startSignIn({
     slackUserId: "U2",
     onAuth: () => { onAuthRan = true; },
   });

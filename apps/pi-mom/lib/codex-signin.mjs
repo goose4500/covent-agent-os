@@ -42,13 +42,13 @@ export function createCodexSignInService({
   hasPending = defaultHasPending,
   trace = () => {},
 } = {}) {
-  function startSignIn({ slackUserId, onAuth, signal } = {}) {
+  async function startSignIn({ slackUserId, onAuth, signal } = {}) {
     if (!slackUserId) throw new Error("codex-signin: slackUserId is required");
     if (typeof onAuth !== "function") {
       throw new Error("codex-signin: onAuth callback is required");
     }
 
-    const { authStorage } = resolveUserAuth(slackUserId);
+    const { authStorage } = await resolveUserAuth(slackUserId);
     const codePromise = startPending(slackUserId);
 
     // loginOpenAICodex receives this promise and races it against the

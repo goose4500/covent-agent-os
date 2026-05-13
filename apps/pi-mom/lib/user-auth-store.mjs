@@ -50,7 +50,17 @@ export function createUserAuthStore({
   createModelRegistry = (storage) => ModelRegistry.create(storage),
   ensureDir = (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
 } = {}) {
-  const cache = new Map(); // slackUserId -> { authStorage, modelRegistry, path }
+  // Cache stores the *promise* of the resolved entry, not the entry
+  // itself. Two reasons:
+  //   1. AuthStorage.create() is synchronous in pi-coding-agent v0.74.0,
+  //      but pi-sdk-runner.mjs + doctor.mjs already `await` it, suggesting
+  //      the contract is "treat as possibly async". Caching the promise
+  //      future-proofs us against a minor-version bump that flips the
+  //      signature.
+  //   2. Concurrent first-mentions from the same user would otherwise
+  //      call createAuthStorage(path) twice and race the underlying
+  //      file lock. Caching the in-flight promise dedupes that.
+  const cache = new Map(); // slackUserId -> Promise<{ authStorage, modelRegistry, path }>
 
   function authPath(slackUserId) {
     return authPathForUser(slackUserId, baseDir || resolveAgentDir());
@@ -60,18 +70,23 @@ export function createUserAuthStore({
     const existing = cache.get(slackUserId);
     if (existing) return existing;
 
-    const path = authPath(slackUserId);
-    ensureDir(dirname(path));
-    const authStorage = createAuthStorage(path);
-    const modelRegistry = createModelRegistry(authStorage);
-    const entry = { authStorage, modelRegistry, path };
-    cache.set(slackUserId, entry);
-    return entry;
+    const promise = (async () => {
+      const path = authPath(slackUserId);
+      ensureDir(dirname(path));
+      const authStorage = await createAuthStorage(path);
+      const modelRegistry = await createModelRegistry(authStorage);
+      return { authStorage, modelRegistry, path };
+    })().catch((err) => {
+      cache.delete(slackUserId);
+      throw err;
+    });
+    cache.set(slackUserId, promise);
+    return promise;
   }
 
-  function hasCodexAuth(slackUserId) {
+  async function hasCodexAuth(slackUserId) {
     try {
-      const { authStorage } = get(slackUserId);
+      const { authStorage } = await get(slackUserId);
       return typeof authStorage.hasAuth === "function"
         ? authStorage.hasAuth(CODEX_PROVIDER_ID)
         : authStorage.has(CODEX_PROVIDER_ID);

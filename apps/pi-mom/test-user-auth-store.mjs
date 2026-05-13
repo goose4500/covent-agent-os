@@ -31,8 +31,14 @@ function fakeAuthStorage({ stored = {} } = {}) {
       createModelRegistry: () => { registryCalls += 1; return {}; },
     });
 
-    const first = store.get("U1234ABCD");
-    const second = store.get("U1234ABCD");
+    // Issue both calls before awaiting to exercise the in-flight promise
+    // dedupe (concurrent first-mentions from the same user must not double
+    // up createAuthStorage).
+    const firstPromise = store.get("U1234ABCD");
+    const secondPromise = store.get("U1234ABCD");
+    assert.strictEqual(firstPromise, secondPromise, "cache: same in-flight promise");
+    const first = await firstPromise;
+    const second = await secondPromise;
     assert.strictEqual(first.authStorage, second.authStorage, "cache: same authStorage instance");
     assert.equal(storageCalls, 1, "cache: createAuthStorage called once");
     assert.equal(registryCalls, 1, "cache: createModelRegistry called once");
@@ -56,16 +62,16 @@ function fakeAuthStorage({ stored = {} } = {}) {
     createAuthStorage: () => (calls++ === 0 ? storage1 : storage2),
     createModelRegistry: () => ({}),
   });
-  assert.equal(store.hasCodexAuth("UAAAAAAAAA"), true, "hasCodex: true when codex entry exists");
-  assert.equal(store.hasCodexAuth("UBBBBBBBBB"), false, "hasCodex: false when missing");
+  assert.equal(await store.hasCodexAuth("UAAAAAAAAA"), true, "hasCodex: true when codex entry exists");
+  assert.equal(await store.hasCodexAuth("UBBBBBBBBB"), false, "hasCodex: false when missing");
 }
 
-// Case 3: invalid slackUserId throws synchronously.
+// Case 3: invalid slackUserId rejects with a descriptive error.
 {
   const store = createUserAuthStore({ baseDir: "/tmp/x", ensureDir: () => {}, createAuthStorage: () => fakeAuthStorage(), createModelRegistry: () => ({}) });
-  assert.throws(() => store.get(""), /slackUserId is required/);
-  assert.throws(() => store.get("not lowercase"), /invalid slackUserId/);
-  assert.throws(() => store.get("U" + "A".repeat(64)), /invalid slackUserId/);
+  await assert.rejects(() => store.get(""), /slackUserId is required/);
+  await assert.rejects(() => store.get("not lowercase"), /invalid slackUserId/);
+  await assert.rejects(() => store.get("U" + "A".repeat(64)), /invalid slackUserId/);
 }
 
 // Case 4: forget evicts from cache; next get rebuilds.
@@ -77,11 +83,11 @@ function fakeAuthStorage({ stored = {} } = {}) {
     createAuthStorage: () => { calls += 1; return fakeAuthStorage(); },
     createModelRegistry: () => ({}),
   });
-  store.get("UFORGET01");
-  store.get("UFORGET01");
+  await store.get("UFORGET01");
+  await store.get("UFORGET01");
   assert.equal(calls, 1);
   store.forget("UFORGET01");
-  store.get("UFORGET01");
+  await store.get("UFORGET01");
   assert.equal(calls, 2, "forget: re-creates on next get");
 }
 
@@ -93,7 +99,7 @@ function fakeAuthStorage({ stored = {} } = {}) {
     createAuthStorage: () => ({ hasAuth: () => { throw new Error("disk"); } }),
     createModelRegistry: () => ({}),
   });
-  assert.equal(store.hasCodexAuth("UERROR0001"), false, "errors are not propagated");
+  assert.equal(await store.hasCodexAuth("UERROR0001"), false, "errors are not propagated");
 }
 
 console.log("✓ user-auth-store: all cases pass");
