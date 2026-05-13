@@ -89,6 +89,12 @@ import permissionGate from "../../../extensions/permission-gate.ts";
 // index.mjs; the model now drives Linear issue creation directly via tool
 // calls, which is composable with future search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
+// GitHub: one in-process tool (`github_api`) that fronts both REST and
+// GraphQL, routed by the `path` arg — same shape as `gh api`. Recipes live
+// in skills/github-api/SKILL.md. The tool is intentionally dumb and never
+// prompts on writes; a future sibling guard can read `details.mutation` off
+// the tool_call event to gate writes (see extensions/linear-mcp-guard.ts).
+import githubApi from "../../../extensions/github-api.ts";
 
 const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -154,7 +160,7 @@ export function createRunner({
       // surface area predictable — only the extensions we explicitly opt
       // into run inside the agent loop.
       noExtensions: true,
-      extensionFactories: [permissionGate, linearTools],
+      extensionFactories: [permissionGate, linearTools, githubApi],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
