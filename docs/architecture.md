@@ -196,8 +196,7 @@ The blue-green canary pattern that shipped this rebuild. Reusable for future ris
 - [`README.md`](../README.md) — top-level overview + quick start + prod deploy table.
 - [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md) — system-wide source-of-truth map.
 - [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — read-first agent context.
-- [`BOUNDARY.md`](../BOUNDARY.md) — authority model + mutation boundaries.
-- [`SECURITY.md`](../SECURITY.md) — secret handling.
+- [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, and secret/data handling.
 - [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — the format of `control-plane/registry.yaml`.
 - [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — the 2026-05-12 cutover lifecycle and the reusable pattern.
 - ADRs in [`docs/adr/`](adr/) for early decisions (still mostly valid).

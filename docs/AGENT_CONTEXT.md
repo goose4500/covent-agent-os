@@ -83,8 +83,7 @@ If stable knowledge only exists in Slack, a Pi session, or a Linear comment, pro
 - [`README.md`](../README.md) — repo overview + quick start + production deploy.
 - [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md) — canonical system navigation map.
 - [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — this file.
-- [`BOUNDARY.md`](../BOUNDARY.md) — authority model and mutation boundaries.
-- [`SECURITY.md`](../SECURITY.md) — secret/data handling.
+- [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, and secret/data handling.
 - [`docs/architecture.md`](architecture.md) — post-rebuild architecture (the file tree, route table, flow diagram).
 - [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — cutover lifecycle + reusable canary pattern.
 - [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — registry.yaml format.
@@ -266,7 +265,7 @@ Never `railway up` from a local checkout against `covent-pi-mom` unless you're i
 
 ## When working as an agent
 
-1. Read `docs/SYSTEM_INDEX.md`, this file, `docs/architecture.md`, `BOUNDARY.md`, and `SECURITY.md`.
+1. Read `docs/SYSTEM_INDEX.md`, this file, `docs/architecture.md`, and `BOUNDARY.md`.
 2. Inspect implementation before trusting older docs; some older runbooks reference deleted functions.
 3. Prefer summaries plus links over raw Slack/Linear dumps.
 4. Do not mutate Slack/Linear/Git/Railway/Whimsical unless the current user explicitly asked or the route clearly permits it.

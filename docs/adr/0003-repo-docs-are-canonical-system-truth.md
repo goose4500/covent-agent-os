@@ -15,7 +15,6 @@ The repo docs are the canonical system memory. Stable system knowledge belongs i
 - `docs/SYSTEM_INDEX.md`
 - `docs/AGENT_CONTEXT.md`
 - `BOUNDARY.md`
-- `SECURITY.md`
 - `docs/adr/**`
 - current app runbooks under `apps/pi-mom/README.md` and `docs/runbooks/**`
 

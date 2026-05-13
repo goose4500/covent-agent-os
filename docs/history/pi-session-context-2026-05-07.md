@@ -278,7 +278,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 2. **Decide repo scope and visibility.** Recommended default: private repo first. Decide whether `pi-mom` + skills + extensions live together or whether generic skills/tools split from Covent-private runtime.
 3. **Classify files into include/sanitize/exclude.** Use the file groups above; do not start from raw `~/.pi/agent` wholesale.
 4. **Create a clean staging directory for repo bootstrap.** Copy only selected files; do not `git init` over operational state with logs/env/cache.
-5. **Add `.gitignore`, `SECURITY.md`, `BOUNDARY.md`, and secret-scan gates before the first commit.** Run at least `rg` checks for token-like patterns and a real scanner such as `gitleaks` if available.
+5. **Add `.gitignore`, `BOUNDARY.md`, and secret-scan gates before the first commit.** Run at least `rg` checks for token-like patterns and a real scanner such as `gitleaks` if available.
 6. **Do not push/create GitHub remote until user approves repo name, visibility, and included surface.**
 
 ### P0 — core Slack/Pi runtime safety
@@ -293,7 +293,7 @@ The highest-leverage near-term agent/workflow set is: **Workflow Orchestrator / 
 11. **Draft repo skeleton:**
     - `README.md` — what this repo is/is not.
     - `BOUNDARY.md` — Slack/Pi/MCP/Linear/Git/browser boundaries and approval policy.
-    - `SECURITY.md` — secrets, Slack/Linear/private data handling, scanners.
+    - `.gitignore` / `scripts/secret-scan.sh` — secret/private-data exclusions and scanners.
     - `docs/architecture.md` — Slack cockpit / Pi runtime / Linear truth.
     - `docs/repo-inventory.md` — included/excluded paths and rationale.
     - `skills/`, `agents/`, `extensions/`, `lib/`, `packages/`, `apps/pi-mom/` or similar.
