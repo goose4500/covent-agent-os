@@ -123,8 +123,22 @@ function isAllowedChannel(channel) {
   return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
 }
 
-function stripBotMentions(text = "") {
+// Slack encodes &, <, > as HTML entities in event.text so message bodies
+// can't smuggle ad-hoc Slack markup. The bash route executes the user's
+// text verbatim, so we have to decode these back before parsing or
+// `cmd1 && cmd2` arrives as `cmd1 &amp;&amp; cmd2` and bash blows up.
+// Apply &amp; last so "&amp;lt;" survives as "&lt;" (rare but correct).
+function decodeSlackEntities(text = "") {
   return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function stripBotMentions(text = "") {
+  return decodeSlackEntities(text)
     // Drop Slack's "*Sent using* <@bot> [Display]" attribution footer that
     // Slack appends when a message is posted via an app/integration. Without
     // this, bash routes (which execute the user text verbatim) interpret the
