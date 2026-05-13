@@ -125,6 +125,12 @@ function isAllowedChannel(channel) {
 
 function stripBotMentions(text = "") {
   return text
+    // Drop Slack's "*Sent using* <@bot> [Display]" attribution footer that
+    // Slack appends when a message is posted via an app/integration. Without
+    // this, bash routes (which execute the user text verbatim) interpret the
+    // footer as additional shell tokens — e.g. `*Sent using*` becomes an
+    // extra operand to whatever command was at the end of the line.
+    .replace(/\n+\*Sent using\*\s+<@[A-Z0-9]+(?:\|[^>]+)?>(?:\s+\[[^\]]*\])?\s*$/i, "")
     .replace(/<@[A-Z0-9]+(?:\|[^>]+)?>\s*/g, "")
     .replace(/^@?(?:covent[-\s]?agent|covent\s+pi)\s*/i, "")
     .trim();
