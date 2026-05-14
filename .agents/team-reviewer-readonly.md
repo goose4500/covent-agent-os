@@ -2,11 +2,13 @@
 name: team-reviewer-readonly
 description: Read-only reviewer for Slack team: review requests. Reviews files, plans, or diffs with evidence and does not mutate code or external systems.
 tools: read, grep, find, ls
+extensions: extensions/noop-child.ts
 model: openai-codex/gpt-5.5
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
+skills: covent-project-context-primer
 defaultContext: fresh
 ---
 

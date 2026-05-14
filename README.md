@@ -67,7 +67,7 @@ Active routes (`apps/pi-mom/lib/routes.mjs`):
 
 | Route | tools active | What it does |
 |---|---|---|
-| `plain` (no prefix) | `bash` + `read` + `grep` + `find` + `edit` + `write` | Full default Pi toolset — bare mentions can do real work |
+| `plain` (no prefix) | `bash` + `read` + `grep` + `find` + `edit` + `write`; plus `web_search`/`get_search_content`/`code_search` only when `PI_MOM_WEB_ACCESS_ENABLED=true` | Full default Pi toolset — bare mentions can do real work; public web search is opt-in; direct URL fetch stays unexposed by default |
 | `help` | — | Hard-coded menu |
 | `status` | — | Bridge health/config |
 | `summarize` | — | Thread → decisions/questions/owners |
@@ -105,10 +105,13 @@ PI_MOM_TRACE                       true
 PI_TIMEOUT_MS                      180000   wall-clock per Pi run
 PI_OFFLINE                         1        no SDK auto-npm-install
 PI_MOM_SUBAGENTS_ENABLED           false    enables team: subagent route only after canary
+PI_MOM_WEB_ACCESS_ENABLED          false    enables public web search/code-search tools on plain route only; direct URL fetch stays unexposed by default
+PI_ALLOW_BROWSER_COOKIES           0        keep Gemini Web browser cookies off by default
 PI_AUTH_JSON_B64                   base64(~/.pi/agent/auth.json) — seeded on cold boot
 PI_AGENT_DIR                       /data/pi-agent   persistent volume
 
 OPENAI_API_KEY                     sk-...
+EXA_API_KEY / PERPLEXITY_API_KEY / GEMINI_API_KEY optional web providers when web access is enabled
 LINEAR_API_KEY                     lin_api_...
 LINEAR_TEAM_ID                     UUID — Frontend Engineering
 LINEAR_PROJECT_ID                  UUID — Distribution

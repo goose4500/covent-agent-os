@@ -6,17 +6,32 @@ const SLACK_INTERACTIVE_TOOLS = [
 
 export const TEAM_SUBAGENT_TOOLS = ["subagent", ...SLACK_INTERACTIVE_TOOLS];
 
+export const WEB_ACCESS_TOOLS = [
+  "web_search",
+  "get_search_content",
+  "code_search",
+];
+
+const WEB_ACCESS_PLAIN_INSTRUCTION = `Web access is enabled for this route as a bounded public-web research aid.
+
+Web access rules:
+- Use web tools only for public web search/code-search that is necessary to answer the user's request.
+- Do not search or fetch secrets, tokens, credentials, raw private Slack dumps, customer PII, or internal files.
+- For web_search, use workflow: "none"; do not open browser curator UI from Slack.
+- Direct URL fetch is not exposed in Slack by default. Use web_search/code_search and cite public sources.
+- Summarize and cite useful public sources; do not paste huge raw page dumps into Slack.`;
+
 const TEAM_ROUTE_ENABLED_INSTRUCTION = `Run a Slack-owned Team Subagents preset. This route is foreground and read-only only.
 
 Allowed presets from the user text after \`team:\`:
 - \`doctor\`: call the subagent tool with { "action": "doctor" }.
 - \`context <scope>\`: call the subagent tool once with agent \`team-scout\`, agentScope \`project\`, context \`fresh\`, async false, and a concise task to inspect that scope.
-- \`plan <task>\`: call the subagent tool once in chain mode with project agents \`team-scout\` then \`team-planner\`, agentScope \`project\`, context \`fresh\`, async false.
+- \`plan <task>\`: call the subagent tool once in chain mode with project agents \`team-scout\` then \`team-planner\`, agentScope \`project\`, context \`fresh\`, async false, and clarify false.
 - \`review <target>\`: call the subagent tool once with agent \`team-reviewer-readonly\`, agentScope \`project\`, context \`fresh\`, async false.
 
 Hard rules:
 - Call \`subagent\` at most once per Slack request.
-- Always foreground: set async false or omit async; never start background jobs.
+- Always foreground: set async false explicitly; never omit async and never start background jobs.
 - Never use write-capable agents such as \`worker\` or \`delegate\` from Slack.
 - Never use subagent management mutations (create/update/delete), interrupt/resume, worktree, push, deploy, or external mutation flows from this route.
 - Prefer project-scoped agents and summarize the result back to Slack with artifacts/next steps, not raw transcript dumps.
@@ -29,14 +44,22 @@ export function subagentsEnabledFromEnv(env = process.env) {
   return String(env.PI_MOM_SUBAGENTS_ENABLED || "").toLowerCase() === "true";
 }
 
-export function buildRoutes({ subagentsEnabled = subagentsEnabledFromEnv() } = {}) {
+export function webAccessEnabledFromEnv(env = process.env) {
+  return String(env.PI_MOM_WEB_ACCESS_ENABLED || "").toLowerCase() === "true";
+}
+
+export function buildRoutes({
+  subagentsEnabled = subagentsEnabledFromEnv(),
+  webAccessEnabled = webAccessEnabledFromEnv(),
+} = {}) {
   return {
     plain: {
       label: "Default Pi agent",
-      instruction: "",
+      instruction: webAccessEnabled ? WEB_ACCESS_PLAIN_INSTRUCTION : "",
       tools: [
         "bash", "read", "grep", "find", "edit", "write",
         ...SLACK_INTERACTIVE_TOOLS,
+        ...(webAccessEnabled ? WEB_ACCESS_TOOLS : []),
       ],
     },
     help: { label: "Show help", instruction: "", tools: [] },
@@ -114,6 +137,7 @@ export function formatStatusText({
   traceEnabled = false,
   routes = buildRoutes(),
   subagentsEnabled = subagentsEnabledFromEnv(),
+  webAccessEnabled = webAccessEnabledFromEnv(),
 } = {}) {
   return `*Covent Pi status*\n` +
     `• mode: \`${mode || "?"}\`\n` +
@@ -125,6 +149,7 @@ export function formatStatusText({
     `• pi model: \`${piModelLabel || "?"}\` (thinking: \`${piThinkingLabel || "?"}\`)\n` +
     `• pi tools: per-route from lib/routes.mjs\n` +
     `• team subagents: \`${subagentsEnabled ? "enabled" : "disabled"}\` (PI_MOM_SUBAGENTS_ENABLED)\n` +
+    `• web access: \`${webAccessEnabled ? "enabled" : "disabled"}\` (PI_MOM_WEB_ACCESS_ENABLED; plain route only)\n` +
     `• Linear issue creation: \`${linearConfigured ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${linearTeamId || "?"}\`, project \`${linearProjectId || "?"}\`, state \`${linearStateId || "?"}\`\n` +
     `• trace: \`${traceEnabled ? "on" : "off"}\`\n` +

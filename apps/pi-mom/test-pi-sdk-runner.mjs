@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { applyWebAccessSafetyToToolCall } from "../../extensions/pi-web-access-safety.ts";
+import { applySlackTeamSubagentSafetyToToolCall } from "../../extensions/slack-team-subagent-safety.ts";
 import {
   buildPiMomExtensionFactories,
   buildResourceLoaderOptions,
   createRunner,
   resolvePiWorkdir,
+  resolveProjectSkillsDir,
+  resolveWebAccessResourcePaths,
   subagentsEnabledFromEnv,
+  webAccessEnabledFromEnv,
 } from "./lib/pi-sdk-runner.mjs";
 
 function fakeSession({ script = [], throwOnPrompt } = {}) {
@@ -194,10 +201,12 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.equal(resolvePiWorkdir({ PI_WORKDIR: "/workspace", HOME: "/root" }, "/app/apps/pi-mom"), "/workspace");
 }
 
-// Case 10: subagents loader flag is opt-in and appends exactly one extra extension factory.
+// Case 10: subagents and web-access loader flags are opt-in.
 {
   assert.equal(subagentsEnabledFromEnv({}), false, "subagents disabled by default");
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "true" }), true, "true enables subagents");
+  assert.equal(webAccessEnabledFromEnv({}), false, "web access disabled by default");
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "true" }), true, "true enables web access");
 
   let loadCalls = 0;
   const fakeSubagentExtension = function fakeSubagentExtension() {};
@@ -214,9 +223,24 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
     env: { PI_MOM_SUBAGENTS_ENABLED: "true" },
     loadSubagents,
   });
-  assert.equal(enabledFactories.length, 3, "enabled: appends pi-subagents factory");
-  assert.equal(enabledFactories[2], fakeSubagentExtension, "enabled: pi-subagents factory is last");
+  assert.equal(enabledFactories.length, 4, "subagents enabled: appends pi-subagents factory + safety guard");
+  assert.equal(enabledFactories[2], fakeSubagentExtension, "subagents enabled: pi-subagents factory is before safety guard");
   assert.equal(loadCalls, 1, "enabled: imports pi-subagents exactly once for this loader build");
+
+  const webEnabledFactories = await buildPiMomExtensionFactories({
+    env: { PI_MOM_WEB_ACCESS_ENABLED: "true" },
+    loadSubagents,
+  });
+  assert.equal(webEnabledFactories.length, 3, "web enabled: appends only the safety extension factory inline");
+  assert.equal(loadCalls, 1, "web enabled: does not import pi-subagents");
+
+  const bothEnabledFactories = await buildPiMomExtensionFactories({
+    env: { PI_MOM_SUBAGENTS_ENABLED: "true", PI_MOM_WEB_ACCESS_ENABLED: "true" },
+    loadSubagents,
+  });
+  assert.equal(bothEnabledFactories.length, 5, "both enabled: linear + Slack + subagents + subagent safety + web safety");
+  assert.equal(bothEnabledFactories[2], fakeSubagentExtension, "both enabled: subagents remains before safety guards");
+  assert.equal(loadCalls, 2, "both enabled: imports pi-subagents once for this loader build");
 }
 
 // Case 11: default resource loader options keep ambient discovery disabled even when subagents are enabled.
@@ -231,11 +255,149 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.equal(options.cwd, "/tmp/pi-mom-test");
   assert.equal(options.agentDir, "/tmp/pi-agent-test");
   assert.equal(options.noExtensions, true, "ambient extension discovery remains disabled");
+  assert.equal(options.noSkills, true, "ambient user/global skill discovery remains disabled");
+  assert.deepEqual(
+    options.additionalSkillPaths,
+    [resolveProjectSkillsDir()],
+    "project skills are loaded from an explicit repo-owned path",
+  );
   assert.equal(options.noPromptTemplates, true);
   assert.equal(options.noThemes, true);
   assert.equal(options.noContextFiles, true);
-  assert.equal(options.extensionFactories.length, 3);
+  assert.equal(options.extensionFactories.length, 4);
   assert.equal(options.extensionFactories[2], fakeSubagentExtension);
+  assert.equal(options.additionalExtensionPaths, undefined, "web extension path absent unless web access is enabled");
+}
+
+// Case 12: web access resource paths resolve from the app dependency and are explicitly loaded without ambient discovery.
+{
+  const paths = resolveWebAccessResourcePaths();
+  assert.ok(paths.packageJsonPath.endsWith("pi-web-access/package.json"), "resolves pi-web-access package.json");
+  assert.ok(paths.extensionPath.endsWith("pi-web-access/index.ts"), "resolves pi-web-access extension entrypoint");
+  assert.ok(paths.skillsPath.endsWith("pi-web-access/skills"), "resolves pi-web-access bundled skills dir");
+  assert.ok(existsSync(paths.extensionPath), "resolved extension entrypoint exists");
+  assert.ok(existsSync(paths.skillsPath), "resolved skills dir exists");
+
+  const options = await buildResourceLoaderOptions({
+    cwd: process.cwd(),
+    agentDir: "/tmp/pi-agent-web-test",
+    env: { PI_MOM_WEB_ACCESS_ENABLED: "true" },
+  });
+  assert.equal(options.noExtensions, true, "web enabled still disables ambient extension discovery");
+  assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
+  assert.deepEqual(options.additionalSkillPaths, [resolveProjectSkillsDir(), paths.skillsPath]);
+  assert.equal(options.extensionFactories.length, 3, "web enabled adds only safety guard as inline factory");
+}
+
+// Case 13: web access safety guard forces no-browser workflow and blocks local/private fetches by default.
+{
+  const searchEvent = { toolName: "web_search", input: { query: "public docs", workflow: "summary-review" } };
+  assert.equal(applyWebAccessSafetyToToolCall(searchEvent, {}), undefined);
+  assert.equal(searchEvent.input.workflow, "none", "web_search workflow forced to none by default");
+
+  const allowedSearchEvent = { toolName: "web_search", input: { query: "public docs", workflow: "summary-review" } };
+  assert.equal(applyWebAccessSafetyToToolCall(allowedSearchEvent, { PI_MOM_WEB_ACCESS_ALLOW_BROWSER_WORKFLOW: "true" }), undefined);
+  assert.equal(allowedSearchEvent.input.workflow, "summary-review", "operator opt-in can preserve browser workflow");
+
+  assert.equal(applyWebAccessSafetyToToolCall({ toolName: "fetch_content", input: { url: "https://example.com/docs" } }, {}), undefined);
+  assert.match(
+    applyWebAccessSafetyToToolCall({ toolName: "fetch_content", input: { url: "file:///etc/passwd" } }, {})?.reason || "",
+    /file\/local paths are blocked/,
+  );
+  assert.match(
+    applyWebAccessSafetyToToolCall({ toolName: "fetch_content", input: { url: "http://127.0.0.1:8080" } }, {})?.reason || "",
+    /private-network/,
+  );
+  assert.match(
+    applyWebAccessSafetyToToolCall({ toolName: "web_search", input: { query: "xoxb-secret-token" } }, {})?.reason || "",
+    /secret or credential/,
+  );
+  assert.match(
+    applyWebAccessSafetyToToolCall({ toolName: "code_search", input: { query: "sk-secret-token-1234567890" } }, {})?.reason || "",
+    /secret or credential/,
+  );
+  assert.match(
+    applyWebAccessSafetyToToolCall({ toolName: "fetch_content", input: { url: "https://example.com", prompt: "OPENAI_API_KEY=sk-secret-token-1234567890" } }, {})?.reason || "",
+    /secret or credential/,
+  );
+}
+
+// Case 13b: Slack team subagent safety guard enforces curated foreground project presets.
+{
+  assert.equal(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { action: "doctor" } }),
+    undefined,
+    "team: doctor is allowed",
+  );
+  assert.equal(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "project", context: "fresh", async: false } }),
+    undefined,
+    "single approved project team agent is allowed",
+  );
+  assert.equal(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { chain: [{ agent: "team-scout" }, { agent: "team-planner" }], agentScope: "project", context: "fresh", async: false, clarify: false } }),
+    undefined,
+    "approved scout -> planner chain is allowed",
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { action: "create", config: { name: "x" } } })?.reason || "",
+    /only subagent action allowed is doctor/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "worker", task: "edit", agentScope: "project", context: "fresh", async: false } })?.reason || "",
+    /only run project team agents/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "user", context: "fresh", async: false } })?.reason || "",
+    /agentScope: project/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", context: "fresh", async: false } })?.reason || "",
+    /explicitly use agentScope: project/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "project", async: false } })?.reason || "",
+    /explicitly use fresh context/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "project", context: "fresh" } })?.reason || "",
+    /async: false/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "project", context: "fresh", async: true } })?.reason || "",
+    /async: false/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { agent: "team-scout", task: "inspect", agentScope: "project", context: "fresh", async: false, sessionDir: "./tmp" } })?.reason || "",
+    /sessionDir is not allowed/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { chain: [{ agent: "team-scout" }, { agent: "team-planner" }], agentScope: "project", context: "fresh", async: false } })?.reason || "",
+    /clarify: false/,
+  );
+  assert.match(
+    applySlackTeamSubagentSafetyToToolCall({ toolName: "subagent", input: { chain: [{ agent: "team-scout" }, { agent: "team-planner" }], agentScope: "project", context: "fresh", async: false, clarify: false, chainDir: "./tmp" } })?.reason || "",
+    /chainDir is not allowed/,
+  );
+}
+
+// Case 14: SDK loader smoke — noExtensions:true plus additionalExtensionPaths registers pi-web-access tools.
+{
+  const options = await buildResourceLoaderOptions({
+    cwd: process.cwd(),
+    agentDir: "/tmp/pi-agent-web-registration-test",
+    env: { PI_MOM_WEB_ACCESS_ENABLED: "true" },
+  });
+  const loader = new DefaultResourceLoader(options);
+  await loader.reload();
+  const extensionResult = loader.getExtensions();
+  assert.deepEqual(extensionResult.errors, [], "pi-web-access should load through the SDK loader without alias errors");
+  const registeredTools = new Set(extensionResult.extensions.flatMap((extension) => [...extension.tools.keys()]));
+  for (const tool of ["web_search", "fetch_content", "get_search_content", "code_search"]) {
+    assert.ok(registeredTools.has(tool), `registered web access tool: ${tool}`);
+  }
+  const skillNames = loader.getSkills().skills.map((skill) => skill.name);
+  assert.ok(skillNames.includes("librarian"), "bundled pi-web-access librarian skill loaded");
 }
 
 console.log("pi-sdk-runner tests passed");

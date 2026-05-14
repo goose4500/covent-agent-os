@@ -27,6 +27,8 @@
 // Errors are fail-soft: a failed canvas create/edit traces and continues;
 // the slack-sink and Pi turn proceed regardless.
 
+import { createStreamingRedactor } from "./redaction.mjs";
+
 const DEFAULT_FLUSH_MS = 3000;
 const DEFAULT_FLUSH_BYTES = 1500;
 const DEFAULT_RATE_LIMIT_BACKOFF_MS = 2000;
@@ -40,6 +42,7 @@ export function createCanvasSink({
   teamId,
   accessUserIds = [],
   trace = () => {},
+  redact = (text) => String(text || ""),
   flushMs = DEFAULT_FLUSH_MS,
   flushBytes = DEFAULT_FLUSH_BYTES,
   rateLimitBackoffMs = DEFAULT_RATE_LIMIT_BACKOFF_MS,
@@ -60,6 +63,7 @@ export function createCanvasSink({
   let stopped = false;
   let buffer = "";
   let fullText = "";
+  const streamingRedactor = createStreamingRedactor({ redact });
   let streamedChars = 0;
   let busy = false;
   let flushTimer;
@@ -78,8 +82,12 @@ export function createCanvasSink({
     if (busy || stopped || !canvasId) return;
     if (!buffer) return;
     busy = true;
-    const chunk = buffer;
+    const chunk = streamingRedactor.push(buffer);
     buffer = "";
+    if (!chunk) {
+      busy = false;
+      return;
+    }
     lastFlushAt = now();
     try {
       await client.canvases.edit({
@@ -124,7 +132,7 @@ export function createCanvasSink({
       // canvases.access.set for the requesting user.
       const args = {
         title: baseTitle,
-        document_content: { type: "markdown", markdown: initialText },
+        document_content: { type: "markdown", markdown: redact(initialText) },
       };
       const resp = await client.canvases.create(args);
       canvasId = resp?.canvas_id || resp?.canvas?.id;
@@ -162,7 +170,7 @@ export function createCanvasSink({
           await client.canvases.access.set({
             canvas_id: canvasId,
             channel_ids: [channel],
-            access_level: "write",
+            access_level: "read",
           });
           trace("canvas.channel_access_granted", { requestId, canvasId, channel });
         } catch (err) {
@@ -223,7 +231,7 @@ export function createCanvasSink({
     // own fullText — runPi strips terminal sequences and is authoritative
     // for the final output. Fall back to fullText if `result` wasn't
     // provided.
-    const finalMarkdown = typeof result === "string" && result.length > 0 ? result : fullText;
+    const finalMarkdown = redact(typeof result === "string" && result.length > 0 ? result : fullText);
     if (finalMarkdown) {
       try {
         await client.canvases.edit({

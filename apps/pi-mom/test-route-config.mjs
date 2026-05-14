@@ -1,19 +1,27 @@
 import assert from "node:assert/strict";
 import {
   TEAM_SUBAGENT_TOOLS,
+  WEB_ACCESS_TOOLS,
   buildRoutes,
   formatHelpText,
   formatStatusText,
   subagentsEnabledFromEnv,
+  webAccessEnabledFromEnv,
 } from "./lib/routes.mjs";
 
-// Case 1: PI_MOM_SUBAGENTS_ENABLED is opt-in and false by default.
+// Case 1: PI_MOM_SUBAGENTS_ENABLED and PI_MOM_WEB_ACCESS_ENABLED are opt-in and false by default.
 {
   assert.equal(subagentsEnabledFromEnv({}), false);
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "" }), false);
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "false" }), false);
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "true" }), true);
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "TRUE" }), true);
+
+  assert.equal(webAccessEnabledFromEnv({}), false);
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "" }), false);
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "false" }), false);
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "true" }), true);
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "TRUE" }), true);
 }
 
 // Case 2: disabled team: route is still recognized but has no tools, so a
@@ -39,14 +47,27 @@ import {
   assert.equal(routes.team.tools.filter((tool) => tool === "subagent").length, 1);
 }
 
-// Case 4: plain stays broad for existing behavior but never gains subagent.
+// Case 4: plain stays broad for existing behavior, never gains subagent, and gets web tools only behind PI_MOM_WEB_ACCESS_ENABLED.
 {
-  for (const enabled of [false, true]) {
-    const routes = buildRoutes({ subagentsEnabled: enabled });
+  for (const subagentsEnabled of [false, true]) {
+    const routes = buildRoutes({ subagentsEnabled, webAccessEnabled: false });
     assert.ok(routes.plain.tools.includes("bash"), "plain route keeps existing tools");
     assert.ok(routes.plain.tools.includes("write"), "plain route keeps existing tools");
     assert.ok(!routes.plain.tools.includes("subagent"), "plain route must not expose subagent");
+    for (const tool of WEB_ACCESS_TOOLS) {
+      assert.ok(!routes.plain.tools.includes(tool), `plain route must not expose ${tool} by default`);
+    }
   }
+
+  const webRoutes = buildRoutes({ subagentsEnabled: true, webAccessEnabled: true });
+  for (const tool of WEB_ACCESS_TOOLS) {
+    assert.ok(webRoutes.plain.tools.includes(tool), `plain route exposes ${tool} when web access is enabled`);
+    assert.ok(!webRoutes.team.tools.includes(tool), `team parent route must not directly expose ${tool}`);
+  }
+  assert.ok(!webRoutes.plain.tools.includes("subagent"), "web-enabled plain route still must not expose subagent");
+  assert.match(webRoutes.plain.instruction, /workflow: "none"/);
+  assert.match(webRoutes.plain.instruction, /Do not search or fetch secrets/);
+  assert.match(webRoutes.plain.instruction, /Direct URL fetch is not exposed/);
 }
 
 // Case 5: team instruction constrains Slack subagents to foreground/read-only presets.
@@ -55,6 +76,7 @@ import {
   assert.match(instruction, /foreground/i);
   assert.match(instruction, /read-only/i);
   assert.match(instruction, /async false/i);
+  assert.match(instruction, /clarify false/i);
   assert.match(instruction, /agentScope `project`/i);
   assert.match(instruction, /team-scout/);
   assert.match(instruction, /team-planner/);
@@ -91,8 +113,10 @@ import {
     traceEnabled: true,
     routes: enabledRoutes,
     subagentsEnabled: true,
+    webAccessEnabled: true,
   });
   assert.match(status, /team subagents: `enabled`/);
+  assert.match(status, /web access: `enabled`/);
   assert.match(status, /routes: `plain, help, status, summarize, linear, agenda, spec, bash, team`/);
 }
 
