@@ -43,7 +43,14 @@ for (const key of requiredEnv) {
 }
 
 const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
-const ALLOWED_CHANNEL_ID = process.env.SLACK_ALLOWED_CHANNEL_ID || "";
+function parseAllowedChannelIds(env = process.env) {
+  return String(env.SLACK_ALLOWED_CHANNEL_IDS || env.SLACK_ALLOWED_CHANNEL_ID || "")
+    .split(/[\s,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+const ALLOWED_CHANNEL_IDS = parseAllowedChannelIds(process.env);
+const ALLOWED_CHANNEL_ID = ALLOWED_CHANNEL_IDS.join(",");
 const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
 const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
 if (!["echo", "pi"].includes(MODE)) {
@@ -55,8 +62,8 @@ if (!["echo", "pi"].includes(MODE)) {
 // truncated text) has been deleted; if Slack's stream helper is unavailable,
 // the sink throws at start() and the standard error path posts a single
 // chat.postMessage with the error text.
-if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
-  console.error("SLACK_ALLOWED_CHANNEL_ID is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
+if (MODE === "pi" && ALLOWED_CHANNEL_IDS.length === 0 && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
+  console.error("SLACK_ALLOWED_CHANNEL_ID or SLACK_ALLOWED_CHANNEL_IDS is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
   process.exit(1);
 }
 const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
@@ -92,7 +99,7 @@ function trace(eventName, data = {}) {
 }
 
 function isAllowedChannel(channel) {
-  if (ALLOWED_CHANNEL_ID) return channel === ALLOWED_CHANNEL_ID;
+  if (ALLOWED_CHANNEL_IDS.length > 0) return ALLOWED_CHANNEL_IDS.includes(channel);
   return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
 }
 

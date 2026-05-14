@@ -95,7 +95,7 @@ Required env vars (Railway Variables, never in git):
 ```text
 SLACK_BOT_TOKEN          xoxb-...    Bot User OAuth Token
 SLACK_APP_TOKEN          xapp-...    App-Level Token (connections:write)
-SLACK_ALLOWED_CHANNEL_ID C0B05VBGJKF #idea-specs channel guard
+SLACK_ALLOWED_CHANNEL_ID C0B05VBGJKF,C0B30N60HGW comma-separated channel guard
 SLACK_TEST_CHANNEL_NAME  idea-specs
 EXPECTED_SLACK_BOT_USER  covent_pi   Identity guard (wrong-workspace token catch)
 

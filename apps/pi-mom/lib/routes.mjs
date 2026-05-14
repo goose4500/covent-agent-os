@@ -86,7 +86,7 @@ export function formatStatusText({
     `• uptime: \`${Number.isFinite(uptimeSeconds) ? uptimeSeconds : "?"}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${testChannelName || "?"}\`\n` +
-    `• allowed channel: \`${allowedChannelId || "any"}\`\n` +
+    `• allowed channel(s): \`${allowedChannelId || "any"}\`\n` +
     `• pi model: \`${piModelLabel || "?"}\` (thinking: \`${piThinkingLabel || "?"}\`)\n` +
     `• pi tools: \`all registered tools active by default\`\n` +
     `• app extensions: \`default-on\` (Linear, Slack UI, subagents, browser-use, pi-web-access, git checkpoint)\n` +
