@@ -200,7 +200,7 @@ function viewText(view) {
   const team = buildRouteHowtoModalView({ route: "team" });
   assert.match(JSON.stringify(team), /Team subagents/);
   assert.match(JSON.stringify(team), /team: doctor/);
-  assert.match(JSON.stringify(team), /PI_MOM_SUBAGENTS_ENABLED=true/);
+  assert.match(JSON.stringify(team), /available by default/);
 
   const homeText = viewText(buildHomeView({ now: NOW }));
   assert.match(homeText, /Team subagents/);

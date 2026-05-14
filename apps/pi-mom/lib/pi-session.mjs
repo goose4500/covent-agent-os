@@ -3,9 +3,9 @@
 // creates a fresh one if absent or stale), and delegates the actual
 // streaming to pi-sdk-runner.runPi with the resolved SessionManager.
 //
-// Accepts an `action` (from the inline ROUTES map in index.mjs) and forwards
-// `action.tools` to runPi so the SDK can call setActiveToolsByName for
-// per-route tool gating.
+// Accepts an `action` (from the ROUTES map in index.mjs) for tracing and
+// prompt shaping. Tool/skill/extension availability is default-on in the
+// runner rather than gated per route.
 //
 // Public surface:
 //   runTurn({ surface, threadTs, prompt, action, onOutput, signal }) → Promise<string>
@@ -60,13 +60,10 @@ export function createSession({
       threadTs,
       resumed,
       action: action?.name,
-      toolCount: Array.isArray(action?.tools) ? action.tools.length : undefined,
+      toolMode: "all",
     });
 
     const runPiOptions = { onOutput, signal, sessionManager };
-    if (action && Array.isArray(action.tools)) {
-      runPiOptions.tools = action.tools;
-    }
     if (sink) runPiOptions.sink = sink;
     if (uiContext) runPiOptions.uiContext = uiContext;
     const result = await runPi(prompt, runPiOptions);

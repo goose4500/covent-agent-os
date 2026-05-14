@@ -2,7 +2,7 @@
 
 **Audience**: AI agents (and humans) analyzing [PR #33](https://github.com/goose4500/covent-agent-os/pull/33) or picking up one of the six follow-up issues it spawned (#27–#32). Read this first; it's the smallest viable context to act correctly.
 
-**Scope of this file**: this handoff is specifically for the 2026-05-12 audit cohort. Future handoffs can overwrite this file; treat it as the *current* handoff, not a historical archive. The historical record lives in `docs/research/2026-05-12/`.
+**Scope of this file**: historical handoff for the 2026-05-12 audit cohort. It is not current pi-mom architecture; use `docs/architecture.md`, `docs/AGENT_CONTEXT.md`, and `docs/SYSTEM_INDEX.md` for live behavior. The historical record lives in `docs/research/2026-05-12/`.
 
 ## What you're looking at
 
@@ -48,7 +48,7 @@ Suggested execution order: **#27 → #28 → #31 → #30 → #29 → #32**. The 
 - **24h audit report**: `docs/research/2026-05-12/audit-24h.md` — activity stats, PR landscape, code-quality notes, security review, CI shape, concrete follow-ups.
 - **Issue specs**: `docs/research/2026-05-12/issues/01-pi-harness-cleanup.md` through `06-shared-execution-host.md`.
 - **Foundation-v2 merge being audited**: PR #24, merge commit `1ab169c`.
-- **Bot code surface**: `apps/pi-mom/` (index.mjs, lib/, control-plane/registry.yaml), `extensions/` (linear-tools.ts, permission-gate.ts, et al.), `packages/pi-ext-covent-aws/` (scaffolded, not wired).
+- **Bot code surface (current)**: `apps/pi-mom/` (index.mjs, lib/routes.mjs, pi-sdk-runner/session/sinks), `extensions/` (linear, Slack UI, Browser Use, git checkpoint), `.agents/team-*.md`, `packages/pi-ext-covent-aws/` (scaffolded, not wired).
 - **SDK source (after `bun install`)**: `node_modules/@earendil-works/pi-coding-agent/dist/core/` for `sdk.{d.ts,js}`, `agent-session.{d.ts,js}`, `auth-storage.{d.ts,js}`, `extensions/types.d.ts`, `resource-loader.js`, `session-manager.d.ts`.
 - **Bolt + web-api source (after `bun install`)**: `node_modules/@slack/bolt/dist/` (App.js, Assistant.js, context/create-say-stream.js, middleware/builtin.js); `node_modules/@slack/web-api/dist/` (chat-stream.js, types/request/canvas.d.ts).
 - **Threat model**: `BOUNDARY.md` — where the #31 plain-route policy decision and the #32 execution-host policy decision are intended to land.

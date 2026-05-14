@@ -7,8 +7,8 @@ Private monorepo for Covent's AI automation operating layer — the Slack ↔ Pi
 ## What this repo is
 
 - **Slack bridge runtime**: `apps/pi-mom/` — Bolt 4.7 Assistant container + `app_mention` parity, surfaces Pi agent execution into Slack threads.
-- **Pi agent layer**: `extensions/`, `skills/`, `agents/`, `packages/` — Pi custom tools (Linear, permission-gate, env-guard, browser access) and reusable operating modes.
-- **Route control**: `apps/pi-mom/lib/routes.mjs` — pure route catalog for per-Action tool gating, Slack help/status text, and feature-flagged workflows.
+- **Pi agent layer**: `extensions/`, `skills/`, `agents/`, `packages/` — Pi custom tools (Linear, Slack UI, Browser Use, git checkpoint, web access) and reusable operating modes.
+- **Route control**: `apps/pi-mom/lib/routes.mjs` — pure route catalog for workflow instructions plus Slack help/status text. Tool/skill/extension access is default-on for Pi-backed routes.
 - **Operating docs**: `docs/` — architecture, ADRs, runbooks, specs, source-of-truth, and historical research.
 
 ## Three primitives
@@ -17,9 +17,9 @@ The bridge is wired on three primitives. Nothing bespoke duplicates what they al
 
 | Primitive | What it is |
 |---|---|
-| [`@earendil-works/pi-coding-agent@0.74`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | Pi SDK, **embedded in-process** via `createAgentSession` + `SessionManager` + `setActiveToolsByName`. No subprocess. |
+| [`@earendil-works/pi-coding-agent@0.74`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | Pi SDK, **embedded in-process** for parent runs via `createAgentSession` + `SessionManager` + `setActiveToolsByName`. Child subagents may spawn the `pi` CLI. |
 | [`@slack/bolt@4.7`](https://slack.dev/bolt-js/) + [`@slack/web-api@7.15.2`](https://slack.dev/node-slack-sdk/web-api) | Slack runtime. `Assistant` container + `app_mention` adapter share one `dispatchToAction`. `chat.startStream` + `canvases.{create,edit}`. |
-| `apps/pi-mom/lib/routes.mjs` | Per-route config. Dispatcher/help/status/tests read the same route catalog. |
+| `apps/pi-mom/lib/routes.mjs` | Route catalog. Dispatcher/help/status/tests read the same route labels and workflow instructions. |
 
 Runtime: **bun 1.3+**.
 
@@ -27,8 +27,9 @@ Runtime: **bun 1.3+**.
 
 ```bash
 bun install
+bun run install:pi     # required for default-on team/subagent child runs
 bun run check          # secret-scan + skill/agent validators + pi-mom test suites + tsc --noEmit
-bun run doctor:pi-mom  # non-secret readiness diagnostics
+bun run doctor:pi-mom  # non-secret readiness diagnostics; verifies pi CLI availability
 ```
 
 To run the Slack bridge locally:
@@ -39,7 +40,7 @@ cp apps/pi-mom/.env.example apps/pi-mom/.env.local
 bun run dev:pi-mom
 ```
 
-If you also need a local Pi install for harness experimentation:
+If your machine does not already have Pi on PATH:
 
 ```bash
 bun run install:pi
@@ -47,35 +48,35 @@ bun run install:pi
 
 ## Agent Actions — team-facing model
 
-Engineers ask `@Covent-Agent` for outcomes; the bot resolves the message to an **Action** with bounded tools.
+Engineers ask `@Covent-Agent` for outcomes; the bot resolves the message to an **Action** that shapes the workflow while keeping Pi's registered tools/skills/extensions available by default.
 
 ```text
 Covent Agent = the Slack app engineers use
-Actions      = bounded things it can do (defined in lib/routes.mjs)
+Actions      = workflow intents/prefixes (defined in lib/routes.mjs)
 Runs         = one execution of an Action
-Approvals    = Slack modals before risky tool calls (e.g. rm -rf via permission-gate)
+Approvals    = explicit Slack/user confirmation when the model or workflow asks for it
 Artifacts    = source-linked results: Slack thread + optional canvas + Linear comment/issue
 ```
 
 Core loop:
 
 ```text
-Slack mention → dispatchToAction → route config(lib/routes.mjs) → runTurn(session, sink) → stream + tools → result
+Slack mention → dispatchToAction → route instruction(lib/routes.mjs) → runTurn(session, sink) → stream + tools → result
 ```
 
-Active routes (`apps/pi-mom/lib/routes.mjs`):
+Active routes (`apps/pi-mom/lib/routes.mjs`): all Pi-backed routes get the same default-on registered tool surface (`bash`, file tools, Linear tools, Slack UI tools, Browser Use, `pi-subagents`, and `pi-web-access`). Prefixes shape the instruction, not the tool allowlist.
 
-| Route | tools active | What it does |
-|---|---|---|
-| `plain` (no prefix) | `bash` + `read` + `grep` + `find` + `edit` + `write`; plus `web_search`/`get_search_content`/`code_search` only when `PI_MOM_WEB_ACCESS_ENABLED=true` | Full default Pi toolset — bare mentions can do real work; public web search is opt-in; direct URL fetch stays unexposed by default |
-| `help` | — | Hard-coded menu |
-| `status` | — | Bridge health/config |
-| `summarize` | — | Thread → decisions/questions/owners |
-| `linear` | `linear_search_issues` + `linear_create_issue` + `linear_add_comment` | Search-first idempotency → comment-or-create |
-| `agenda` | — | Thread → meeting agenda |
-| `spec` | — | Thread → PRD draft (mirrors to a Slack canvas via canvas-sink) |
-| `team` | disabled by default; when enabled: `subagent` + Slack interactive tools | Read-only foreground team subagent presets (`doctor`, `context`, `plan`, `review`) |
-| `bash` | `bash` | Explicit shell route |
+| Route | What it does |
+|---|---|
+| `plain` (no prefix) | Full default Pi agent |
+| `help` | Hard-coded menu |
+| `status` | Bridge health/config |
+| `summarize` | Thread → decisions/questions/owners |
+| `linear` | Linear issue/comment workflow |
+| `agenda` | Thread → meeting agenda |
+| `spec` | Thread → PRD draft (mirrors to a Slack canvas via canvas-sink) |
+| `team` | Team subagent workflow |
+| `bash` | Explicit shell route |
 
 ## Production deploy
 
@@ -104,14 +105,13 @@ PI_MOM_THINKING_LEVEL              high
 PI_MOM_TRACE                       true
 PI_TIMEOUT_MS                      180000   wall-clock per Pi run
 PI_OFFLINE                         1        no SDK auto-npm-install
-PI_MOM_SUBAGENTS_ENABLED           false    enables team: subagent route only after canary
-PI_MOM_WEB_ACCESS_ENABLED          false    enables public web search/code-search tools on plain route only; direct URL fetch stays unexposed by default
+# Subagents and web access are default-on in code; no feature flag required.
 PI_ALLOW_BROWSER_COOKIES           0        keep Gemini Web browser cookies off by default
 PI_AUTH_JSON_B64                   base64(~/.pi/agent/auth.json) — seeded on cold boot
 PI_AGENT_DIR                       /data/pi-agent   persistent volume
 
 OPENAI_API_KEY                     sk-...
-EXA_API_KEY / PERPLEXITY_API_KEY / GEMINI_API_KEY optional web providers when web access is enabled
+EXA_API_KEY / PERPLEXITY_API_KEY / GEMINI_API_KEY optional providers for default-on web tools
 LINEAR_API_KEY                     lin_api_...
 LINEAR_TEAM_ID                     UUID — Frontend Engineering
 LINEAR_PROJECT_ID                  UUID — Distribution
@@ -146,7 +146,7 @@ Start here:
 ```text
 Slack    = cockpit / intake / approvals
 Pi SDK   = reasoning + execution runtime (in-process under bun)
-routes   = single source of truth for Slack route tools/help/status (`apps/pi-mom/lib/routes.mjs`)
+routes   = single source of truth for Slack route instructions/help/status (`apps/pi-mom/lib/routes.mjs`)
 Linear   = execution truth (issues + comments) via modular Pi custom tools
 GitHub   = code truth
 Railway  = runtime/deployment state

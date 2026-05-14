@@ -61,7 +61,7 @@ if (MODE === "pi" && !ALLOWED_CHANNEL_ID && process.env.PI_MOM_ALLOW_ANY_CHANNEL
 }
 const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING_LABEL = process.env.PI_MOM_THINKING_LEVEL || "high";
-const PI_MOM_SUBAGENTS_ENABLED = subagentsEnabledFromEnv(process.env);
+const SUBAGENTS_ENABLED = subagentsEnabledFromEnv(process.env);
 const MAX_SLACK_TEXT = Number(process.env.MAX_SLACK_TEXT || 38000);
 const TRACE_ENABLED = process.env.PI_MOM_TRACE !== "false";
 const LINEAR_API_URL = process.env.LINEAR_API_URL || "https://api.linear.app/graphql";
@@ -71,11 +71,10 @@ const LINEAR_STATE_ID = process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-
 const STARTED_AT = new Date();
 let AUTH_TEAM_ID = process.env.SLACK_TEAM_ID || "";
 
-// Slack routes. `tools` is the per-route allowlist passed to the SDK's
-// setActiveToolsByName (empty array = noTools:"all"). `instruction` is
-// appended to the Pi prompt by buildPiPrompt() for routes that have one.
-// Definitions live in lib/routes.mjs so help/status and route safety are unit-tested.
-const ROUTES = buildRoutes({ subagentsEnabled: PI_MOM_SUBAGENTS_ENABLED });
+// Slack routes. Prefixes now shape workflow instructions only; Pi-backed
+// routes all receive the same default-on tool/extension/skill surface.
+// Definitions live in lib/routes.mjs so help/status copy is unit-tested.
+const ROUTES = buildRoutes();
 
 function resolveAction(command = {}) {
   let name = "plain";
@@ -83,7 +82,7 @@ function resolveAction(command = {}) {
   else if (command.kind === "help") name = "help";
   else if (command.kind === "status") name = "status";
   const route = ROUTES[name] || ROUTES.plain;
-  return { name, tools: route.tools ? [...route.tools] : [] };
+  return { name, routeKey: name, route };
 }
 
 function trace(eventName, data = {}) {
@@ -235,7 +234,7 @@ function parseSlackThreadReference(text = "") {
 }
 
 function formatHelp() {
-  return formatHelpText({ routes: ROUTES, subagentsEnabled: PI_MOM_SUBAGENTS_ENABLED });
+  return formatHelpText({ routes: ROUTES, subagentsEnabled: SUBAGENTS_ENABLED });
 }
 
 async function formatStatus(client) {
@@ -262,7 +261,7 @@ async function formatStatus(client) {
     linearStateId: LINEAR_STATE_ID,
     traceEnabled: TRACE_ENABLED,
     routes: ROUTES,
-    subagentsEnabled: PI_MOM_SUBAGENTS_ENABLED,
+    subagentsEnabled: SUBAGENTS_ENABLED,
   });
 }
 
@@ -386,7 +385,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     });
   }
 
-  const wantsSubagentSidecars = PI_MOM_SUBAGENTS_ENABLED && (action?.name === "team" || action?.routeKey === "team");
+  const wantsSubagentSidecars = SUBAGENTS_ENABLED && (action?.name === "team" || action?.routeKey === "team");
   let subagentCanvasSidecarSink;
   if (wantsSubagentSidecars) {
     subagentCanvasSidecarSink = createSubagentCanvasSidecarSink({
@@ -571,7 +570,7 @@ function buildHomeStatusSnapshot() {
     piModel: PI_MODEL_LABEL,
     piThinking: PI_THINKING_LABEL,
     linearConfigured: Boolean(process.env.LINEAR_API_KEY),
-    subagentsEnabled: PI_MOM_SUBAGENTS_ENABLED,
+    subagentsEnabled: SUBAGENTS_ENABLED,
     traceEnabled: TRACE_ENABLED,
     uptimeSeconds: Math.round((Date.now() - STARTED_AT.getTime()) / 1000),
   };
@@ -654,7 +653,7 @@ async function handleRequest({ client, event, mode, utilities }) {
     route: command.routeKey,
     naturalIntent: command.naturalIntent,
     action: action.name,
-    toolCount: action.tools.length,
+    toolMode: "all",
   });
 
   // Channel allowlist applies to channel mentions. DMs (direct_message) and the

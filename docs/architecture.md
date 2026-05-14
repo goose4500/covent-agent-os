@@ -1,202 +1,150 @@
 # Architecture
 
-> **Status:** post-rebuild canonical architecture as of 2026-05-12 (PR #24, merge commit `1ab169c`). Replaces the older subprocess-based shape entirely.
+> **Status:** current pi-mom architecture as of 2026-05-14. Parent Pi runs are in-process; route prefixes shape workflow only; all registered tools/skills/app extensions are default-on for Pi-backed Slack turns.
 
 ## What you're looking at
 
-`covent-pi-mom` is a Slack Socket Mode bridge that runs Pi (an AI coding agent) in-process and routes each Slack mention or Assistant message through a per-Action policy file. Both Bolt 4.7's `Assistant` container and the legacy `app_mention` adapter resolve to the same `dispatchToAction` function. The same Pi session resumes across thread turns (per-thread `SessionManager`). Streaming responses use `chat.startStream`; long-form output mirrors to a standalone Slack canvas; Pi extensions emit approval modals into Slack via `ExtensionUIContext`.
+`covent-pi-mom` is a Slack Socket Mode bridge that runs Pi (an AI coding agent) in-process and streams answers back to Slack threads. Bolt's Assistant container, DMs, slash fallback, and legacy `app_mention` events all converge on the same request path in `apps/pi-mom/index.mjs`.
 
-## The 3-primitive foundation
+The bridge keeps route parsing simple: `apps/pi-mom/lib/routes.mjs` owns route labels, workflow instructions, help text, and status text. It does **not** own tool allowlists. Normal Pi turns activate every registered SDK tool by default.
 
-```
-@earendil-works/pi-coding-agent@0.74     ─►  in-process Pi agent
+## The 3 primitives
+
+```text
+@earendil-works/pi-coding-agent@0.74     ─►  in-process parent Pi agent
 @slack/bolt@4.7 + @slack/web-api@7.15.2  ─►  Slack runtime + streaming + canvases
-apps/pi-mom/control-plane/registry.yaml  ─►  per-route tool gating + systemPromptSuffix + approvals
+apps/pi-mom/lib/routes.mjs               ─►  route labels/instructions/help/status
 ```
 
-Everything else is wiring. No subprocess. No custom run store. No bespoke chunker. No post-stream Linear guard.
+Everything else is wiring. No YAML control plane. No post-stream Linear scraper. No route-specific safety extension layer.
 
 ## End-to-end flow
 
 ```text
-Slack event (app_mention | Assistant userMessage)
+Slack event (app_mention | Assistant userMessage | DM | /thread-spec)
   │
   ▼
 Bolt receiver
   │
   ▼
-adapter (assistant | app_mention) ──► dispatchToAction({surface, channel, threadTs, userId, text, ack, utilities})
+handleRequest / route parsing
   │
   ▼
-action-resolver(registry.yaml) ──► {name, tools, systemPromptSuffix, approvals}
+resolveAction(command) ──► { name, routeKey, route }
   │
   ▼
-runTurn({surface, threadTs, prompt, sink, uiContext})
+buildPiPrompt(route.instruction + Slack thread context + user text)
   │
-  ├─► SessionManager.open(thread_session_map[threadTs])     ◄── per-thread Pi session resumption
-  │      OR .create(repoRoot)
+  ▼
+runTurn({ surface, threadTs, prompt, sink, uiContext })
   │
-  ├─► createAgentSession({model, sessionManager, …})
-  │      .bindExtensions({uiContext: slackUI})              ◄── Pi extensions get Slack modals
-  │      .setActiveToolsByName(action.tools)                ◄── per-route tool gating
+  ├─► SessionManager.open(thread_session_map[threadTs]) or .create(repoRoot)
   │
-  ├─► session.subscribe(evt ─► sink.handle(evt))            ◄── composite-sink fans to slackSink + canvasSink
+  ├─► createAgentSession({ model, sessionManager, resourceLoader, … })
+  │      .bindExtensions({ uiContext: slackUI })
+  │      .setActiveToolsByName(all registered tool names)
   │
-  └─► session.prompt(action.suffix + userText)
-                                                            
+  ├─► session.subscribe(evt ─► sink.handle(evt))
+  │
+  └─► session.prompt(prompt)
+
 Pi events stream out:
   text_delta       ─► slack-sink batches every 200ms → chat.appendStream
-                      canvas-sink debounces 3000ms → canvases.edit (spec: route)
-  tool_call        ─► permission-gate may intercept → ctx.ui.confirm/select → Slack modal
-  tool_call_end    ─► linear-tools may return AgentToolResult → Slack confirmation in stream
+                      canvas-sink debounces → canvases.edit (spec: route)
+  tool_call        ─► registered Pi tools run directly
+  subagent events  ─► subagent-canvas-sidecar-sink creates/updates child canvases (team: route)
   agent_end        ─► chat.stopStream + final action chunks
 ```
 
+## Tool / extension posture
+
+Normal Slack Pi turns omit `tools`, so `apps/pi-mom/lib/pi-sdk-runner.mjs`:
+
+1. creates the SDK session with tools enabled;
+2. reads `session.getAllTools()`;
+3. calls `session.setActiveToolsByName([...allToolNames])`.
+
+`DefaultResourceLoader` keeps ambient extension auto-discovery disabled with `noExtensions: true`, but explicitly loads app-approved factories/paths:
+
+- `extensions/linear-tools.ts`
+- `extensions/slack-interactive-tools.ts`
+- `extensions/browser-use-tools.ts`
+- `extensions/git-checkpoint.ts`
+- official `pi-subagents@0.24.2`
+- official `pi-web-access@0.10.7` via `additionalExtensionPaths`
+
+Skills are also default-on: repo skills plus `pi-web-access/skills` are added explicitly, and `noSkills: false` allows the SDK's normal skill discovery. `PI_OFFLINE=1` remains set so the SDK does not auto-install user-scope packages at session creation.
+
+An explicit internal `tools: []` still creates `noTools: "all"` for tests/non-Pi bridge replies. Route definitions no longer pass tool arrays.
+
 ## File tree
 
-```
+```text
 apps/pi-mom/
-├── index.mjs                       (799 LOC)  bun entry; Bolt boot; both surface adapters;
-│                                              app_home_opened handler; pendingApprovals Map +
-│                                              wrapped set/delete that pushes Home state
-├── control-plane/
-│   ├── registry.yaml                          per-route Action vocabulary
-│   └── registry-loader.mjs                    YAML → runtime metadata
+├── index.mjs                         bun entry; Slack/Bolt boot; request handling; App Home
 ├── lib/
-│   ├── dispatch.mjs                 (58)      dispatchToAction({surface, …})
-│   ├── action-resolver.mjs          (85)      parses Slack text + registry → Action
-│   ├── pi-sdk-runner.mjs           (295)      createAgentSession glue; OAuth seed from PI_AUTH_JSON_B64
-│   ├── pi-session.mjs               (87)      runTurn — opens session, subscribes events, pumps sink
-│   ├── thread-session-map.mjs      (107)      JSON-on-disk threadTs → sessionFile path
-│   ├── slack-sink.mjs              (268)      Pi events → chat.startStream/appendStream + heartbeat
-│   ├── slack-ui-context.mjs        (451)      Pi ExtensionUIContext → Slack approval modals
-│   ├── canvas-sink.mjs             (268)      Pi text_delta → canvases.edit (debounced) for spec: route
-│   ├── composite-sink.mjs           (50)      Fan one Pi event stream → multiple sinks
-│   └── home-view.mjs                (51)      App Home cockpit view builder (approvals-only)
-└── test-*.mjs                                 13 bun test suites
+│   ├── routes.mjs                    route labels/instructions/help/status
+│   ├── dispatch.mjs                  dispatch helper
+│   ├── pi-sdk-runner.mjs             createAgentSession/resource-loader glue
+│   ├── pi-session.mjs                per-thread SessionManager + runTurn
+│   ├── thread-session-map.mjs        JSON-on-disk threadTs → session path
+│   ├── slack-sink.mjs                Pi events → chat.startStream/appendStream
+│   ├── slack-ui-context.mjs          Pi ExtensionUIContext → Slack UI
+│   ├── canvas-sink.mjs               spec: output → Slack canvas
+│   ├── subagent-canvas-sidecar-sink.mjs team: child runs → sidecar canvases
+│   ├── composite-sink.mjs            fan one Pi stream to multiple sinks
+│   ├── redaction.mjs                 streaming/output redaction helpers
+│   └── home-view.mjs                 App Home view builder
+└── test-*.mjs                        bun smoke/unit suites
 ```
 
-`apps/pi-mom/` total ≈ 2,519 LOC after Stage 10 cleanup (was 3,310 pre-rebuild).
+## Active routes
 
-## Routes (from `control-plane/registry.yaml`)
+| Route | What it does |
+|---|---|
+| `plain` (no prefix) | Full default Pi agent |
+| `help` | Hard-coded menu |
+| `status` | Bridge health/config |
+| `summarize` | Thread → decisions/questions/owners/next-actions |
+| `linear` | Linear issue/comment workflow |
+| `agenda` | Thread → meeting agenda |
+| `spec` | Thread → PRD draft; mirrors to Slack canvas |
+| `team` | Team subagent workflow; creates Canvas sidecars for child runs |
+| `bash` | Explicit shell workflow |
 
-| Route | tools | approvals | What it does |
-|---|---|---|---|
-| `plain` (no prefix) | `bash`, `read`, `grep`, `find`, `edit`, `write` | `tool` | Full default Pi toolset — bare mentions can run shell, read/write files |
-| `help` | — | `none` | Hard-coded menu via `formatHelp()` |
-| `status` | — | `none` | Bridge health/config via `formatStatus()` |
-| `summarize` | — | `none` | Thread → decisions/questions/owners/next-actions |
-| `linear` | `linear_search_issues`, `linear_create_issue`, `linear_add_comment` | `tool` | Search-first idempotency → comment-or-create |
-| `agenda` | — | `none` | Thread → meeting agenda |
-| `spec` | — | `none` | Thread → PRD draft; mirrors to a standalone Slack canvas |
-| `bash` | `bash` | `tool` | Explicit shell; permission-gate intercepts dangerous commands |
+Again: this table is not a security matrix. All Pi-backed routes have the same registered tool surface.
 
-Tool gating is enforced by the SDK's `setActiveToolsByName(action.tools)`. An empty array = `noTools: "all"` plus a `DefaultResourceLoader` with `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles` — the SDK's default-deny posture.
+## Streaming + canvases
 
-## Both surfaces, one dispatcher
+`lib/slack-sink.mjs` is the only Slack streaming path. It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep long thinking runs alive. On `agent_end`, it calls `chat.stopStream` with final action chunks.
 
-`@Covent-Agent` in a channel triggers `app.event("app_mention")`. The Assistant chat tab triggers `new Assistant({ threadStarted, userMessage })`. Both adapters call `dispatchToAction({surface, …})` so messages produce identical responses regardless of where they came from. Slack manifest scopes: `assistant:write`, `chat:write`, `im:history`, `app_mentions:read`, `channels:history`, `groups:history`, `mpim:history`, `commands`, `files:write`, `canvases:write`.
-
-## Streaming + heartbeat
-
-`lib/slack-sink.mjs` is the only streaming path. It:
-
-- Batches Pi `text_delta` events every **200ms** into `chat.appendStream` chunks.
-- Emits zero-width-space **heartbeats every 25s** to keep Slack's stream session alive during long thinking-level=high runs.
-- **Rotates streams** before per-message char ceiling (38KB default) so single messages stay under Slack limits.
-- On `agent_end`, calls `chat.stopStream` with any final action chunks.
-
-Legacy chunker (`splitForSlackStream`) + `chat.update` fallback + `PI_OUTPUT_IDLE_MS` were all deleted in Stage 5 / Stage 10. There is no fallback path; if Slack's stream API is unavailable, the sink throws at start and a single `chat.postMessage` carries the error.
-
-## Approval modals (Stage 6)
-
-`lib/slack-ui-context.mjs` implements Pi's `ExtensionUIContext` (`confirm`, `select`, `input`, `notify`, `setStatus`). The `permission-gate` extension (in `extensions/permission-gate.ts`) calls `ctx.ui.select("Allow?", ["Yes","No"])` when the model tries to run `rm -rf` / `sudo` / `chmod 777` / `chown 777`. The bridge translates that into Slack interactive buttons (or `views.open` modal for `input`). A process-global `pendingApprovals` Map resolves the original promise on `view_submission` / `block_actions`.
-
-The same `pendingApprovals` mutations push state to the App Home cockpit (`app.event("app_home_opened")` → `views.publish(buildHomeView(…))`).
-
-## Long-form output → canvas mirror (Stage 8)
-
-The `spec:` route mirrors its output into a standalone Slack canvas via `composite-sink([slackSink, canvasSink])`. The canvas-sink debounces `canvases.edit` every 3000ms / 1500B. Key correctness bits:
-
-- URL format must be `https://app.slack.com/docs/{TEAM_ID}/{CANVAS_ID}` (`team_id` is required).
-- `canvases.create` is called **without** `channel_id` to produce a standalone canvas; channel-attached canvases broke the URL.
-- After create, two `canvases.access.set` calls grant write access to the originating user + the channel.
-- The `op: "rename"` edit operation returns `invalid_arguments` from Slack; it was dropped. Streaming indicator lives in the thread message instead.
+`spec:` uses `canvas-sink.mjs` to mirror long-form output to a standalone Slack canvas. `team:` uses `subagent-canvas-sidecar-sink.mjs` to create/update child-run sidecar canvases and append footer links back into the main Slack stream.
 
 ## Linear as modular custom tools
 
-`extensions/linear-tools.ts` registers 3 tools via `pi.registerTool`. Idempotency lives in model reasoning, not in a post-stream guard.
+`extensions/linear-tools.ts` registers:
 
 | Tool | Purpose |
 |---|---|
-| `linear_search_issues` | Find existing matches before creating — duplicate prevention |
-| `linear_create_issue` | Create a new issue (title, Markdown description, optional priority) |
-| `linear_add_comment` | Comment on existing issue; accepts UUID or human identifier (e.g. `FE-554`) — auto-resolves via `IssueLookup` query |
+| `linear_search_issues` | Find likely duplicates / previous issues |
+| `linear_create_issue` | Create a new issue in the configured team/project/state |
+| `linear_add_comment` | Comment on an existing issue |
 
-The `linear:` route's `systemPromptSuffix` in registry.yaml nudges: ALWAYS call `linear_search_issues` first; if a match comes back, prefer `linear_add_comment`; only call `linear_create_issue` when no match exists. Live verified zero duplicates across 4+ canary runs into FE-554.
+Idempotency lives in model reasoning and route instructions, not in a post-stream scraper.
 
-Shared `makeLinearCall` helper centralizes auth (`LINEAR_API_KEY`), HTTP error shaping, AbortSignal handling, and secret redaction so each `execute()` stays focused on its own variables.
+## Production notes
 
-## App Home cockpit (Stage 7, trimmed Stage 10)
+- Railway production service: `covent-pi-mom`, source branch `main`.
+- Parent Pi auth is seeded by `PI_AUTH_JSON_B64` into `${PI_AGENT_DIR}/auth.json` on cold boot.
+- `PI_OFFLINE=1` should stay set.
+- Child subagent runs spawn the `pi` CLI, so the deployment image must keep `pi` on PATH.
+- Real secrets live in Railway variables only; docs and tests use placeholders.
 
-`app.event("app_home_opened")` publishes a read-only snapshot via `views.publish`. Push-updates fire on every `pendingApprovals.set` / `pendingApprovals.delete` (wrapped via a proxy that the slack-ui-context can mutate without knowing about App Home).
+## Current references
 
-Current sections after Stage 10: header + approvals block (or "No approvals waiting" placeholder). The runs/activity sections were trimmed when `runStore` was deleted; can be re-lit if/when an SDK-backed runs index is added.
-
-## Required env vars
-
-See [README.md § Production deploy](../README.md#production-deploy) for the canonical env var table. Highlights:
-
-- `PI_AUTH_JSON_B64` — base64 of `~/.pi/agent/auth.json`; seeded into `/data/pi-agent/auth.json` on cold boot. Without it, the SDK can't OAuth on a fresh container fs.
-- `PI_OFFLINE=1` — stops the SDK from running `npm install -g pi-web-access` at session creation.
-- `PI_AGENT_DIR=/data/pi-agent` — Railway persistent volume mount; per-thread session files persist across deploys.
-
-Removed in Stage 10 (cosmetic — new code already ignored them): `PI_COMMAND`, `PI_EXTRA_ARGS`, `PI_OUTPUT_IDLE_MS`, `PI_MOM_ALLOW_PI_TOOLS`, `PI_MOM_IMAGE_ROUTE_ENABLED`, `PI_MOM_STREAMING`, all `PI_MOM_AGENT_*`.
-
-## Extensions
-
-Currently wired through `pi-sdk-runner.mjs`:
-
-| Extension | Where | What it does |
-|---|---|---|
-| `extensions/permission-gate.ts` | repo-local, always loaded | Intercepts `rm -rf` / `sudo` / `chmod 777` / `chown 777` via `ctx.ui.select` → Slack modal |
-| `extensions/linear-tools.ts` | repo-local, always loaded | The 3 modular Linear tools |
-| `extensions/env-guard.ts` | global at `~/.pi/agent/extensions/` | Blocks writes to `.env*` / `~/.secrets/**` |
-| `extensions/git-checkpoint.ts` | global | Auto-commits before risky operations |
-
-Not yet wired (tracked as follow-up): `packages/pi-ext-covent-aws` — would route `bash` execution to an EC2 operator instance via `COVENT_LANE=operator AWS_REGION=us-east-1`.
-
-## Deploy lifecycle (canonical)
-
-The blue-green canary pattern that shipped this rebuild. Reusable for future risky migrations — see [docs/runbooks/foundation-v2-cutover-2026-05-12.md](runbooks/foundation-v2-cutover-2026-05-12.md) for the step-by-step.
-
-1. **Parallel Railway service** (`covent-pi-mom-v2`) auto-deploys from the work branch; production keeps running old code from `main`.
-2. **Live canary on v2** — exercise every route end-to-end before unlocking the next stage.
-3. **Pre-merge env mirror** — `railway variables --service v2 --kv | grep ^(NEEDED_KEYS) | while … railway variables --service prod --set "$k=$v"` (values never echo).
-4. **Down the canary before merge** — prevents Socket Mode split-brain when both services hold the same Slack tokens.
-5. **Merge with `--merge`** — preserves stage history.
-6. **Watch Railway** via `railway status --json | jq …` for `BUILDING → DEPLOYING → SUCCESS`.
-7. **Boot-signature verification + live canary on prod** — confirm new code's expected lines appear; run a tool call that returns container-identifying output (hostname) to prove it's actually prod.
-8. **Keep canary `down` (not deleted) for ~24h** as a hot rollback target. `railway up --service covent-pi-mom-v2` restores it within 2 min.
-
-## What was killed in the rebuild
-
-| What | Why |
-|---|---|
-| `spawn("pi", …)` subprocess + stdout-polling + idle detection + ENOENT trap | SDK is in-process — entire 100+ LOC of subprocess plumbing gone |
-| `lib/agent-run-card.mjs` + `lib/agent-run-store.mjs` + `lib/agent-runners.mjs` + `lib/slack-canvas.mjs` | Agent Run Card / Block Kit Start-Cancel pattern is pre-SDK; replaced by streaming task chunks |
-| `lib/openai-image-client.mjs` (313 LOC) | Image generation removed entirely (Stage 9 killed; low value) |
-| `lib/linear-idempotency.mjs` (62 LOC) | Replaced by modular Linear tools + idempotency in model reasoning |
-| `splitForSlackStream` + `STREAM_BUFFER_CHARS` + `PI_OUTPUT_IDLE_MS` + `chat.update` fallback | slack-sink batches by time-window; legacy chunker was dead code |
-| `image:`, `digest:`, `escalation:` routes | Low-value; user decision |
-| `agent:` route + `uictx:` Stage-6 dev probe | Stage 10 cleanup |
-
-## Related
-
-- [`README.md`](../README.md) — top-level overview + quick start + prod deploy table.
-- [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md) — system-wide source-of-truth map.
-- [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — read-first agent context.
-- [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, and secret/data handling.
-- [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — the format of `control-plane/registry.yaml`.
-- [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — the 2026-05-12 cutover lifecycle and the reusable pattern.
-- ADRs in [`docs/adr/`](adr/) for early decisions (still mostly valid).
+- [`README.md`](../README.md)
+- [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md)
+- [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md)
+- [`apps/pi-mom/README.md`](../apps/pi-mom/README.md)
+- [`apps/pi-mom/lib/routes.mjs`](../apps/pi-mom/lib/routes.mjs)
+- [`apps/pi-mom/lib/pi-sdk-runner.mjs`](../apps/pi-mom/lib/pi-sdk-runner.mjs)

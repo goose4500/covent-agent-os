@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  TEAM_SUBAGENT_TOOLS,
-  WEB_ACCESS_TOOLS,
   buildRoutes,
   formatHelpText,
   formatStatusText,
@@ -9,94 +7,33 @@ import {
   webAccessEnabledFromEnv,
 } from "./lib/routes.mjs";
 
-// Case 1: PI_MOM_SUBAGENTS_ENABLED and PI_MOM_WEB_ACCESS_ENABLED are opt-in and false by default.
+// Case 1: subagents and web access are default-on.
 {
-  assert.equal(subagentsEnabledFromEnv({}), false);
-  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "" }), false);
-  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "false" }), false);
-  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "true" }), true);
-  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "TRUE" }), true);
-
-  assert.equal(webAccessEnabledFromEnv({}), false);
-  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "" }), false);
-  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "false" }), false);
-  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "true" }), true);
-  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "TRUE" }), true);
+  assert.equal(subagentsEnabledFromEnv({}), true);
+  assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "false" }), true);
+  assert.equal(webAccessEnabledFromEnv({}), true);
+  assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "false" }), true);
 }
 
-// Case 2: disabled team: route is still recognized but has no tools, so a
-// `team:` request cannot fall through to the write-capable plain route.
+// Case 2: routes are workflow instructions, not tool allowlists.
 {
-  const routes = buildRoutes({ subagentsEnabled: false });
-  assert.ok(routes.team, "team route should exist when disabled to avoid plain-route fallback");
-  assert.equal(routes.team.label, "Team subagents (disabled)");
-  assert.deepEqual(routes.team.tools, [], "disabled team route must not expose subagent");
-  assert.match(routes.team.instruction, /PI_MOM_SUBAGENTS_ENABLED=true/);
-}
-
-// Case 3: enabled team: route exposes exactly the subagent + Slack HITL tools.
-{
-  const routes = buildRoutes({ subagentsEnabled: true });
-  assert.deepEqual(routes.team.tools, TEAM_SUBAGENT_TOOLS);
-  assert.deepEqual(routes.team.tools, [
-    "subagent",
-    "slack_approval_card",
-    "slack_choice_card",
-    "slack_input_request",
-  ]);
-  assert.equal(routes.team.tools.filter((tool) => tool === "subagent").length, 1);
-}
-
-// Case 4: plain stays broad for existing behavior, never gains subagent, and gets web tools only behind PI_MOM_WEB_ACCESS_ENABLED.
-{
-  for (const subagentsEnabled of [false, true]) {
-    const routes = buildRoutes({ subagentsEnabled, webAccessEnabled: false });
-    assert.ok(routes.plain.tools.includes("bash"), "plain route keeps existing tools");
-    assert.ok(routes.plain.tools.includes("write"), "plain route keeps existing tools");
-    assert.ok(!routes.plain.tools.includes("subagent"), "plain route must not expose subagent");
-    for (const tool of WEB_ACCESS_TOOLS) {
-      assert.ok(!routes.plain.tools.includes(tool), `plain route must not expose ${tool} by default`);
-    }
+  const routes = buildRoutes({ subagentsEnabled: false, webAccessEnabled: false });
+  for (const [key, route] of Object.entries(routes)) {
+    assert.ok(route.label, `${key} route has label`);
+    assert.equal(route.tools, undefined, `${key} route does not carry a tool gate`);
   }
-
-  const webRoutes = buildRoutes({ subagentsEnabled: true, webAccessEnabled: true });
-  for (const tool of WEB_ACCESS_TOOLS) {
-    assert.ok(webRoutes.plain.tools.includes(tool), `plain route exposes ${tool} when web access is enabled`);
-    assert.ok(!webRoutes.team.tools.includes(tool), `team parent route must not directly expose ${tool}`);
-  }
-  assert.ok(!webRoutes.plain.tools.includes("subagent"), "web-enabled plain route still must not expose subagent");
-  assert.match(webRoutes.plain.instruction, /workflow: "none"/);
-  assert.match(webRoutes.plain.instruction, /Do not search or fetch secrets/);
-  assert.match(webRoutes.plain.instruction, /Direct URL fetch is not exposed/);
+  assert.match(routes.plain.instruction, /Web access tools are available by default/);
+  assert.match(routes.team.instruction, /subagent tool is available by default/);
+  assert.match(routes.bash.instruction, /bash tool/);
 }
 
-// Case 5: team instruction constrains Slack subagents to foreground/read-only presets.
+// Case 3: help/status clearly state default-all posture.
 {
-  const instruction = buildRoutes({ subagentsEnabled: true }).team.instruction;
-  assert.match(instruction, /foreground/i);
-  assert.match(instruction, /read-only/i);
-  assert.match(instruction, /async false/i);
-  assert.match(instruction, /clarify false/i);
-  assert.match(instruction, /agentScope `project`/i);
-  assert.match(instruction, /team-scout/);
-  assert.match(instruction, /team-planner/);
-  assert.match(instruction, /team-reviewer-readonly/);
-  assert.match(instruction, /Never use write-capable agents/);
-  assert.match(instruction, /Never use subagent management mutations/);
-  assert.doesNotMatch(instruction, /team-worker/);
-}
-
-// Case 6: help and status clearly surface enabled/disabled subagent state.
-{
-  const disabledRoutes = buildRoutes({ subagentsEnabled: false });
-  const disabledHelp = formatHelpText({ routes: disabledRoutes, subagentsEnabled: false });
-  assert.match(disabledHelp, /`team:` Team subagents \(disabled\)/);
-  assert.match(disabledHelp, /disabled until PI_MOM_SUBAGENTS_ENABLED=true/);
-
-  const enabledRoutes = buildRoutes({ subagentsEnabled: true });
-  const enabledHelp = formatHelpText({ routes: enabledRoutes, subagentsEnabled: true });
-  assert.match(enabledHelp, /`team:` Team subagents/);
-  assert.match(enabledHelp, /team: context/);
+  const routes = buildRoutes();
+  const help = formatHelpText({ routes });
+  assert.match(help, /All Pi tools, app extensions, bash, skills, web access, and subagents are enabled by default/);
+  assert.match(help, /team: use subagents/);
+  assert.match(help, /bash: pwd/);
 
   const status = formatStatusText({
     mode: "pi",
@@ -111,12 +48,11 @@ import {
     linearProjectId: "P",
     linearStateId: "S",
     traceEnabled: true,
-    routes: enabledRoutes,
-    subagentsEnabled: true,
-    webAccessEnabled: true,
+    routes,
   });
-  assert.match(status, /team subagents: `enabled`/);
-  assert.match(status, /web access: `enabled`/);
+  assert.match(status, /pi tools: `all registered tools active by default`/);
+  assert.match(status, /app extensions: `default-on`/);
+  assert.match(status, /skills: `repo \+ app\/package skills enabled`/);
   assert.match(status, /routes: `plain, help, status, summarize, linear, agenda, spec, bash, team`/);
 }
 

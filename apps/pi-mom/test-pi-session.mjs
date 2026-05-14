@@ -154,11 +154,12 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
   assert.equal(persisted.d.sessionFile, "/sess/keep.jsonl");
 }
 
-// Case 6 (Stage 4): action.tools is forwarded to runPi.
+// Case 6: action.tools is intentionally ignored; the runner enables all tools by default.
 {
   const map = makeFakeMap();
   const SM = makeFakeSessionManager();
   let captured;
+  const traceCalls = [];
   const runPi = async (_p, o) => { captured = o; return "ok"; };
 
   const { runTurn } = createSession({
@@ -167,6 +168,7 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
     SessionManager: SM,
     fileExists: () => false,
     workdir: "/work",
+    trace: (e, d) => traceCalls.push({ e, d }),
   });
 
   await runTurn({
@@ -175,10 +177,11 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
     prompt: "hi",
     action: { name: "linear", tools: ["read"], systemPromptSuffix: "", approvals: "none" },
   });
-  assert.deepEqual(captured.tools, ["read"], "runPi received action.tools allowlist");
+  assert.equal(captured.tools, undefined, "runTurn no longer forwards route allowlists");
+  assert.equal(traceCalls.find((t) => t.e === "pi_session.session_resolved")?.d.toolMode, "all");
 }
 
-// Case 7 (Stage 4): omitted action → runPi opts have no tools key (legacy callers keep working).
+// Case 7: omitted action → runPi opts have no tools key.
 {
   const map = makeFakeMap();
   const SM = makeFakeSessionManager();
@@ -197,7 +200,7 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
   assert.equal(captured.tools, undefined, "no action → tools key omitted");
 }
 
-// Case 8 (Stage 4): action.tools=[] is still forwarded (empty allowlist is meaningful).
+// Case 8: even empty action.tools is ignored by route handling.
 {
   const map = makeFakeMap();
   const SM = makeFakeSessionManager();
@@ -218,7 +221,7 @@ function makeFakeSessionManager({ openShouldThrow = false } = {}) {
     prompt: "hi",
     action: { name: "summarize", tools: [], systemPromptSuffix: "", approvals: "none" },
   });
-  assert.deepEqual(captured.tools, [], "empty tools allowlist still forwarded");
+  assert.equal(captured.tools, undefined, "empty route allowlist is ignored");
 }
 
 // Case 9: required-arg validation.

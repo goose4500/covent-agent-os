@@ -130,11 +130,11 @@ Routed workflow prefixes (defined in `lib/routes.mjs`):
 @Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
 @Covent Pi agenda: prep a meeting agenda from this thread
 @Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
-@Covent Pi team: doctor | context <scope> | plan <task> | review <target>   (feature-flagged read-only subagents)
+@Covent Pi team: doctor | context <scope> | plan <task> | review <target>   (subagent workflow)
 @Covent Pi bash: <command>   (runs via the bash tool)
 ```
 
-Bare mentions (no prefix) get the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do work on its own machine. When `PI_MOM_WEB_ACCESS_ENABLED=true`, the plain route also gets `web_search`, `get_search_content`, and `code_search`; direct URL `fetch_content` stays unexposed by default. The `subagent` tool is intentionally **not** on the plain route.
+Bare mentions (no prefix) and all Pi-backed prefixes get the full registered Pi tool surface by default: bash/file tools, app extensions, skills, Linear tools, Slack UI tools, Browser Use, `pi-subagents`, and the app-pinned `pi-web-access` tools. Prefixes shape the workflow instruction; they do not restrict tools.
 
 In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
 
@@ -145,29 +145,25 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 - Default target is Frontend Engineering / `Distribution` / `Backlog` (override with `LINEAR_TEAM_ID` / `LINEAR_PROJECT_ID` / `LINEAR_STATE_ID`).
 - Requires `LINEAR_API_KEY`. Without it, each tool returns an `isError` result and the model reports the missing key to the user.
 
-Team subagents route behavior in `PI_MOM_MODE=pi`:
+Team subagents behavior in `PI_MOM_MODE=pi`:
 
-- Disabled by default with `PI_MOM_SUBAGENTS_ENABLED=false`.
-- When enabled, the `team:` route exposes only `subagent` plus Slack interactive tools. The plain route never gets `subagent`.
-- The route prompt restricts Slack usage to foreground/read-only presets: `doctor`, `context`, `plan`, and `review`.
-- Project-owned read-only subagent profiles live in `.agents/team-*.md`; they intentionally omit write/edit/bash tools.
-- `team-scout` can use bounded public web search/code-search via an explicit app-local child extension path (`apps/pi-mom/extensions/pi-web-access-child.ts`) when `PI_MOM_WEB_ACCESS_ENABLED=true`; planner/reviewer remain local-only by default.
-- `pi-subagents` child runs spawn the `pi` CLI, so the deployment image must have `pi` on PATH before enabling this in Railway.
+- `pi-subagents` is loaded by default from the app dependency (`pi-subagents@0.24.2`).
+- The `team:` prefix is a workflow convenience for `doctor`, `context`, `plan`, and `review` style requests; the `subagent` tool is available to every Pi-backed route.
+- Project-owned team profiles live in `.agents/team-*.md`; they inherit skills, omit tool allowlists, and load the same app-approved extension surface for child `pi` CLI runs.
+- Child subagent runs spawn the `pi` CLI, so the deployment image must have `pi` on PATH.
+- Team subagent Canvas sidecars are attached for the `team:` route when child runs emit subagent tool events.
 
 Web access behavior in `PI_MOM_MODE=pi`:
 
-- Disabled by default with `PI_MOM_WEB_ACCESS_ENABLED=false`.
-- When enabled, `lib/pi-sdk-runner.mjs` resolves the app-pinned `pi-web-access@0.10.7` dependency and loads only its `index.ts` through `DefaultResourceLoader.additionalExtensionPaths`; `noExtensions: true` remains on.
-- Bundled `pi-web-access/skills` are loaded through `additionalSkillPaths`; no global/user package discovery or auto-install is required.
-- Route exposure is bounded to the `plain` route. The `team:` parent route does not directly expose web tools; read-only child agents decide via their own profiles.
-- Slack/Railway browser curator is guarded off by default: web_search calls are forced to `workflow: "none"` unless an operator explicitly sets `PI_MOM_WEB_ACCESS_ALLOW_BROWSER_WORKFLOW=true`.
+- `pi-web-access@0.10.7` is loaded by default from the app-pinned dependency through `DefaultResourceLoader.additionalExtensionPaths`; ambient extension discovery remains off with `noExtensions: true`.
+- Bundled `pi-web-access/skills` are loaded through `additionalSkillPaths`; no global/user package auto-install is required because `PI_OFFLINE=1` is preserved.
+- Web tools are available across Pi-backed routes. Use them when public web or code-search context helps answer the user's request.
 - Keep browser-cookie Gemini Web off by default (`PI_ALLOW_BROWSER_COOKIES=0`/unset). Optional provider keys are `EXA_API_KEY`, `PERPLEXITY_API_KEY`, and `GEMINI_API_KEY`.
-- Direct URL `fetch_content` is not exposed in Slack route allowlists by default. The safety guard still blocks local/private/metadata/intranet fetches and secret-like prompts if an operator explicitly exposes it later.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
 - Streaming is always on via `lib/slack-sink.mjs` (Stage 5). It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep Slack's stream session alive across long thinking runs.
-- Pi tool gating is per-route via `lib/routes.mjs`. Routes with `tools: []` run with `noTools: "all"`; routes with a non-empty `tools:` allowlist call `setActiveToolsByName(...)` on the Pi session so only those tools are active. The `DefaultResourceLoader` keeps ambient extension discovery disabled (`noExtensions: true`) and loads only explicit app factories: Linear tools, Slack interactive tools, `pi-subagents` only when `PI_MOM_SUBAGENTS_ENABLED=true`, and the web-access safety guard only when `PI_MOM_WEB_ACCESS_ENABLED=true`. The official `pi-web-access` package is loaded by explicit dependency path via `additionalExtensionPaths` when enabled. Skills are still loaded (from `./skills` per `package.json#pi.skills`, plus `pi-web-access/skills` when enabled) so the agent can pick the right operating mode. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
+- Pi tool/skill/extension access is default-on for Pi-backed routes. `lib/routes.mjs` provides workflow instructions/help/status, not per-route allowlists. `lib/pi-sdk-runner.mjs` keeps ambient extension auto-discovery disabled (`noExtensions: true`) but explicitly loads app factories (Linear, Slack UI, Browser Use, git checkpoint, `pi-subagents`) plus the app-pinned `pi-web-access` extension and skills. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
 
 ## Observability & Tracing (DX)
 
@@ -235,7 +231,7 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 ## Notes
 
 - Streaming is always on via `lib/slack-sink.mjs`. The legacy `PI_MOM_STREAMING` knob was removed in Stage 5; there is no `chat.update` fallback path.
-- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is per-route via `lib/routes.mjs`: routes with `tools: []` run with `noTools: "all"` and a `DefaultResourceLoader` that disables ambient extension discovery/prompts/themes/context-files but loads explicit app extension factories and skills from `./skills`. Private Slack snippets are still not persisted in Pi session history and Slack context cannot trigger tools outside the route allowlist. Routes that need explicit tool access declare each tool by name; the SDK's `setActiveToolsByName(...)` narrows the active tool set after session creation.
-- The `plain` route (bare `@Covent-Agent <prompt>` with no prefix) ships with the full default Pi toolset (`bash`, `read`, `grep`, `find`, `edit`, `write`) so Pi can do real work on its machine. Trusted-operator + channel-allowlist + Codex sign-in are the perimeter; in-process safety extensions are not loaded in this POC.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is default-all: normal Slack turns omit a route tool allowlist, and the runner activates every registered tool returned by the SDK session. Private Slack snippets are still not persisted in Pi session history.
+- Trusted-operator + channel-allowlist + Codex sign-in are the perimeter for this POC; route-specific in-process safety extensions are not loaded.
 - The bridge uses Slack Web API only for the current thread context, final reply, canvas mirror (spec: route), and approval modals.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

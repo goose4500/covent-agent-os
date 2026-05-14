@@ -25,9 +25,9 @@ Cluster B is deferred, not rejected. The analysis in #40/#41/#42/#46/#49 is tech
 
 Reopen the Strategy formalization when any **two** of the following are simultaneously true:
 
-1. **Routes ≥ 15.** Today: 8 (`plain`, `help`, `status`, `summarize`, `linear`, `agenda`, `spec`, `bash`). The inline ROUTES const in `apps/pi-mom/index.mjs` becomes uncomfortable to read or modify around 15 entries.
-2. **Distinct sink kinds ≥ 5.** Today: 2 (`slack-sink`, `canvas-sink`). At 5+, the `composite-sink` config becomes a real configuration surface that benefits from a registry shape.
-3. **Distinct extension factories ≥ 5.** Today: 2 (`linearTools`, `slackInteractiveTools`). At 5+, hardcoding the array in `pi-sdk-runner.mjs:175` becomes a friction point.
+1. **Routes ≥ 15.** Today: 9 (`plain`, `help`, `status`, `summarize`, `linear`, `agenda`, `spec`, `team`, `bash`). The route catalog in `apps/pi-mom/lib/routes.mjs` becomes uncomfortable to read or modify around 15 entries.
+2. **Distinct sink kinds ≥ 5.** Today: 3 (`slack-sink`, `canvas-sink`, `subagent-canvas-sidecar-sink`). At 5+, the `composite-sink` config becomes a real configuration surface that benefits from a registry shape.
+3. **Distinct extension factories/paths ≥ 8.** Today: app factories/paths cover Linear, Slack interactive tools, Browser Use, git checkpoint, `pi-subagents`, and `pi-web-access`. At 8+, hardcoding the default app surface in `pi-sdk-runner.mjs` becomes a friction point.
 4. **A second non-Slack surface is actively in development (not just specced) that calls `runPi`.** Today: none. CLI / MCP / HTTP receivers are hypothetical. Once one is being built, the value of a typed Action/Run facade becomes concrete.
 
 When two of these four are true, reopen #41 and #42 with current code references and execute. Re-evaluate #46 (per-tool renderers) at the same time. Reopen #40 only if a new registry-shaped config has been reintroduced.
@@ -38,10 +38,10 @@ When two of these four are true, reopen #41 and #42 with current code references
 
 - The `Action / Run / Approval / Artifact` vocabulary stays in `README.md` and `BOUNDARY.md`, not in code. Adding a new route is editing `ROUTES` in `index.mjs`, not a YAML edit.
 - Adding a new policy gate to a single route requires editing `pi-sdk-runner.mjs:175` (which applies to every route) and gating inside the extension on `event.toolName` or route context. This is more friction than registry-driven `extensions:` arrays would be.
-- The `plain` route ships `[bash, read, grep, find, edit, write]` without `permission-gate.ts` (deleted in #44). Trust perimeter is `SLACK_ALLOWED_CHANNEL_ID` + Codex sign-in. PR #47's audit identified this as the #1 codebase gap from the foundation guide; we explicitly accept the gap at the current scale.
+- All Pi-backed Slack routes now ship the full registered tool/skill/app-extension surface by default. Trust perimeter is `SLACK_ALLOWED_CHANNEL_ID` + Codex sign-in + explicit user intent. PR #47's audit identified this blast-radius trade-off; we explicitly accept it at the current scale.
 - `extensions/env-guard.ts`, `linear-mcp-guard.ts`, `slack-mcp-guard.ts`, and `permission-gate.ts` are all gone. Restoring any of them requires fetching from git history and re-deriving the wiring.
-- `scripts/secret-scan.sh` and `scripts/validate-{agents,skills}.mjs` are gone from CI. Committed `.env` files would not be caught at PR time unless we add a separate Gitleaks Action.
-- Pi extensions kept in `package.json#pi.extensions`: only `./extensions/git-checkpoint.ts`. The local-Pi developer workbench loses the safety guards that pi-mom never loaded anyway.
+- Secret/skill/agent validation remains covered by the current `bun run check` path; keep it green before merging.
+- Pi-mom explicitly loads app-approved extension factories/paths in `pi-sdk-runner.mjs`; route-specific safety extensions are gone.
 
 **Preserved in this round:**
 
@@ -49,7 +49,7 @@ When two of these four are true, reopen #41 and #42 with current code references
 - `extensions/slack-interactive-tools.ts` (Block Kit cards introduced by #45) — wired into `extensionFactories`.
 - Skills loading from `./skills` (introduced by #51) — still on; the model uses skill descriptions to pick the operating mode per turn.
 - `lib/slack-sink.mjs`, `lib/canvas-sink.mjs`, `lib/composite-sink.mjs` — sinks are still factory closures, just hardcoded rather than registry-driven.
-- `lib/pi-sdk-runner.mjs` — still the single integration point with the Pi SDK; receives `tools`, `sink`, `uiContext`.
+- `lib/pi-sdk-runner.mjs` — still the single integration point with the Pi SDK; receives `sink`/`uiContext` and activates all registered tools for normal Slack turns.
 
 ## What this means for the next 30 days
 

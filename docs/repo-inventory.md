@@ -1,6 +1,6 @@
 # Repo inventory
 
-> **Status (2026-05-12):** post-foundation-rebuild inventory. `covent-pi-mom` is live in production. See `docs/architecture.md` for the canonical post-rebuild architecture.
+> **Status (2026-05-14):** current pi-mom inventory. `covent-pi-mom` is live in production. See `docs/architecture.md` for the canonical architecture.
 
 ## What's in this repo
 
@@ -13,32 +13,29 @@
 
 ### `apps/pi-mom/` — the Slack bridge (production)
 
-- `index.mjs` (~799 LOC) — Bolt boot, both surface adapters (Assistant + app_mention), App Home wiring.
-- `control-plane/registry.yaml` — declarative per-Action vocabulary.
-- `control-plane/registry-loader.mjs` — YAML loader + validator.
+- `index.mjs` — Bolt boot, both surface adapters (Assistant + app_mention), App Home wiring, route resolution.
+- `lib/routes.mjs` — route labels/instructions/help/status; prefixes shape workflow, not tool access.
 - `lib/dispatch.mjs` — surface-aware `dispatchToAction`.
-- `lib/action-resolver.mjs` — parses Slack text + registry → resolved Action.
 - `lib/pi-sdk-runner.mjs` — `createAgentSession` glue; OAuth seed from `PI_AUTH_JSON_B64`.
 - `lib/pi-session.mjs` — `runTurn` — opens session, subscribes events, pumps sink.
 - `lib/thread-session-map.mjs` — JSON-on-disk threadTs → sessionFile path.
 - `lib/slack-sink.mjs` — Pi events → `chat.startStream/appendStream` + 25s heartbeat + per-message rotation.
 - `lib/slack-ui-context.mjs` — Pi `ExtensionUIContext` → Slack approval modals.
 - `lib/canvas-sink.mjs` — Pi `text_delta` → `canvases.edit` (debounced) for `spec:` route.
+- `lib/subagent-canvas-sidecar-sink.mjs` — `team:` child subagent runs → sidecar Slack canvases.
 - `lib/composite-sink.mjs` — fan one Pi event stream → multiple sinks.
 - `lib/home-view.mjs` — App Home cockpit view builder (approvals-only after Stage 10).
 - `doctor.mjs` — non-secret readiness diagnostics.
 - `manifest.yaml` — Slack app manifest source.
 - `.env.example`, `.env.railway.example` — placeholder env shapes.
-- 13 `test-*.mjs` suites runnable via `bun run check`.
+- `test-*.mjs` suites runnable via `bun run check`.
 
 ### `extensions/` — Pi extensions
 
 - `linear-tools.ts` — 3 modular Linear Pi custom tools (`linear_search_issues`, `linear_create_issue`, `linear_add_comment`).
-- `permission-gate.ts` — intercepts `rm -rf` / `sudo` / `chmod 777` / `chown 777` via Slack approval modal.
-- `env-guard.ts` — blocks writes to `.env*` / `~/.secrets/**`.
-- `git-checkpoint.ts` — auto-commits before risky operations.
-- `linear-mcp-guard.ts`, `slack-mcp-guard.ts` — MCP boundary guards.
-- `browser-use-tools.ts` — Chrome/DevTools harness.
+- `slack-interactive-tools.ts` — Slack approval/choice/input cards exposed as Pi tools.
+- `browser-use-tools.ts` — Browser Use Cloud task tool.
+- `git-checkpoint.ts` — git checkpoint helper tool.
 
 ### `lib/` — Shared helpers
 
@@ -46,7 +43,7 @@ Legacy shared helpers from the bootstrap; most production logic has since moved 
 
 ### `agents/` and `skills/`
 
-Subagent definitions and Pi skills. Used by harness-level tooling, not directly by `apps/pi-mom`.
+Subagent definitions and Pi skills. `.agents/team-*.md` are used by the default-on Slack `team:` subagent workflow.
 
 ### `packages/`
 
@@ -55,12 +52,12 @@ Subagent definitions and Pi skills. Used by harness-level tooling, not directly 
 
 ### `docs/`
 
-- `architecture.md` — **canonical post-rebuild architecture.**
+- `architecture.md` — **canonical current architecture.**
 - `SYSTEM_INDEX.md` — system-wide source-of-truth map.
 - `AGENT_CONTEXT.md` — read-first context for future agents.
 - `adr/` — architecture decision records (0001–0004).
 - `runbooks/` — operational runbooks (foundation-v2 cutover, Slack MCP setup, EC2 Pi agent machine, branch protection, historical known-good).
-- `specs/` — design specs (registry.yaml schema, Pi harness specs).
+- `specs/` — design specs and historical/deprecated registry note.
 - `source-of-truth/` — strategic operating-model docs.
 - `history/` — evidence/recovery context only.
 - `research/2026-05-10/` — archived foundation-rebuild scoping research.
