@@ -233,7 +233,7 @@ function statusBlocks({ status }) {
   return [
     section(
       `:satellite_antenna: *Status* · mode \`${status.mode || "?"}\`` +
-        ` · allowed channel ${allowed}` +
+        ` · allowed channel(s) ${allowed}` +
         ` · Linear ${linear}` +
         ` · team subagents ${subagents}` +
         ` · uptime ${uptime}`,
@@ -284,7 +284,7 @@ export function buildSettingsModalView({ status, prefs } = {}) {
   const lines = [];
   if (status) {
     lines.push(`*Mode*: \`${status.mode || "?"}\``);
-    lines.push(`*Allowed channel*: \`${status.allowedChannelId || "any"}\``);
+    lines.push(`*Allowed channel(s)*: \`${status.allowedChannelId || "any"}\``);
     lines.push(`*Pi model*: \`${status.piModel || "?"}\` (thinking \`${status.piThinking || "?"}\`)`);
     lines.push(`*Linear*: ${status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key"}`);
     lines.push(`*Team subagents*: ${status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled"}`);
