@@ -12,6 +12,11 @@ import { createSlackSink } from "./lib/slack-sink.mjs";
 import { createCanvasSink } from "./lib/canvas-sink.mjs";
 import { createCompositeSink } from "./lib/composite-sink.mjs";
 import {
+  createSubagentCanvasSidecarSink,
+  formatSubagentCanvasFooter,
+} from "./lib/subagent-canvas-sidecar-sink.mjs";
+import { redactSensitiveText } from "./lib/redaction.mjs";
+import {
   buildInputModalView,
   createSlackUIContext,
   resolveConfirmAction,
@@ -307,20 +312,6 @@ ${text}
 `;
 }
 
-function redactSensitiveText(text = "") {
-  return text
-    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "xox[REDACTED]")
-    .replace(/xapp-[A-Za-z0-9-]+/g, "xapp-[REDACTED]")
-    .replace(/xoxe[.-][A-Za-z0-9.-]+/g, "xoxe[REDACTED]")
-    .replace(/sk-proj-[A-Za-z0-9_-]+/g, "sk-proj-[REDACTED]")
-    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-[REDACTED]")
-    .replace(/Authorization:\s*Bearer\s+[^\s'"`]+/gi, "Authorization: Bearer [REDACTED]")
-    .replace(/Authorization:\s+lin_api_[^\s'"`]+/gi, "Authorization: lin_api_[REDACTED]")
-    .replace(/lin_api_[A-Za-z0-9_-]+/g, "lin_api_[REDACTED]")
-    .replace(/slackauthticket\s+[A-Za-z0-9._-]+/gi, "slackauthticket [REDACTED]")
-    .replace(/((?:SLACK|OPENAI|LINEAR)_[A-Z0-9_]*(?:TOKEN|SECRET|KEY)[A-Z0-9_]*\s*=\s*)(['"]?)[^\s'"]+/gi, "$1$2[REDACTED]");
-}
-
 function cleanTerminalSequences(text = "") {
   return text
     // Strip OSC terminal notifications like: ESC ] 777 ; notify ; ... BEL
@@ -369,6 +360,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     requestId,
     planTitle,
     trace,
+    redact: redactSensitiveText,
   });
 
   // Stage 8: if this route is canvas-eligible (currently just `spec:`),
@@ -390,10 +382,27 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
       teamId,
       accessUserIds: user ? [user] : [],
       trace,
+      redact: redactSensitiveText,
     });
   }
 
-  const sink = canvasSink ? createCompositeSink([slackSink, canvasSink]) : slackSink;
+  const wantsSubagentSidecars = PI_MOM_SUBAGENTS_ENABLED && (action?.name === "team" || action?.routeKey === "team");
+  let subagentCanvasSidecarSink;
+  if (wantsSubagentSidecars) {
+    subagentCanvasSidecarSink = createSubagentCanvasSidecarSink({
+      client,
+      channel,
+      threadTs,
+      requestId,
+      teamId,
+      accessUserIds: user ? [user] : [],
+      trace,
+      redact: redactSensitiveText,
+    });
+  }
+
+  const eventSinks = [slackSink, canvasSink, subagentCanvasSidecarSink].filter(Boolean);
+  const sink = eventSinks.length > 1 ? createCompositeSink(eventSinks) : slackSink;
 
   // Stage 6: per-turn slack UI context for ctx.ui.{confirm,select,input,notify,setStatus}.
   // The Bolt action/view handlers consult pendingApprovals to resolve the
@@ -410,7 +419,16 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     trace,
   });
 
-  await sink.start({ initialText: `👀 Covent Pi is thinking… (req: ${requestId})\n\n` });
+  const initialText = `👀 Covent Pi is thinking… (req: ${requestId})\n\n`;
+  await slackSink.start({ initialText });
+  if (canvasSink) {
+    try { await canvasSink.start({ initialText }); }
+    catch (err) { trace("canvas.start_failed", { requestId, error: err?.data?.error || err?.message || "unknown" }); }
+  }
+  if (subagentCanvasSidecarSink) {
+    try { await subagentCanvasSidecarSink.start(); }
+    catch (err) { trace("subagent_canvas.start_failed", { requestId, error: err?.data?.error || err?.message || "unknown" }); }
+  }
 
   // Post the canvas link into the Slack thread once we know the canvas
   // exists. Best-effort — failures here don't affect the run.
@@ -435,8 +453,34 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     runError = err;
   }
 
-  await sink.stop({ result, error: runError });
-  slackUI.dispose("turn_end");
+  try {
+    let sidecarStopResult;
+    if (subagentCanvasSidecarSink) {
+      try {
+        sidecarStopResult = await subagentCanvasSidecarSink.stop({ result, error: runError });
+      } catch (err) {
+        trace("subagent_canvas.stop_failed", { requestId, error: err?.data?.error || err?.message || "unknown" });
+      }
+      const footer = formatSubagentCanvasFooter(sidecarStopResult?.subagentCanvases || []);
+      if (footer) {
+        try {
+          await slackSink.appendMarkdown(footer);
+          trace("subagent_canvas.footer_appended", { requestId, canvasCount: sidecarStopResult.subagentCanvases.length });
+        } catch (err) {
+          trace("subagent_canvas.footer_append_failed", { requestId, error: err?.data?.error || err?.message || "unknown" });
+        }
+      }
+    }
+
+    if (canvasSink) {
+      try { await canvasSink.stop({ result, error: runError }); }
+      catch (err) { trace("canvas.stop_failed", { requestId, error: err?.data?.error || err?.message || "unknown" }); }
+    }
+
+    await slackSink.stop({ result, error: runError });
+  } finally {
+    slackUI.dispose("turn_end");
+  }
 
   if (runError) throw runError;
   return result;

@@ -53,8 +53,9 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
 
 // Case 1: start() creates a standalone canvas (no channel_id) with the
 // final title verbatim and constructs the URL from teamId + canvasId.
-// Also grants write access to the requesting user AND the channel via
-// canvases.access.set so the link in the thread actually opens.
+// Grants write access to the requesting user and read access to the channel
+// via canvases.access.set so the link in the thread opens without making the
+// document channel-writable.
 {
   const client = makeFakeClient();
   const T = makeFakeTimers();
@@ -77,6 +78,7 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
   assert.deepEqual(userGrant.user_ids, ["U1"]);
   assert.equal(userGrant.access_level, "write");
   assert.deepEqual(channelGrant.channel_ids, ["C1"]);
+  assert.equal(channelGrant.access_level, "read");
 }
 
 // Case 2: handle text_delta buffers until flushMs timer fires → insert_at_end.
@@ -98,6 +100,27 @@ const delta = (text) => ({ type: "message_update", assistantMessageEvent: { type
   assert.equal(edit.canvas_id, "canvas_1");
   assert.equal(edit.changes[0].operation, "insert_at_end");
   assert.equal(edit.changes[0].document_content.markdown, "hello world");
+}
+
+// Case 2b: canvas markdown is redacted for initial, streamed, and final replacement text.
+{
+  const client = makeFakeClient();
+  const T = makeFakeTimers();
+  const redact = (text) => String(text).replaceAll("SECRET", "[REDACTED]");
+  const sink = createCanvasSink({
+    client, channel: "C2b", title: "Spec",
+    requestId: "req_c2b", teamId: "T2", flushMs: 1, redact, ...T,
+  });
+  await sink.start({ initialText: "initial SECRET" });
+  sink.handle(delta("stream SECRET"));
+  await T.fireAll();
+  await sink.stop({ result: "final SECRET" });
+  const allMarkdown = [
+    client.creates[0].document_content.markdown,
+    ...client.edits.map((edit) => edit.changes?.[0]?.document_content?.markdown || ""),
+  ].join("\n");
+  assert.ok(!allMarkdown.includes("SECRET"), "raw secret-like text not sent to canvas");
+  assert.ok(allMarkdown.includes("[REDACTED]"), "redacted marker appears in canvas writes");
 }
 
 // Case 3: byte threshold triggers immediate flush (no waiting on timer).

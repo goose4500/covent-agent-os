@@ -22,6 +22,8 @@
 // DI-friendly: tests inject a fake client.chatStream() returning a
 // minimal { append, stop } object plus a fake timers pair.
 
+import { createStreamingRedactor } from "./redaction.mjs";
+
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_HEARTBEAT_THRESHOLD_MS = 25_000;
 const DEFAULT_APPEND_BATCH_MS = 200;
@@ -47,6 +49,7 @@ export function createSlackSink({
   requestId,
   planTitle,
   trace = () => {},
+  redact = (text) => String(text || ""),
   heartbeatMs = DEFAULT_HEARTBEAT_MS,
   heartbeatThresholdMs = DEFAULT_HEARTBEAT_THRESHOLD_MS,
   appendBatchMs = DEFAULT_APPEND_BATCH_MS,
@@ -72,6 +75,7 @@ export function createSlackSink({
   let currentStreamChars = 0;  // resets on rotation
   let streamRotations = 0;
   let textBuffer = "";
+  const streamingRedactor = createStreamingRedactor({ redact });
   let textTimer;
   let heartbeatTimer;
   let lastActivityMs = now();
@@ -116,18 +120,20 @@ export function createSlackSink({
 
   function appendNow(markdown_text) {
     if (!markdown_text) return streamChain;
+    const safeMarkdown = redact(String(markdown_text));
+    if (!safeMarkdown) return streamChain;
     // Rotate to a fresh stream before this append if it would push the
     // current stream past Slack's per-message cumulative ceiling. The
     // check uses currentStreamChars (post-rotation counter) so we only
     // rotate once per cycle; streamedChars stays a monotonic total.
-    if (started && currentStreamChars + markdown_text.length > maxStreamChars) {
+    if (started && currentStreamChars + safeMarkdown.length > maxStreamChars) {
       streamChain = streamChain.then(() => rotateStream());
     }
-    streamedChars += markdown_text.length;
-    currentStreamChars += markdown_text.length;
+    streamedChars += safeMarkdown.length;
+    currentStreamChars += safeMarkdown.length;
     touch();
     streamChain = streamChain
-      .then(() => stream.append({ markdown_text }))
+      .then(() => stream.append({ markdown_text: safeMarkdown }))
       .catch((err) => {
         streamError = streamError || err;
         trace("slack.stream_append_error", {
@@ -175,7 +181,13 @@ export function createSlackSink({
     if (!textBuffer) return;
     const text = textBuffer;
     textBuffer = "";
-    appendNow(text);
+    const safeText = streamingRedactor.push(text);
+    if (safeText) appendNow(safeText);
+  }
+
+  function flushRedactionCarry() {
+    const tail = streamingRedactor.flush();
+    if (tail) appendNow(tail);
   }
 
   function scheduleFlush() {
@@ -230,19 +242,36 @@ export function createSlackSink({
         touch();
         scheduleFlush();
       }
-    } else if (evt.type === "tool_execution_start" && evt.toolCall) {
+    } else if (evt.type === "tool_execution_start") {
+      const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
+      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
       appendTaskUpdate({
-        id: evt.toolCall.toolCallId || evt.toolCall.id || `tool_${streamedChars}`,
-        title: evt.toolCall.toolName || "tool",
+        id: toolCallId,
+        title: toolName,
         status: "in_progress",
       });
-    } else if (evt.type === "tool_execution_end" && evt.toolCall) {
+    } else if (evt.type === "tool_execution_end") {
+      const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
+      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
       appendTaskUpdate({
-        id: evt.toolCall.toolCallId || evt.toolCall.id || `tool_${streamedChars}`,
-        title: evt.toolCall.toolName || "tool",
-        status: evt.error || evt.toolCall?.errorMessage ? "error" : "complete",
+        id: toolCallId,
+        title: toolName,
+        status: evt.isError || evt.error || evt.toolCall?.errorMessage ? "error" : "complete",
       });
     }
+  }
+
+  async function appendMarkdown(markdown = "") {
+    if (!markdown || !started || stopped) return { appended: false };
+    if (textTimer !== undefined) {
+      clearTimeoutFn(textTimer);
+      textTimer = undefined;
+    }
+    flushTextBuffer();
+    flushRedactionCarry();
+    appendNow(String(markdown));
+    await streamChain;
+    return { appended: true };
   }
 
   async function stop({ result, error } = {}) {
@@ -259,6 +288,7 @@ export function createSlackSink({
       heartbeatTimer = undefined;
     }
     flushTextBuffer();
+    flushRedactionCarry();
     await streamChain;
     if (started && error) {
       try {
@@ -298,6 +328,7 @@ export function createSlackSink({
     start,
     handle,
     stop,
+    appendMarkdown,
     updatePlan: appendPlanUpdate,
     get streamError() { return streamError; },
     get streamedChars() { return streamedChars; },

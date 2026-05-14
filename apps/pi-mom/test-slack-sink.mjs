@@ -81,6 +81,29 @@ function makeFakeTimers() {
   assert.equal(taskChunks[0].title, "read");
 }
 
+// Case 2a: actual SDK top-level tool_execution_* fields also emit task updates.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C2a", threadTs: "2.05",
+    surface: "app_mention", requestId: "req_t2a", ...T,
+  });
+  await sink.start({});
+  sink.handle({ type: "tool_execution_start", toolCallId: "tc2", toolName: "grep" });
+  sink.handle({ type: "tool_execution_end", toolCallId: "tc2", toolName: "grep", isError: true });
+  await new Promise((r) => setImmediate(r));
+  const taskChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "task_update");
+  assert.equal(taskChunks.length, 2, "two task_update chunks for top-level SDK shape");
+  assert.equal(taskChunks[0].id, "tc2");
+  assert.equal(taskChunks[0].title, "grep");
+  assert.equal(taskChunks[1].status, "error");
+}
+
 // Case 2b: planTitle opts the stream into plan mode + emits a plan_update.
 {
   const fakeStream = makeFakeStream();
@@ -266,7 +289,86 @@ function makeFakeTimers() {
   assert.ok(continuationMarker, "second stream received continuation marker");
 }
 
-// Case 9: missing client.chatStream throws at factory time.
+// Case 9: appendMarkdown flushes any buffered text and appends while the stream is open.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C9", threadTs: "9.0",
+    surface: "app_mention", requestId: "req_t9",
+    appendBatchMs: 1000, ...T,
+  });
+  await sink.start({});
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "parent answer" } });
+  await sink.appendMarkdown("\n\n---\n*Subagent canvases*\n• <https://example.test|team-scout — completed>\n");
+  assert.deepEqual(fakeStream.appends.map((a) => a.markdown_text).filter(Boolean), [
+    "parent answer",
+    "\n\n---\n*Subagent canvases*\n• <https://example.test|team-scout — completed>\n",
+  ]);
+  await sink.stop({ result: "done" });
+  assert.equal(fakeStream.stopCalls.length, 1);
+}
+
+// Case 9b: outbound markdown is redacted for initial, streamed, and footer text.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const redact = (text) => String(text).replaceAll("SECRET", "[REDACTED]");
+  const sink = createSlackSink({
+    client, channel: "C9b", threadTs: "9.1",
+    surface: "app_mention", requestId: "req_t9b",
+    appendBatchMs: 100, redact, ...T,
+  });
+  await sink.start({ initialText: "initial SECRET" });
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stream SECRET" } });
+  const flushTimer = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (flushTimer) await flushTimer.fn();
+  await sink.appendMarkdown("footer SECRET");
+  await sink.stop({ result: "done" });
+  const markdown = fakeStream.appends.map((a) => a.markdown_text).filter(Boolean).join("\n");
+  assert.ok(!markdown.includes("SECRET"), "raw secret-like text not sent to Slack stream");
+  assert.ok(markdown.includes("[REDACTED]"), "redacted marker appears");
+}
+
+// Case 9c: streaming redaction carries suspicious partial token prefixes across flushes.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C9c", threadTs: "9.2",
+    surface: "app_mention", requestId: "req_t9c",
+    appendBatchMs: 1,
+    redact: (text) => String(text)
+      .replace(/sk-proj-[A-Za-z0-9_-]+/g, "sk-proj-[REDACTED]")
+      .replace(/ghp_[A-Za-z0-9_]+/g, "gh[REDACTED]"),
+    ...T,
+  });
+  await sink.start({});
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "sk" } });
+  let flushTimer = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (flushTimer) await flushTimer.fn();
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "-proj-secretvalue " } });
+  flushTimer = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (flushTimer) await flushTimer.fn();
+
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ghp" } });
+  flushTimer = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (flushTimer) await flushTimer.fn();
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "_secretvalue " } });
+  flushTimer = T.timers.find((t) => t.kind === "to" && !t.cleared);
+  if (flushTimer) await flushTimer.fn();
+  await sink.stop({ result: "done" });
+  const markdown = fakeStream.appends.map((a) => a.markdown_text).filter(Boolean).join("\n");
+  assert.ok(!markdown.includes("sk-proj-secretvalue"), "split token is never posted raw");
+  assert.ok(markdown.includes("sk-proj-[REDACTED]"), "split token is redacted after suffix arrives");
+  assert.ok(!markdown.includes("ghp_secretvalue"), "split GitHub token is never posted raw");
+  assert.ok(markdown.includes("gh[REDACTED]"), "split GitHub token is redacted after suffix arrives");
+}
+
+// Case 10: missing client.chatStream throws at factory time.
 {
   assert.throws(
     () => createSlackSink({ client: {}, channel: "C", threadTs: "0", requestId: "x" }),

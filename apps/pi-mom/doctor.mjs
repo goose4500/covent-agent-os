@@ -1,7 +1,136 @@
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { WebClient } from "@slack/web-api";
 import { spawnSync } from "node:child_process";
-import { subagentsEnabledFromEnv } from "./lib/routes.mjs";
+import * as fs from "node:fs";
+import { createRequire } from "node:module";
+import * as path from "node:path";
+import { WEB_ACCESS_TOOLS, subagentsEnabledFromEnv, webAccessEnabledFromEnv } from "./lib/routes.mjs";
+import { resolveProjectSkillsDir } from "./lib/pi-sdk-runner.mjs";
+
+const require = createRequire(import.meta.url);
+const TEAM_AGENT_NAMES = ["team-scout", "team-planner", "team-reviewer-readonly"];
+const PROJECT_SKILL_SOURCES = new Set(["project", "project-package", "project-settings"]);
+
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+function isUnderDir(filePath, dir) {
+  const rel = path.relative(dir, filePath);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function countProjectSkills(dir) {
+  if (!fs.existsSync(dir)) return 0;
+  let count = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    if (fs.existsSync(path.join(dir, entry.name, "SKILL.md"))) count += 1;
+  }
+  return count;
+}
+
+function reportProjectSkillsManifest() {
+  let checkOk = true;
+  const projectSkillsDir = resolveProjectSkillsDir();
+  try {
+    fs.accessSync(projectSkillsDir, fs.constants.R_OK);
+    console.log(`✓ Project skills directory resolved: ${projectSkillsDir} (${countProjectSkills(projectSkillsDir)} SKILL.md files)`);
+  } catch (error) {
+    console.error(`✗ Project skills directory missing or unreadable: ${projectSkillsDir} (${error?.message || error})`);
+    checkOk = false;
+  }
+
+  try {
+    const appPkg = readJsonFile(new URL("./package.json", import.meta.url));
+    const appSkillPaths = Array.isArray(appPkg?.pi?.skills) ? appPkg.pi.skills : [];
+    if (appSkillPaths.includes("../../skills")) {
+      console.log("✓ apps/pi-mom package.json#pi.skills includes ../../skills for app-cwd discovery");
+    } else {
+      console.error(`✗ apps/pi-mom package.json#pi.skills does not include ../../skills (found: ${JSON.stringify(appSkillPaths)})`);
+      checkOk = false;
+    }
+  } catch (error) {
+    console.error(`✗ Failed to inspect apps/pi-mom package manifest: ${error?.message || error}`);
+    checkOk = false;
+  }
+
+  return { ok: checkOk, projectSkillsDir };
+}
+
+function reportSubagentsPackageResolution() {
+  try {
+    const appPkg = readJsonFile(new URL("./package.json", import.meta.url));
+    const declared = appPkg?.dependencies?.["pi-subagents"];
+    const packageJsonPath = require.resolve("pi-subagents/package.json");
+    const extensionPath = require.resolve("pi-subagents/src/extension/index.ts");
+    const resolvedPkg = readJsonFile(packageJsonPath);
+    if (!declared) {
+      console.error(`✗ PI_MOM_SUBAGENTS_ENABLED=true but apps/pi-mom does not declare pi-subagents dependency`);
+      return false;
+    }
+    console.log(`✓ pi-subagents app dependency resolves: declared ${declared}, installed ${resolvedPkg.version}, extension ${extensionPath}`);
+    return true;
+  } catch (error) {
+    console.error(`✗ PI_MOM_SUBAGENTS_ENABLED=true but pi-subagents did not resolve from app dependencies: ${error?.message || error}`);
+    return false;
+  }
+}
+
+async function reportTeamSkillDiscovery(projectSkillsDir) {
+  let checkOk = true;
+  try {
+    const [{ discoverAgents }, { clearSkillCache, resolveSkillPath }] = await Promise.all([
+      import("pi-subagents/src/agents/agents.ts"),
+      import("pi-subagents/src/agents/skills.ts"),
+    ]);
+    clearSkillCache();
+    const { agents } = discoverAgents(process.cwd(), "project");
+    const byName = new Map(agents.map((agent) => [agent.name, agent]));
+    const resolvedLines = [];
+
+    for (const name of TEAM_AGENT_NAMES) {
+      const agent = byName.get(name);
+      if (!agent) {
+        console.error(`✗ Team agent missing from project discovery: ${name}`);
+        checkOk = false;
+        continue;
+      }
+      if (agent.inheritSkills !== false) {
+        console.error(`✗ ${name} must keep inheritSkills:false`);
+        checkOk = false;
+      }
+      const skills = agent.skills || [];
+      if (skills.length === 0) {
+        console.log(`! ${name} declares no explicit skills`);
+        continue;
+      }
+      for (const skillName of skills) {
+        const resolved = resolveSkillPath(skillName, process.cwd());
+        if (!resolved) {
+          console.error(`✗ ${name} skill missing from app-cwd discovery: ${skillName}`);
+          checkOk = false;
+          continue;
+        }
+        const projectOwned = PROJECT_SKILL_SOURCES.has(resolved.source) && isUnderDir(resolved.path, projectSkillsDir);
+        if (!projectOwned) {
+          console.error(`✗ ${name} skill ${skillName} resolves from ${resolved.source} at ${resolved.path}; expected repo-owned ${projectSkillsDir}`);
+          checkOk = false;
+          continue;
+        }
+        resolvedLines.push(`${name}:${skillName} (${resolved.source})`);
+      }
+    }
+
+    if (resolvedLines.length > 0) {
+      console.log(`✓ Team agent explicit skills resolve from project-owned paths: ${resolvedLines.join(", ")}`);
+    }
+  } catch (error) {
+    console.error(`✗ Failed to inspect team skill discovery: ${error?.message || error}`);
+    checkOk = false;
+  }
+  return checkOk;
+}
 
 const required = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
 let ok = true;
@@ -52,9 +181,13 @@ console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ?
 console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
 console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
 
+const projectSkillsCheck = reportProjectSkillsManifest();
+if (!projectSkillsCheck.ok) ok = false;
+
 const subagentsEnabled = subagentsEnabledFromEnv(process.env);
 console.log(`Team subagents route: ${subagentsEnabled ? "enabled" : "disabled"}`);
 if (subagentsEnabled) {
+  if (!reportSubagentsPackageResolution()) ok = false;
   const piProbe = spawnSync("pi", ["--version"], { encoding: "utf-8" });
   if (piProbe.error?.code === "ENOENT") {
     console.error("✗ PI_MOM_SUBAGENTS_ENABLED=true but `pi` is not on PATH; child subagent runs will fail");
@@ -68,6 +201,39 @@ if (subagentsEnabled) {
   }
 } else {
   console.log("! team: route will acknowledge as disabled; set PI_MOM_SUBAGENTS_ENABLED=true only after canary verification");
+}
+if (!(await reportTeamSkillDiscovery(projectSkillsCheck.projectSkillsDir))) ok = false;
+
+const webAccessEnabled = webAccessEnabledFromEnv(process.env);
+console.log(`Web access: ${webAccessEnabled ? "enabled" : "disabled"}`);
+if (webAccessEnabled) {
+  try {
+    const pkgJsonPath = require.resolve("pi-web-access/package.json");
+    const root = path.dirname(pkgJsonPath);
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+    const extensionPath = path.join(root, "index.ts");
+    const skillsPath = path.join(root, "skills");
+    if (pkg.version === "0.10.7" && fs.existsSync(extensionPath) && fs.existsSync(skillsPath)) {
+      console.log(`✓ pi-web-access ${pkg.version} resolved from app dependency`);
+      console.log(`✓ web extension path: ${extensionPath}`);
+      console.log(`✓ web skills path: ${skillsPath}`);
+      console.log(`✓ web tools allowlist candidates: ${WEB_ACCESS_TOOLS.join(", ")}`);
+    } else {
+      console.error(`✗ pi-web-access resolved but expected version/path is missing (version=${pkg.version || "?"})`);
+      ok = false;
+    }
+  } catch (error) {
+    console.error(`✗ PI_MOM_WEB_ACCESS_ENABLED=true but pi-web-access cannot be resolved: ${error?.message || error}`);
+    ok = false;
+  }
+  if (process.env.PI_ALLOW_BROWSER_COOKIES === "1") {
+    console.error("! PI_ALLOW_BROWSER_COOKIES=1; browser-cookie Gemini Web is operator-enabled (keep unset/0 by default)");
+  } else {
+    console.log("✓ PI_ALLOW_BROWSER_COOKIES is not enabled by env");
+  }
+  console.log(`Web provider keys: EXA=${process.env.EXA_API_KEY ? "set" : "unset"}, PERPLEXITY=${process.env.PERPLEXITY_API_KEY ? "set" : "unset"}, GEMINI=${process.env.GEMINI_API_KEY ? "set" : "unset"}`);
+} else {
+  console.log("! web access route tools are disabled; set PI_MOM_WEB_ACCESS_ENABLED=true only after canary verification");
 }
 
 try {

@@ -40,8 +40,10 @@ if (process.env.PI_AGENT_DIR && !process.env.PI_CODING_AGENT_DIR) {
 // an existing file because that would clobber the SDK's rotated tokens.
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { Buffer as _NodeBuffer } from "node:buffer";
+import { createRequire } from "node:module";
 import { homedir as _homedir } from "node:os";
-import { join as _join } from "node:path";
+import { dirname as _dirname, join as _join, resolve as _resolve } from "node:path";
+import { fileURLToPath as _fileURLToPath } from "node:url";
 
 function _resolveAgentDir() {
   return (
@@ -90,9 +92,34 @@ import linearTools from "../../../extensions/linear-tools.ts";
 // slack-ui-context.mjs which the SDK threads through as ctx.ui to every
 // extension and tool handler.
 import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
+import slackTeamSubagentSafetyExtension from "../../../extensions/slack-team-subagent-safety.ts";
+import webAccessSafetyExtension from "../../../extensions/pi-web-access-safety.ts";
+
+const require = createRequire(import.meta.url);
+
+const _PI_MOM_LIB_DIR = _dirname(_fileURLToPath(import.meta.url));
+
+export function resolveProjectSkillsDir() {
+  return _resolve(_PI_MOM_LIB_DIR, "..", "..", "..", "skills");
+}
 
 export function subagentsEnabledFromEnv(env = process.env) {
   return String(env.PI_MOM_SUBAGENTS_ENABLED || "").toLowerCase() === "true";
+}
+
+export function webAccessEnabledFromEnv(env = process.env) {
+  return String(env.PI_MOM_WEB_ACCESS_ENABLED || "").toLowerCase() === "true";
+}
+
+export function resolveWebAccessResourcePaths({ requireFn = require } = {}) {
+  const pkgJson = requireFn.resolve("pi-web-access/package.json");
+  const root = _dirname(pkgJson);
+  return {
+    packageJsonPath: pkgJson,
+    root,
+    extensionPath: _join(root, "index.ts"),
+    skillsPath: _join(root, "skills"),
+  };
 }
 
 async function loadSubagentsExtension() {
@@ -106,7 +133,13 @@ export async function buildPiMomExtensionFactories({
 } = {}) {
   const factories = [linearTools, slackInteractiveTools];
   if (subagentsEnabledFromEnv(env)) {
-    factories.push(await loadSubagents());
+    factories.push(await loadSubagents(), slackTeamSubagentSafetyExtension);
+  }
+  if (webAccessEnabledFromEnv(env)) {
+    // Safety guard only. The official pi-web-access tools load via an
+    // explicit additionalExtensionPaths entry so SDK compatibility aliases
+    // apply to the package's @mariozechner imports.
+    factories.push(webAccessSafetyExtension);
   }
   return factories;
 }
@@ -116,8 +149,9 @@ export async function buildResourceLoaderOptions({
   agentDir = getAgentDir(),
   env = process.env,
   loadSubagents = loadSubagentsExtension,
+  resolveWebAccessPaths = resolveWebAccessResourcePaths,
 } = {}) {
-  return {
+  const options = {
     cwd,
     agentDir,
     // Skip filesystem discovery of extensions (extensionPaths empty) but
@@ -126,16 +160,24 @@ export async function buildResourceLoaderOptions({
     // into run inside the agent loop.
     noExtensions: true,
     extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents }),
-    // Skills ARE loaded (discovered from ./skills per package.json's
-    // `pi.skills` config). The model uses skill descriptions to pick the
-    // right operating mode per turn — Slack/Linear context primers,
-    // repo work patterns, reasoning aids — instead of routing all of
-    // that through hardcoded route instructions alone.
+    // Skills are loaded only from Covent's repo-owned skill directory plus
+    // explicitly-approved package skills. `noSkills: true` disables ambient
+    // user/global/default discovery; additionalSkillPaths still load.
+    additionalSkillPaths: [resolveProjectSkillsDir()],
+    noSkills: true,
     // Prompts/themes/context-files stay off: they're not the lever here.
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
   };
+
+  if (webAccessEnabledFromEnv(env)) {
+    const webAccess = resolveWebAccessPaths();
+    options.additionalExtensionPaths = [webAccess.extensionPath];
+    options.additionalSkillPaths = [...options.additionalSkillPaths, webAccess.skillsPath];
+  }
+
+  return options;
 }
 
 export function resolvePiWorkdir(env = process.env, cwd = process.cwd()) {
