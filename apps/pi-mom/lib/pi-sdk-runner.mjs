@@ -92,8 +92,8 @@ import linearTools from "../../../extensions/linear-tools.ts";
 // slack-ui-context.mjs which the SDK threads through as ctx.ui to every
 // extension and tool handler.
 import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
-import slackTeamSubagentSafetyExtension from "../../../extensions/slack-team-subagent-safety.ts";
-import webAccessSafetyExtension from "../../../extensions/pi-web-access-safety.ts";
+import browserUseTools from "../../../extensions/browser-use-tools.ts";
+import gitCheckpoint from "../../../extensions/git-checkpoint.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -103,12 +103,12 @@ export function resolveProjectSkillsDir() {
   return _resolve(_PI_MOM_LIB_DIR, "..", "..", "..", "skills");
 }
 
-export function subagentsEnabledFromEnv(env = process.env) {
-  return String(env.PI_MOM_SUBAGENTS_ENABLED || "").toLowerCase() === "true";
+export function subagentsEnabledFromEnv(_env = process.env) {
+  return true;
 }
 
-export function webAccessEnabledFromEnv(env = process.env) {
-  return String(env.PI_MOM_WEB_ACCESS_ENABLED || "").toLowerCase() === "true";
+export function webAccessEnabledFromEnv(_env = process.env) {
+  return true;
 }
 
 export function resolveWebAccessResourcePaths({ requireFn = require } = {}) {
@@ -128,20 +128,15 @@ async function loadSubagentsExtension() {
 }
 
 export async function buildPiMomExtensionFactories({
-  env = process.env,
   loadSubagents = loadSubagentsExtension,
 } = {}) {
-  const factories = [linearTools, slackInteractiveTools];
-  if (subagentsEnabledFromEnv(env)) {
-    factories.push(await loadSubagents(), slackTeamSubagentSafetyExtension);
-  }
-  if (webAccessEnabledFromEnv(env)) {
-    // Safety guard only. The official pi-web-access tools load via an
-    // explicit additionalExtensionPaths entry so SDK compatibility aliases
-    // apply to the package's @mariozechner imports.
-    factories.push(webAccessSafetyExtension);
-  }
-  return factories;
+  return [
+    linearTools,
+    slackInteractiveTools,
+    browserUseTools,
+    gitCheckpoint,
+    await loadSubagents(),
+  ];
 }
 
 export async function buildResourceLoaderOptions({
@@ -151,33 +146,25 @@ export async function buildResourceLoaderOptions({
   loadSubagents = loadSubagentsExtension,
   resolveWebAccessPaths = resolveWebAccessResourcePaths,
 } = {}) {
-  const options = {
+  const webAccess = resolveWebAccessPaths();
+  return {
     cwd,
     agentDir,
-    // Skip filesystem discovery of extensions (extensionPaths empty) but
-    // still load the inline factories below. This keeps the bot's
-    // surface area predictable — only the extensions we explicitly opt
-    // into run inside the agent loop.
+    // Keep extension loading deterministic for Railway but make every
+    // app-approved extension default-on. Package/global auto-install stays
+    // disabled by PI_OFFLINE; the app explicitly loads its own extension
+    // factories plus the app-pinned pi-web-access package path.
     noExtensions: true,
     extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents }),
-    // Skills are loaded only from Covent's repo-owned skill directory plus
-    // explicitly-approved package skills. `noSkills: true` disables ambient
-    // user/global/default discovery; additionalSkillPaths still load.
-    additionalSkillPaths: [resolveProjectSkillsDir()],
-    noSkills: true,
-    // Prompts/themes/context-files stay off: they're not the lever here.
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
+    additionalExtensionPaths: [webAccess.extensionPath],
+    // Skills are no longer route-gated: repo skills plus pi-web-access skills
+    // are always available, and ambient/default skill discovery is allowed.
+    additionalSkillPaths: [resolveProjectSkillsDir(), webAccess.skillsPath],
+    noSkills: false,
+    noPromptTemplates: false,
+    noThemes: false,
+    noContextFiles: false,
   };
-
-  if (webAccessEnabledFromEnv(env)) {
-    const webAccess = resolveWebAccessPaths();
-    options.additionalExtensionPaths = [webAccess.extensionPath];
-    options.additionalSkillPaths = [...options.additionalSkillPaths, webAccess.skillsPath];
-  }
-
-  return options;
 }
 
 export function resolvePiWorkdir(env = process.env, cwd = process.cwd()) {
@@ -191,10 +178,10 @@ const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
 const PI_WORKDIR = resolvePiWorkdir();
-// Legacy env fallback used only by the pi-sdk-runner unit tests that construct
-// a runner without explicit `tools`; production callers always pass `tools`
-// from the lib/routes.mjs route map.
-const ALLOW_TOOLS = process.env.PI_MOM_ALLOW_PI_TOOLS === "true";
+// Normal Slack turns omit `tools`, which means every registered tool is
+// activated by default. Legacy env-level tool deny switches are intentionally
+// ignored; explicit `tools: []` is the only internal no-tools escape hatch.
+const ALLOW_TOOLS = true;
 
 function stripTerminalSequences(text) {
   if (!text) return "";
@@ -258,12 +245,10 @@ export function createRunner({
       );
     }
 
-    // Tool gating: when `tools` is provided by the lib/routes.mjs route map, it is
-    // the authoritative allowlist. Empty array → noTools:"all" (no Pi tools
-    // active; model-only draft). Non-empty array → all builtin tools
-    // available to the SDK, then `setActiveToolsByName(tools)` narrows them
-    // after createSession returns. When `tools` is undefined (legacy callers
-    // + unit tests), fall back to the historical `allowTools` flag.
+    // Default-all posture: normal Slack turns omit `tools`, so we create the
+    // session with tools enabled and then activate every registered tool by
+    // name. Explicit `tools: []` remains an internal escape hatch for tests or
+    // non-Pi bridge replies that intentionally need no tools.
     const toolsExplicit = Array.isArray(tools);
     const effectiveAllowTools = toolsExplicit ? tools.length > 0 : allowTools;
 
@@ -295,6 +280,9 @@ export function createRunner({
     const session = result?.session ?? result;
     if (toolsExplicit && tools.length > 0 && typeof session.setActiveToolsByName === "function") {
       session.setActiveToolsByName(tools);
+    } else if (!toolsExplicit && effectiveAllowTools && typeof session.setActiveToolsByName === "function" && typeof session.getAllTools === "function") {
+      const allToolNames = session.getAllTools().map((tool) => tool.name).filter(Boolean);
+      session.setActiveToolsByName([...new Set(allToolNames)]);
     }
     if (uiContext && typeof session.bindExtensions === "function") {
       try {

@@ -1,115 +1,57 @@
-const SLACK_INTERACTIVE_TOOLS = [
-  "slack_approval_card",
-  "slack_choice_card",
-  "slack_input_request",
-];
+const WEB_ACCESS_INSTRUCTION = `Web access tools are available by default. Use them when public web or code-search context helps answer the user's request. Cite useful public sources and keep Slack output compact.`;
 
-export const TEAM_SUBAGENT_TOOLS = ["subagent", ...SLACK_INTERACTIVE_TOOLS];
+const TEAM_ROUTE_INSTRUCTION = `Run a Team Subagents workflow. The subagent tool is available by default, so use the simplest subagent call that fits the user request and summarize useful artifacts/results back into Slack.`;
 
-export const WEB_ACCESS_TOOLS = [
-  "web_search",
-  "get_search_content",
-  "code_search",
-];
-
-const WEB_ACCESS_PLAIN_INSTRUCTION = `Web access is enabled for this route as a bounded public-web research aid.
-
-Web access rules:
-- Use web tools only for public web search/code-search that is necessary to answer the user's request.
-- Do not search or fetch secrets, tokens, credentials, raw private Slack dumps, customer PII, or internal files.
-- For web_search, use workflow: "none"; do not open browser curator UI from Slack.
-- Direct URL fetch is not exposed in Slack by default. Use web_search/code_search and cite public sources.
-- Summarize and cite useful public sources; do not paste huge raw page dumps into Slack.`;
-
-const TEAM_ROUTE_ENABLED_INSTRUCTION = `Run a Slack-owned Team Subagents preset. This route is foreground and read-only only.
-
-Allowed presets from the user text after \`team:\`:
-- \`doctor\`: call the subagent tool with { "action": "doctor" }.
-- \`context <scope>\`: call the subagent tool once with agent \`team-scout\`, agentScope \`project\`, context \`fresh\`, async false, and a concise task to inspect that scope.
-- \`plan <task>\`: call the subagent tool once in chain mode with project agents \`team-scout\` then \`team-planner\`, agentScope \`project\`, context \`fresh\`, async false, and clarify false.
-- \`review <target>\`: call the subagent tool once with agent \`team-reviewer-readonly\`, agentScope \`project\`, context \`fresh\`, async false.
-
-Hard rules:
-- Call \`subagent\` at most once per Slack request.
-- Always foreground: set async false explicitly; never omit async and never start background jobs.
-- Never use write-capable agents such as \`worker\` or \`delegate\` from Slack.
-- Never use subagent management mutations (create/update/delete), interrupt/resume, worktree, push, deploy, or external mutation flows from this route.
-- Prefer project-scoped agents and summarize the result back to Slack with artifacts/next steps, not raw transcript dumps.
-- If the request needs mutation, stop and ask for explicit next-step approval instead of mutating.`;
-
-const TEAM_ROUTE_DISABLED_INSTRUCTION =
-  "Team subagents are disabled in this environment. Do not call tools. Tell the user that PI_MOM_SUBAGENTS_ENABLED=true is required to enable the team: route.";
-
-export function subagentsEnabledFromEnv(env = process.env) {
-  return String(env.PI_MOM_SUBAGENTS_ENABLED || "").toLowerCase() === "true";
+export function subagentsEnabledFromEnv(_env = process.env) {
+  return true;
 }
 
-export function webAccessEnabledFromEnv(env = process.env) {
-  return String(env.PI_MOM_WEB_ACCESS_ENABLED || "").toLowerCase() === "true";
+export function webAccessEnabledFromEnv(_env = process.env) {
+  return true;
 }
 
-export function buildRoutes({
-  subagentsEnabled = subagentsEnabledFromEnv(),
-  webAccessEnabled = webAccessEnabledFromEnv(),
-} = {}) {
+export function buildRoutes(_options = {}) {
   return {
     plain: {
       label: "Default Pi agent",
-      instruction: webAccessEnabled ? WEB_ACCESS_PLAIN_INSTRUCTION : "",
-      tools: [
-        "bash", "read", "grep", "find", "edit", "write",
-        ...SLACK_INTERACTIVE_TOOLS,
-        ...(webAccessEnabled ? WEB_ACCESS_TOOLS : []),
-      ],
+      instruction: WEB_ACCESS_INSTRUCTION,
     },
-    help: { label: "Show help", instruction: "", tools: [] },
-    status: { label: "Show bridge status", instruction: "", tools: [] },
+    help: { label: "Show help", instruction: "" },
+    status: { label: "Show bridge status", instruction: "" },
     summarize: {
       label: "Thread summary",
       instruction: "Summarize the current Slack thread into decisions, open questions, owners, risks/blockers, and next actions. Prefer compact bullets and cite Slack timestamps/permalinks if present in context.",
-      tools: [],
     },
     linear: {
       label: "Create Linear issue",
-      instruction: "Create a Linear issue from the current Slack thread by calling the linear_create_issue tool exactly once. Pass a single-line title (≤240 chars), a Markdown description (problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, open questions), and an optional priority (0–4). After the tool returns, post a short Slack reply quoting the new issue identifier and URL.",
-      tools: [
-        "linear_search_issues", "linear_create_issue", "linear_add_comment",
-        ...SLACK_INTERACTIVE_TOOLS,
-      ],
+      instruction: "Create a Linear issue from the current Slack thread. Search first when useful, then comment-or-create. Pass a concise title and Markdown description with problem, context, proposed solution/spec, acceptance criteria, priority/severity suggestion, source Slack thread reference, and open questions. After the tool returns, post a short Slack reply quoting the issue identifier and URL.",
     },
     agenda: {
       label: "Meeting agenda",
       instruction: "Turn the current Slack context into a meeting agenda. Output: meeting goal, required decisions, agenda items, pre-reads/context, attendee-specific questions if inferable, and desired outcomes.",
-      tools: [],
     },
     spec: {
       label: "Spec / PRD draft",
       instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
-      tools: [],
     },
     bash: {
       label: "Execute bash command",
-      instruction: "Execute the user's bash command verbatim via the bash tool exactly once. After it returns, summarize the exit code, stdout, and stderr in a single concise paragraph.",
-      tools: ["bash", ...SLACK_INTERACTIVE_TOOLS],
+      instruction: "Execute the user's bash command via the bash tool, then summarize the exit code, stdout, and stderr concisely.",
     },
     team: {
-      label: subagentsEnabled ? "Team subagents" : "Team subagents (disabled)",
-      instruction: subagentsEnabled ? TEAM_ROUTE_ENABLED_INSTRUCTION : TEAM_ROUTE_DISABLED_INSTRUCTION,
-      tools: subagentsEnabled ? [...TEAM_SUBAGENT_TOOLS] : [],
+      label: "Team subagents",
+      instruction: TEAM_ROUTE_INSTRUCTION,
     },
   };
 }
 
-export function formatHelpText({ routes = buildRoutes(), subagentsEnabled = subagentsEnabledFromEnv() } = {}) {
+export function formatHelpText({ routes = buildRoutes() } = {}) {
   const routeLines = Object.entries(routes)
     .map(([key, route]) => `• \`${key}:\` ${route.label}`)
     .join("\n");
 
-  const teamExample = subagentsEnabled
-    ? `• \`@Covent Pi team: context apps/pi-mom Slack route handling\`\n`
-    : `• \`@Covent Pi team: doctor\` _(disabled until PI_MOM_SUBAGENTS_ENABLED=true)_\n`;
-
   return `*Covent Pi commands*\n\n` +
+    `All Pi tools, app extensions, bash, skills, web access, and subagents are enabled by default for Pi-backed routes. Prefixes shape the workflow; they do not restrict tools.\n\n` +
     `• \`help:\` show this menu\n` +
     `• \`status:\` show local bridge health/config\n` +
     `${routeLines}\n\n` +
@@ -118,8 +60,9 @@ export function formatHelpText({ routes = buildRoutes(), subagentsEnabled = suba
     `• in a thread: \`@Covent Pi create Linear issue\`\n` +
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
-    `• \`@Covent Pi spec: turn this thread into a PRD draft\`\n` +
-    teamExample;
+    `• \`@Covent Pi spec: turn this idea into a PRD draft\`\n` +
+    `• \`@Covent Pi team: use subagents to inspect and plan this change\`\n` +
+    `• \`@Covent Pi bash: pwd && git status --short\`\n`;
 }
 
 export function formatStatusText({
@@ -136,8 +79,6 @@ export function formatStatusText({
   linearStateId,
   traceEnabled = false,
   routes = buildRoutes(),
-  subagentsEnabled = subagentsEnabledFromEnv(),
-  webAccessEnabled = webAccessEnabledFromEnv(),
 } = {}) {
   return `*Covent Pi status*\n` +
     `• mode: \`${mode || "?"}\`\n` +
@@ -147,9 +88,9 @@ export function formatStatusText({
     `• test channel target: \`#${testChannelName || "?"}\`\n` +
     `• allowed channel: \`${allowedChannelId || "any"}\`\n` +
     `• pi model: \`${piModelLabel || "?"}\` (thinking: \`${piThinkingLabel || "?"}\`)\n` +
-    `• pi tools: per-route from lib/routes.mjs\n` +
-    `• team subagents: \`${subagentsEnabled ? "enabled" : "disabled"}\` (PI_MOM_SUBAGENTS_ENABLED)\n` +
-    `• web access: \`${webAccessEnabled ? "enabled" : "disabled"}\` (PI_MOM_WEB_ACCESS_ENABLED; plain route only)\n` +
+    `• pi tools: \`all registered tools active by default\`\n` +
+    `• app extensions: \`default-on\` (Linear, Slack UI, subagents, browser-use, pi-web-access, git checkpoint)\n` +
+    `• skills: \`repo + app/package skills enabled\`\n` +
     `• Linear issue creation: \`${linearConfigured ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
     `• Linear target: team \`${linearTeamId || "?"}\`, project \`${linearProjectId || "?"}\`, state \`${linearStateId || "?"}\`\n` +
     `• trace: \`${traceEnabled ? "on" : "off"}\`\n` +

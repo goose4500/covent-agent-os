@@ -27,12 +27,13 @@ This file is the front door for humans and agents working on the Covent Slack �
 Slack thread
   → @Covent-Agent mention OR Assistant tab message
   → dispatchToAction({surface, channel, threadTs, …})
-  → action-resolver(registry.yaml) → {tools, systemPromptSuffix, approvals}
+  → route catalog(routes.mjs) → {route instruction + workflow label}
   → in-process Pi session (createAgentSession + SessionManager) resumes per thread
+  → runner activates all registered tools/skills/app extensions by default
   → streaming response via chat.startStream + heartbeat
   → optional canvas mirror (spec: route)
   → optional Linear comment/issue (linear: route via 3 modular Pi custom tools)
-  → permission-gate approvals via Slack modals (bash route on rm -rf/sudo/etc.)
+  → optional explicit Slack approval/choice/input cards when the model uses Slack UI tools
   → Slack threaded confirmation
   → Git implementation when code changes
   → Railway auto-deploy when main updates
@@ -65,7 +66,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 - [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — the 2026-05-12 cutover lifecycle; reusable pattern for future blue-green Railway migrations.
 - [`apps/pi-mom/README.md`](../apps/pi-mom/README.md) — primary pi-mom setup, route, streaming, and Linear behavior runbook.
 - [`apps/pi-mom/index.mjs`](../apps/pi-mom/index.mjs) — implementation truth for request handling.
-- [`apps/pi-mom/control-plane/registry.yaml`](../apps/pi-mom/control-plane/registry.yaml) — declarative per-Action vocabulary.
+- [`apps/pi-mom/lib/routes.mjs`](../apps/pi-mom/lib/routes.mjs) — route labels/instructions/help/status; prefixes shape workflow, not tool access.
 - [`apps/pi-mom/doctor.mjs`](../apps/pi-mom/doctor.mjs) — non-secret readiness diagnostics.
 - [`apps/pi-mom/manifest.yaml`](../apps/pi-mom/manifest.yaml) — Slack app manifest source.
 - [`apps/pi-mom/.env.example`](../apps/pi-mom/.env.example) — placeholder-only local env shape.
@@ -73,7 +74,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Specs
 
-- [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — the format of `control-plane/registry.yaml`.
+- [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — historical/deprecated registry format note; live routes are in `apps/pi-mom/lib/routes.mjs`.
 - [`docs/specs/context7-pi-agent-harness-spec.md`](specs/context7-pi-agent-harness-spec.md) — Context7 Pi harness design.
 - [`docs/specs/covent-slack-pi-harness.md`](specs/covent-slack-pi-harness.md) — older Slack MCP bearer-token harness spec; historical/staged.
 
@@ -109,18 +110,19 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Active routes
 
-All defined in [`apps/pi-mom/control-plane/registry.yaml`](../apps/pi-mom/control-plane/registry.yaml):
+All defined in [`apps/pi-mom/lib/routes.mjs`](../apps/pi-mom/lib/routes.mjs). All Pi-backed routes get the same default-on registered tool surface; route prefixes only shape the workflow instruction.
 
-| Route | tools active | Approvals | Notes |
-|---|---|---|---|
-| `plain` (no prefix) | `bash`, `read`, `grep`, `find`, `edit`, `write` | `tool` | Bare mention has the full agentic toolset |
-| `help` | — | `none` | Canonical menu |
-| `status` | — | `none` | Bridge health/config |
-| `summarize` | — | `none` | Thread synthesis |
-| `linear` | `linear_search_issues`, `linear_create_issue`, `linear_add_comment` | `tool` | Search-first idempotency |
-| `agenda` | — | `none` | Meeting agenda |
-| `spec` | — | `none` | Mirrors to a standalone Slack canvas via canvas-sink |
-| `bash` | `bash` | `tool` | permission-gate intercepts `rm -rf`/`sudo`/`chmod 777`/`chown 777` |
+| Route | Notes |
+|---|---|
+| `plain` (no prefix) | Full default Pi agent |
+| `help` | Canonical menu |
+| `status` | Bridge health/config |
+| `summarize` | Thread synthesis |
+| `linear` | Linear search/comment/create workflow |
+| `agenda` | Meeting agenda |
+| `spec` | Mirrors to a standalone Slack canvas via canvas-sink |
+| `team` | Subagent workflow; team route can add Canvas sidecars for child runs |
+| `bash` | Explicit shell workflow |
 
 The Stage-9 image route and the digest:/escalation:/agent:/uictx: routes were deleted in the rebuild.
 
@@ -129,9 +131,10 @@ The Stage-9 image route and the digest:/escalation:/agent:/uictx: routes were de
 Inside a relevant Slack thread or the Assistant chat tab:
 
 ```text
-@Covent-Agent <prompt>                        ← plain route, full default toolset
+@Covent-Agent <prompt>                        ← plain route, full default Pi tool surface
 @Covent-Agent draft spec                      ← natural-intent → spec: route
 @Covent-Agent create Linear issue             ← natural-intent → linear: route
+@Covent-Agent team: plan ...                  ← subagent workflow
 @Covent-Agent summarize:|linear:|spec:|...    ← explicit prefix routes
 @Covent-Agent help | status                   ← built-in bridge commands
 ```
@@ -208,7 +211,7 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 
 - Thread context is capped at 12 messages with no pagination.
 - App Home cockpit is approvals-only after Stage 10 (runs/activity sections trimmed when `runStore` was deleted; an SDK-backed runs index could re-light them).
-- `plain` route's `bash` lands in the Railway container's ephemeral `/root`; EC2 wiring via `covent-aws-operator` is deferred.
+- Default-on `bash` lands in the Railway container's ephemeral app runtime; EC2 wiring via `covent-aws-operator` is deferred.
 - Slack manifest scopes are still POC-broad and should be reviewed before broader workspace rollout.
 - Image generation is permanently removed (Stage 9 killed).
 
@@ -229,6 +232,6 @@ bun run check
 ## Open follow-ups (tracked)
 
 - **Rotate exposed secrets** (`OPENAI_API_KEY`, `LINEAR_API_KEY`, `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`) — surfaced earlier in `railway variables --kv` dumps; deferred.
-- **EC2 wiring via `covent-aws-operator`** — plain-route bash should land on a real workstation, not the Railway container.
+- **EC2 wiring via `covent-aws-operator`** — default-on shell/file workflows should land on a real workstation, not the Railway container.
 - **Retire `covent-pi-mom-v2` Railway service** after ~24h of prod stability.
 - **App Home cockpit re-light** — trimmed to approvals-only when `runStore` was deleted.

@@ -87,12 +87,12 @@ const ROUTE_HOWTO = {
   team: {
     title: "Team subagents",
     body:
-      "When PI_MOM_SUBAGENTS_ENABLED=true, use read-only team presets from a thread:\n\n" +
+      "Subagents are available by default from any Pi-backed route. The team prefix is just a convenient workflow shape:\n\n" +
       "`@Covent Pi team: doctor`\n" +
       "`@Covent Pi team: context apps/pi-mom Slack routing`\n" +
       "`@Covent Pi team: plan add a focused test`\n" +
       "`@Covent Pi team: review <target>`\n\n" +
-      "The Slack route stays foreground/read-only and summarizes artifacts back into the thread.",
+      "All registered tools stay available; use the prompt to ask for the exact behavior you want.",
   },
 };
 

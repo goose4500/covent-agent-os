@@ -6,7 +6,7 @@ Covent agent automation should be powerful, observable, and reversible.
 
 ```text
 Slack receives asks and returns progress/results.
-Pi reasons and executes bounded workflows.
+Pi reasons and executes tool-enabled workflows.
 Tools provide capabilities but do not create authority.
 Linear/GitHub/docs hold durable truth.
 Humans approve risky external mutations.
@@ -16,21 +16,21 @@ Humans approve risky external mutations.
 
 | Surface | Role | Default authority |
 |---|---|---|
-| Slack | Cockpit, intake, progress, approval | Read current context; write only through approved routes |
-| Pi | Reasoning/execution runtime | Can plan, draft, run local checks; no external writes unless route allows |
-| MCP tools | Bounded capability adapters | Read-first; writes require explicit current approval |
-| Linear | Durable work truth | Draft-first by default; mutation only after explicit approval or an approved write-capable route such as `@Covent Pi create Linear issue` |
+| Slack | Cockpit, intake, progress, approval | Read current context; reply in the active thread; other Slack mutations require explicit current approval |
+| Pi | Reasoning/execution runtime | Default-on registered tools/skills/app extensions in Slack Pi; authority still comes from current user intent, not from tool availability |
+| MCP/tools | Capability adapters | Tool-enabled by default; external/consequential writes require explicit current approval |
+| Linear | Durable work truth | Mutation only after explicit approval or an explicit user request such as `@Covent Pi create Linear issue` / `linear:` |
 | GitHub/Git | Code truth/review/rollback | Local commits OK after scan; remote push only after repo boundary is understood |
 | Browser/Chrome | Visible supervised action surface | Read/inspect by default; consequential actions require approval |
 
 ## Route policy
 
-Every Slack/Pi route should declare:
+Slack/Pi route prefixes shape workflow instructions only. They do not define tool allowlists. Every route should still document:
 
 1. Input shape.
-2. Allowed context.
-3. Tools it may call.
-4. Whether approval is required.
+2. Expected context.
+3. Workflow intent.
+4. When explicit user approval is required.
 5. Output format.
 6. Failure behavior.
 7. Redaction/logging behavior.

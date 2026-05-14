@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { WEB_ACCESS_TOOLS, subagentsEnabledFromEnv, webAccessEnabledFromEnv } from "./lib/routes.mjs";
+import { subagentsEnabledFromEnv, webAccessEnabledFromEnv } from "./lib/routes.mjs";
 import { resolveProjectSkillsDir } from "./lib/pi-sdk-runner.mjs";
 
 const require = createRequire(import.meta.url);
@@ -66,13 +66,13 @@ function reportSubagentsPackageResolution() {
     const extensionPath = require.resolve("pi-subagents/src/extension/index.ts");
     const resolvedPkg = readJsonFile(packageJsonPath);
     if (!declared) {
-      console.error(`✗ PI_MOM_SUBAGENTS_ENABLED=true but apps/pi-mom does not declare pi-subagents dependency`);
+      console.error(`✗ apps/pi-mom does not declare pi-subagents dependency`);
       return false;
     }
     console.log(`✓ pi-subagents app dependency resolves: declared ${declared}, installed ${resolvedPkg.version}, extension ${extensionPath}`);
     return true;
   } catch (error) {
-    console.error(`✗ PI_MOM_SUBAGENTS_ENABLED=true but pi-subagents did not resolve from app dependencies: ${error?.message || error}`);
+    console.error(`✗ pi-subagents did not resolve from app dependencies: ${error?.message || error}`);
     return false;
   }
 }
@@ -96,8 +96,8 @@ async function reportTeamSkillDiscovery(projectSkillsDir) {
         checkOk = false;
         continue;
       }
-      if (agent.inheritSkills !== false) {
-        console.error(`✗ ${name} must keep inheritSkills:false`);
+      if (agent.inheritSkills !== true) {
+        console.error(`✗ ${name} should keep inheritSkills:true for default skill availability`);
         checkOk = false;
       }
       const skills = agent.skills || [];
@@ -164,7 +164,7 @@ if (process.env.SLACK_BOT_TOKEN) {
 if (process.env.OPENAI_API_KEY) {
   console.log(`✓ OPENAI_API_KEY is set (value hidden)`);
 } else {
-  console.log(`! OPENAI_API_KEY is not set; @Covent Pi image: route will not call OpenAI`);
+  console.log(`! OPENAI_API_KEY is not set; Pi model calls may fail if PI_MOM_MODEL requires OpenAI credentials`);
 }
 
 if (process.env.LINEAR_API_KEY) {
@@ -177,20 +177,16 @@ console.log(`Linear target team: ${process.env.LINEAR_TEAM_ID || "c9c8376e-7fd3-
 console.log(`Linear target project: ${process.env.LINEAR_PROJECT_ID || "ba9682e2-c14e-4208-98a2-a89f3fb285b8"}`);
 console.log(`Linear target state: ${process.env.LINEAR_STATE_ID || "adfdb6e9-b118-4d65-ada3-ad11087b7dab"}`);
 
-console.log(`Image route: ${process.env.PI_MOM_IMAGE_ROUTE_ENABLED === "false" ? "disabled" : "enabled"}`);
-console.log(`Image model: ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-1"}`);
-console.log(`Image quality/size: ${process.env.OPENAI_IMAGE_QUALITY || "low"}/${process.env.OPENAI_IMAGE_SIZE || "1024x1024"}`);
-
 const projectSkillsCheck = reportProjectSkillsManifest();
 if (!projectSkillsCheck.ok) ok = false;
 
 const subagentsEnabled = subagentsEnabledFromEnv(process.env);
-console.log(`Team subagents route: ${subagentsEnabled ? "enabled" : "disabled"}`);
+console.log(`Team subagents: ${subagentsEnabled ? "enabled by default" : "disabled"}`);
 if (subagentsEnabled) {
   if (!reportSubagentsPackageResolution()) ok = false;
   const piProbe = spawnSync("pi", ["--version"], { encoding: "utf-8" });
   if (piProbe.error?.code === "ENOENT") {
-    console.error("✗ PI_MOM_SUBAGENTS_ENABLED=true but `pi` is not on PATH; child subagent runs will fail");
+    console.error("✗ `pi` is not on PATH; child subagent runs will fail");
     ok = false;
   } else if (piProbe.error) {
     console.error(`✗ Failed to probe \`pi\` CLI for subagents: ${piProbe.error.message}`);
@@ -199,13 +195,11 @@ if (subagentsEnabled) {
     const versionText = (piProbe.stdout || piProbe.stderr || "found").trim().split("\n")[0];
     console.log(`✓ pi CLI available for child subagent runs: ${versionText}`);
   }
-} else {
-  console.log("! team: route will acknowledge as disabled; set PI_MOM_SUBAGENTS_ENABLED=true only after canary verification");
 }
 if (!(await reportTeamSkillDiscovery(projectSkillsCheck.projectSkillsDir))) ok = false;
 
 const webAccessEnabled = webAccessEnabledFromEnv(process.env);
-console.log(`Web access: ${webAccessEnabled ? "enabled" : "disabled"}`);
+console.log(`Web access: ${webAccessEnabled ? "enabled by default" : "disabled"}`);
 if (webAccessEnabled) {
   try {
     const pkgJsonPath = require.resolve("pi-web-access/package.json");
@@ -217,13 +211,13 @@ if (webAccessEnabled) {
       console.log(`✓ pi-web-access ${pkg.version} resolved from app dependency`);
       console.log(`✓ web extension path: ${extensionPath}`);
       console.log(`✓ web skills path: ${skillsPath}`);
-      console.log(`✓ web tools allowlist candidates: ${WEB_ACCESS_TOOLS.join(", ")}`);
+      console.log(`✓ web tools are default-on from the app-pinned pi-web-access package`);
     } else {
       console.error(`✗ pi-web-access resolved but expected version/path is missing (version=${pkg.version || "?"})`);
       ok = false;
     }
   } catch (error) {
-    console.error(`✗ PI_MOM_WEB_ACCESS_ENABLED=true but pi-web-access cannot be resolved: ${error?.message || error}`);
+    console.error(`✗ pi-web-access cannot be resolved: ${error?.message || error}`);
     ok = false;
   }
   if (process.env.PI_ALLOW_BROWSER_COOKIES === "1") {
@@ -232,8 +226,6 @@ if (webAccessEnabled) {
     console.log("✓ PI_ALLOW_BROWSER_COOKIES is not enabled by env");
   }
   console.log(`Web provider keys: EXA=${process.env.EXA_API_KEY ? "set" : "unset"}, PERPLEXITY=${process.env.PERPLEXITY_API_KEY ? "set" : "unset"}, GEMINI=${process.env.GEMINI_API_KEY ? "set" : "unset"}`);
-} else {
-  console.log("! web access route tools are disabled; set PI_MOM_WEB_ACCESS_ENABLED=true only after canary verification");
 }
 
 try {

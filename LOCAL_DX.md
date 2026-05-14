@@ -4,7 +4,7 @@
 
 - One repo contains Covent automation source.
 - Local DX stays fast: edit repo → run checks → run the Slack bridge → test in `#idea-specs`.
-- `~/.pi/agent` is runtime/install state for the standalone `pi` CLI; the *production* Pi runtime is now in-process via the SDK (no subprocess), so the bridge does not depend on a globally installed `pi`.
+- `~/.pi/agent` is runtime/install state for the standalone `pi` CLI. Parent Pi runs are in-process via the SDK, and default-on team/subagent workflows spawn child `pi` CLI runs, so local/prod runtimes need `pi` on PATH.
 
 ## Common commands
 
@@ -14,7 +14,7 @@ bun run check                  # secret-scan + skill/agent validators + pi-mom t
 bun run doctor                 # alias for doctor:pi-mom
 bun run doctor:pi-mom          # non-secret readiness diagnostics
 bun run dev:pi-mom             # run the Slack bridge locally
-bun run install:pi             # optional: install repo as a Pi package for harness experiments
+bun run install:pi             # required if pi is not already on PATH; team/subagent child runs use it
 bun run typecheck              # tsc --noEmit
 bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 ```
@@ -24,9 +24,9 @@ bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 ## Source layout
 
 - `apps/pi-mom/` — the Slack Socket Mode bridge (deployed to Railway as `covent-pi-mom`).
-- `apps/pi-mom/control-plane/registry.yaml` — declarative per-Action vocabulary.
-- `apps/pi-mom/lib/` — dispatch, action-resolver, pi-sdk-runner, pi-session, slack-sink, slack-ui-context, canvas-sink, composite-sink, thread-session-map, home-view.
-- `extensions/` — Pi extension tools and guards (`linear-tools.ts`, `permission-gate.ts`, `env-guard.ts`, etc.).
+- `apps/pi-mom/lib/routes.mjs` — route labels/instructions/help/status; prefixes shape workflow, not tool access.
+- `apps/pi-mom/lib/` — dispatch, routes, pi-sdk-runner, pi-session, slack-sink, slack-ui-context, canvas-sink, subagent sidecar sink, composite-sink, thread-session-map, home-view.
+- `extensions/` — default-on Pi extension tools (`linear-tools.ts`, `slack-interactive-tools.ts`, `browser-use-tools.ts`, `git-checkpoint.ts`).
 - `lib/` — shared JavaScript helpers (legacy; most logic now in `apps/pi-mom/lib/`).
 - `skills/` — Pi skills.
 - `agents/` — subagent definitions.

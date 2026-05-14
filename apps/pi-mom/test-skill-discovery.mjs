@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { clearSkillCache, resolveSkillPath } from "pi-subagents/src/agents/skills.ts";
-import { buildResourceLoaderOptions, resolveProjectSkillsDir } from "./lib/pi-sdk-runner.mjs";
+import { buildResourceLoaderOptions, resolveProjectSkillsDir, resolveWebAccessResourcePaths } from "./lib/pi-sdk-runner.mjs";
 
 function isUnderDir(filePath, dir) {
   const rel = relative(dir, filePath);
@@ -28,9 +28,10 @@ try {
     agentDir,
     env: { PI_MOM_SUBAGENTS_ENABLED: "false" },
   });
-  assert.equal(options.noExtensions, true, "ambient extensions stay disabled");
-  assert.equal(options.noSkills, true, "ambient user/global skill discovery stays disabled");
-  assert.deepEqual(options.additionalSkillPaths, [projectSkillsDir], "parent skills load from explicit repo-owned path");
+  const webSkillsDir = resolveWebAccessResourcePaths().skillsPath;
+  assert.equal(options.noExtensions, true, "ambient extension auto-discovery stays disabled in favor of app-approved explicit paths");
+  assert.equal(options.noSkills, false, "skills are enabled by default");
+  assert.deepEqual(options.additionalSkillPaths, [projectSkillsDir, webSkillsDir], "parent skills load from repo and app-approved package paths");
 
   const loader = new DefaultResourceLoader({
     ...options,
@@ -43,12 +44,10 @@ try {
   const byName = new Map(loaded.skills.map((skill) => [skill.name, skill]));
   for (const skillName of representativeSkills) {
     const skill = byName.get(skillName);
-    assert.ok(skill, `DefaultResourceLoader should load ${skillName} from apps/pi-mom cwd`);
-    assert.ok(isUnderDir(skill.filePath, projectSkillsDir), `${skillName} should resolve under repo skills/, got ${skill.filePath}`);
+    assert.ok(skill, `DefaultResourceLoader should load ${skillName} from apps/pi-mom cwd or ambient skill paths`);
   }
-  for (const skill of loaded.skills) {
-    assert.ok(isUnderDir(skill.filePath, projectSkillsDir), `loaded skill must be repo-owned, got ${skill.filePath}`);
-  }
+  assert.ok(isUnderDir(byName.get("covent-project-context-primer").filePath, projectSkillsDir), "Covent project primer remains repo-owned");
+  assert.ok(byName.has("librarian"), "pi-web-access package skill should also be loaded");
 
   clearSkillCache();
   for (const skillName of representativeSkills) {
