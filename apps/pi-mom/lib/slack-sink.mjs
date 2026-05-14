@@ -75,6 +75,8 @@ export function createSlackSink({
   let currentStreamChars = 0;  // resets on rotation
   let streamRotations = 0;
   let textBuffer = "";
+  let assistantTextChars = 0;
+  const textByContentIndex = new Map();
   const streamingRedactor = createStreamingRedactor({ redact });
   let textTimer;
   let heartbeatTimer;
@@ -238,9 +240,28 @@ export function createSlackSink({
     if (evt.type === "message_update" && evt.assistantMessageEvent) {
       const ame = evt.assistantMessageEvent;
       if (ame.type === "text_delta" && typeof ame.delta === "string" && ame.delta) {
+        const key = ame.contentIndex ?? "default";
+        textByContentIndex.set(key, `${textByContentIndex.get(key) || ""}${ame.delta}`);
+        assistantTextChars += ame.delta.length;
         textBuffer += ame.delta;
         touch();
         scheduleFlush();
+      } else if (ame.type === "text_end") {
+        const content = typeof ame.content === "string" ? ame.content : "";
+        if (content) {
+          const key = ame.contentIndex ?? "default";
+          const seen = textByContentIndex.get(key) || "";
+          let missing = "";
+          if (!seen) missing = content;
+          else if (content.startsWith(seen) && content.length > seen.length) missing = content.slice(seen.length);
+          if (missing) {
+            assistantTextChars += missing.length;
+            textBuffer += missing;
+            touch();
+            scheduleFlush();
+          }
+          textByContentIndex.set(key, content);
+        }
       }
     } else if (evt.type === "tool_execution_start") {
       const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
@@ -289,6 +310,11 @@ export function createSlackSink({
     }
     flushTextBuffer();
     flushRedactionCarry();
+    const finalResult = typeof result === "string" ? result : "";
+    if (started && !error && finalResult && assistantTextChars === 0) {
+      appendNow(finalResult);
+      assistantTextChars += finalResult.length;
+    }
     await streamChain;
     if (started && error) {
       try {

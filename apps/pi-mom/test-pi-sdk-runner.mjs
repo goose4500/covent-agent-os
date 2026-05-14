@@ -43,6 +43,25 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   return async () => ({ authStorage: {}, modelRegistry: {}, model, modelId });
 }
 
+function fakeAssistantTextMessage(text) {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    stopReason: "stop",
+    timestamp: 0,
+  };
+}
+
+function fakeAssistantErrorMessage(message) {
+  return {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: message,
+    timestamp: 0,
+  };
+}
+
 // Case 1: happy path — three text_delta events, then agent_end, returns full string and streams each delta.
 {
   const events = [
@@ -80,6 +99,66 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
   assert.equal(capturedOptions.thinkingLevel, "high", "happy: thinking level applied from default env");
 }
 
+// Case 1a: SDK may emit successful final text via text_end without text_delta.
+{
+  const final = fakeAssistantTextMessage("final via text_end");
+  const events = [
+    { type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: fakeAssistantTextMessage("") } },
+    { type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "final via text_end", partial: final } },
+    { type: "agent_end", messages: [] },
+  ];
+  const session = fakeSession({ script: events });
+  const onOutputCalls = [];
+  const { runPi } = createRunner({
+    createSession: async () => ({ session }),
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({}),
+  });
+
+  const result = await runPi("hi", { onOutput: (d) => onOutputCalls.push(d) });
+  assert.equal(result, "final via text_end");
+  assert.deepEqual(onOutputCalls, ["final via text_end"], "text_end fallback streams missing final text");
+}
+
+// Case 1b: SDK may expose final assistant text only on message_end/agent_end.
+{
+  const final = fakeAssistantTextMessage("final via agent_end");
+  const events = [
+    { type: "message_start", message: final },
+    { type: "message_end", message: final },
+    { type: "agent_end", messages: [final] },
+  ];
+  const session = fakeSession({ script: events });
+  const { runPi } = createRunner({
+    createSession: async () => ({ session }),
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({}),
+  });
+
+  const result = await runPi("hi");
+  assert.equal(result, "final via agent_end");
+}
+
+// Case 1c: text_end after deltas appends only the suffix the deltas missed.
+{
+  const events = [
+    { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "partial", contentIndex: 0 } },
+    { type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "partial answer" } },
+    { type: "agent_end", messages: [] },
+  ];
+  const session = fakeSession({ script: events });
+  const onOutputCalls = [];
+  const { runPi } = createRunner({
+    createSession: async () => ({ session }),
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({}),
+  });
+
+  const result = await runPi("hi", { onOutput: (d) => onOutputCalls.push(d) });
+  assert.equal(result, "partial answer");
+  assert.deepEqual(onOutputCalls, ["partial", " answer"], "text_end suffix fallback avoids duplicate deltas");
+}
+
 // Case 2: hard timeout — no agent_end ever. Inject synchronous setTimeoutFn so the timeout fires immediately.
 {
   const session = fakeSession({ script: [] });
@@ -111,6 +190,26 @@ function fakeDeps({ model = { id: "fake-model" }, modelId = "fake/fake-model" } 
     buildResourceLoader: async () => ({}),
   });
   await assert.rejects(runPi("hi"), /rate limited/);
+  assert.equal(session.state.aborted, 1);
+  assert.equal(session.state.disposed, 1);
+}
+
+// Case 3a: provider errors can arrive as final message_end/agent_end messages when no text stream started.
+{
+  const final = fakeAssistantErrorMessage("invalid tool schema");
+  const events = [
+    { type: "message_start", message: final },
+    { type: "message_end", message: final },
+    { type: "turn_end", message: final, toolResults: [] },
+    { type: "agent_end", messages: [final] },
+  ];
+  const session = fakeSession({ script: events });
+  const { runPi } = createRunner({
+    createSession: async () => ({ session }),
+    getDeps: fakeDeps(),
+    buildResourceLoader: async () => ({}),
+  });
+  await assert.rejects(runPi("hi"), /invalid tool schema/);
   assert.equal(session.state.aborted, 1);
   assert.equal(session.state.disposed, 1);
 }

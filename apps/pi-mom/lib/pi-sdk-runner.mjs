@@ -7,7 +7,9 @@
 // + @earendil-works/pi-agent-core + @earendil-works/pi-ai type defs):
 //   AgentEvent { type: "message_update", assistantMessageEvent: AssistantMessageEvent }
 //   AssistantMessageEvent { type: "text_delta", delta: string, ... }
+//   AssistantMessageEvent { type: "text_end", content: string, ... }
 //   AssistantMessageEvent { type: "error", error: AssistantMessage, reason: "aborted"|"error" }
+//   AgentEvent { type: "message_end"|"turn_end", message: AgentMessage }
 //   AgentEvent { type: "agent_end", messages: AgentMessage[] } is the terminal event.
 
 // PI_OFFLINE=1 disables the SDK's "install user-scope packages from settings.json"
@@ -191,6 +193,57 @@ function stripTerminalSequences(text) {
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 }
 
+function extractAssistantText(message) {
+  if (!message || message.role !== "assistant") return "";
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part) return "";
+      if (typeof part === "string") return part;
+      if ((part.type === "text" || part.type === "output_text") && typeof part.text === "string") {
+        return part.text;
+      }
+      if (typeof part.content === "string") return part.content;
+      return "";
+    })
+    .join("");
+}
+
+function extractLastAssistantText(messages = []) {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const text = extractAssistantText(messages[i]);
+    if (text && text.trim()) return text;
+  }
+  return "";
+}
+
+function extractAssistantError(message) {
+  if (!message || message.role !== "assistant") return "";
+  if (typeof message.errorMessage === "string" && message.errorMessage) return message.errorMessage;
+  if (message.stopReason === "error" || message.stopReason === "aborted") {
+    return `agent ${message.stopReason}`;
+  }
+  const content = Array.isArray(message.content) ? message.content : [];
+  for (const part of content) {
+    if (part?.type === "error") {
+      return part.errorMessage || part.message || part.text || "agent error";
+    }
+  }
+  return "";
+}
+
+function extractLastAssistantError(messages = []) {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const text = extractAssistantError(messages[i]);
+    if (text) return text;
+  }
+  return "";
+}
+
 // Deps cache. A single shared AuthStorage (file at ${PI_AGENT_DIR}/auth.json,
 // seeded from PI_AUTH_JSON_B64 on cold boot) and a ModelRegistry bound to
 // it. All Slack users share this auth — it's Andy's ChatGPT Max account.
@@ -299,10 +352,18 @@ export function createRunner({
     return await new Promise((resolve, reject) => {
       let settled = false;
       let fullText = "";
+      let latestFinalText = "";
+      const textByContentIndex = new Map();
       let capturedError;
       let unsubscribe;
       let timer;
       let abortHandler;
+
+      const appendOutput = (text) => {
+        if (!text) return;
+        fullText += text;
+        try { onOutput?.(text); } catch {}
+      };
 
       const settle = async (err) => {
         if (settled) return;
@@ -323,13 +384,39 @@ export function createRunner({
         if (evt.type === "message_update" && evt.assistantMessageEvent) {
           const ame = evt.assistantMessageEvent;
           if (ame.type === "text_delta" && typeof ame.delta === "string" && ame.delta) {
-            fullText += ame.delta;
-            try { onOutput?.(ame.delta); } catch {}
+            const key = ame.contentIndex ?? "default";
+            textByContentIndex.set(key, `${textByContentIndex.get(key) || ""}${ame.delta}`);
+            appendOutput(ame.delta);
+          } else if (ame.type === "text_end") {
+            const content = typeof ame.content === "string" ? ame.content : "";
+            if (content) {
+              const key = ame.contentIndex ?? "default";
+              const seen = textByContentIndex.get(key) || "";
+              let missing = "";
+              if (!seen) missing = content;
+              else if (content.startsWith(seen) && content.length > seen.length) missing = content.slice(seen.length);
+              if (missing) appendOutput(missing);
+              textByContentIndex.set(key, content);
+              latestFinalText = content;
+            }
           } else if (ame.type === "error") {
             const msg = ame.error?.errorMessage || ame.reason || "agent error";
             capturedError = new Error(String(msg));
           }
+        } else if (evt.type === "message_end") {
+          latestFinalText = extractAssistantText(evt.message) || latestFinalText;
+          const msgError = extractAssistantError(evt.message);
+          if (msgError) capturedError = new Error(String(msgError));
+        } else if (evt.type === "turn_end") {
+          latestFinalText = extractAssistantText(evt.message) || latestFinalText;
+          const msgError = extractAssistantError(evt.message);
+          if (msgError) capturedError = new Error(String(msgError));
         } else if (evt.type === "agent_end") {
+          if (!fullText.trim()) {
+            fullText = extractLastAssistantText(evt.messages) || latestFinalText || fullText;
+          }
+          const finalError = extractLastAssistantError(evt.messages);
+          if (finalError) capturedError = new Error(String(finalError));
           settle(capturedError || null);
         }
         // Forward every event (text deltas, tool_execution_*, turn_start/end,

@@ -221,6 +221,39 @@ function makeFakeTimers() {
   assert.equal(intervals[0].cleared, true, "heartbeat interval cleared by stop()");
 }
 
+// Case 6a: text_end-only SDK output is appended before stop.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C6a", threadTs: "6.1",
+    surface: "app_mention", requestId: "req_t6a", ...T,
+  });
+  await sink.start({ initialText: "thinking…" });
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "final via text_end" } });
+  await sink.stop({ result: "final via text_end" });
+  const markdown = fakeStream.appends.map((a) => a.markdown_text).filter(Boolean);
+  const joined = markdown.join("");
+  assert.ok(joined.includes("final via text_end"), "text_end-only final text appended");
+  assert.equal((joined.match(/final via text_end/g) || []).length, 1, "text_end final text is not duplicated");
+}
+
+// Case 6b: stop({result}) appends final result when no assistant text streamed.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C6b", threadTs: "6.2",
+    surface: "app_mention", requestId: "req_t6b", ...T,
+  });
+  await sink.start({ initialText: "thinking…" });
+  await sink.stop({ result: "final fallback answer" });
+  const markdown = fakeStream.appends.map((a) => a.markdown_text).filter(Boolean);
+  assert.ok(markdown.includes("final fallback answer"), "final result fallback appended before stop");
+}
+
 // Case 7: stop({error}) appends error chunk + marks error.slackStreamNotified.
 {
   const fakeStream = makeFakeStream();
