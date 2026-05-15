@@ -1,0 +1,51 @@
+name: slack-manifest-push
+
+# Auto-pushes apps/pi-mom/manifest.yaml to the Slack app via
+# apps.manifest.update whenever the manifest or its declaration sources change
+# on main. Drift is caught earlier by the `Slack manifest drift check` step in
+# ci.yml — by the time this workflow runs, manifest.yaml is the source of truth.
+#
+# Requires two repo secrets:
+#   SLACK_APP_CONFIG_TOKEN  (xoxe-… App Configuration Token, rotates ~12h —
+#                            see https://api.slack.com/reference/manifests#config-tokens)
+#   SLACK_APP_ID            (the Slack app ID this repo's manifest targets)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/pi-mom/manifest.yaml
+      - skills/**/SKILL.md
+      - extensions/**/*.slash-commands.json
+      - .mcp.json
+      - apps/pi-mom/lib/slash-command-discovery.mjs
+      - apps/pi-mom/lib/slack-manifest-sync.mjs
+      - scripts/sync-slack-manifest.mjs
+  workflow_dispatch:
+
+concurrency:
+  group: slack-manifest-push
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    name: Push manifest to Slack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install workspace deps
+        run: bun install --frozen-lockfile
+
+      - name: Push manifest to Slack
+        env:
+          SLACK_APP_CONFIG_TOKEN: ${{ secrets.SLACK_APP_CONFIG_TOKEN }}
+          SLACK_APP_ID: ${{ secrets.SLACK_APP_ID }}
+        run: bun scripts/sync-slack-manifest.mjs --push
