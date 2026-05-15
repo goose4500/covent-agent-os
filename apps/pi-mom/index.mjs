@@ -845,13 +845,13 @@ app.message(async ({ message, client }) => {
 });
 
 // Bolt 4.7 Assistant container — the modern Slack agent surface. Activated by
-// the user opening the bot's chat tab (left sidebar → Apps → Covent-Agent).
+// the user opening Polaris from Slack's assistant / app chat surface.
 // Threads here are 1:1 with the user; setStatus drives the "thinking" pill.
 const assistant = new Assistant({
   threadStarted: async ({ event, client, setSuggestedPrompts, say }) => {
     try {
       await setSuggestedPrompts({
-        title: "What can I draft for you?",
+        title: "What can Polaris draft for you?",
         prompts: [
           { title: "Draft a spec", message: "spec: " },
           { title: "Create a Linear issue", message: "linear: " },
