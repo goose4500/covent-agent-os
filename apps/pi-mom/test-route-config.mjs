@@ -47,11 +47,19 @@ import {
     linearTeamId: "T",
     linearProjectId: "P",
     linearStateId: "S",
+    integrationHealth: {
+      slackStreaming: { label: "ok" },
+      browserUse: { label: "configured (env)" },
+      linear: { label: "configured" },
+    },
     traceEnabled: true,
     routes,
   });
   assert.match(status, /pi tools: `all registered tools active by default`/);
   assert.match(status, /app extensions: `default-on`/);
+  assert.match(status, /Slack streaming support: `ok`/);
+  assert.match(status, /Browser Use key: `configured \(env\)`/);
+  assert.match(status, /Linear config: `configured`/);
   assert.match(status, /skills: `repo \+ app\/package skills enabled`/);
   assert.match(status, /routes: `plain, help, status, summarize, linear, agenda, spec, bash, team`/);
 }

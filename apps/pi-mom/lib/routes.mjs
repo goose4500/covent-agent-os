@@ -77,12 +77,18 @@ export function formatStatusText({
   linearTeamId,
   linearProjectId,
   linearStateId,
+  integrationHealth,
   traceEnabled = false,
   routes = buildRoutes(),
 } = {}) {
+  const slackStreamingLabel = integrationHealth?.slackStreaming?.label || "not checked";
+  const browserUseLabel = integrationHealth?.browserUse?.label || "not checked";
+  const linearLabel = integrationHealth?.linear?.label || (linearConfigured ? "configured" : "LINEAR_API_KEY missing");
+
   return `*Covent Pi status*\n` +
     `• mode: \`${mode || "?"}\`\n` +
     `• streaming: \`on\` (slack-sink + heartbeat)\n` +
+    `• Slack streaming support: \`${slackStreamingLabel}\`\n` +
     `• uptime: \`${Number.isFinite(uptimeSeconds) ? uptimeSeconds : "?"}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${testChannelName || "?"}\`\n` +
@@ -90,8 +96,9 @@ export function formatStatusText({
     `• pi model: \`${piModelLabel || "?"}\` (thinking: \`${piThinkingLabel || "?"}\`)\n` +
     `• pi tools: \`all registered tools active by default\`\n` +
     `• app extensions: \`default-on\` (Linear, Slack UI, subagents, browser-use, pi-web-access, git checkpoint)\n` +
+    `• Browser Use key: \`${browserUseLabel}\`\n` +
     `• skills: \`repo + app/package skills enabled\`\n` +
-    `• Linear issue creation: \`${linearConfigured ? "configured" : "LINEAR_API_KEY missing"}\`\n` +
+    `• Linear config: \`${linearLabel}\`\n` +
     `• Linear target: team \`${linearTeamId || "?"}\`, project \`${linearProjectId || "?"}\`, state \`${linearStateId || "?"}\`\n` +
     `• trace: \`${traceEnabled ? "on" : "off"}\`\n` +
     `• routes: \`${Object.keys(routes).join(", ")}\``;
