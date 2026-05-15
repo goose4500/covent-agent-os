@@ -2,7 +2,7 @@
 name: linear-auditor
 description: Read-only Linear issue auditor for finding parent issues, inspecting sub-issues, comments, statuses, blockers, and producing concise summaries. Use for Linear issue/project audits. Never mutate Linear unless explicitly instructed.
 tools: mcp, contact_supervisor
-model: opencode/gemini-3-flash
+model: google/gemini-3.1-flash-lite-preview
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false

@@ -2,7 +2,7 @@
 name: scout-fast
 description: Fast codebase reconnaissance for WholesalersAI repos. Use for finding files, patterns, entrypoints, configs, and likely change sites.
 tools: read, grep, find, ls, bash
-model: opencode/gemini-3-flash
+model: google/gemini-3.1-flash-lite-preview
 thinking: low
 inheritProjectContext: true
 inheritSkills: false

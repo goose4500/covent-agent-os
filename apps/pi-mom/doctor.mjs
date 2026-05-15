@@ -281,10 +281,11 @@ try {
   }
 
   // Read-only/scout-like subagents (team-scout, team-reviewer-readonly, and
-  // global scout/auditor profiles) pin opencode/gemini-3-flash via frontmatter.
-  // Probe it here so cold boot fails loudly when the opencode provider is not
-  // seeded in PI_AUTH_JSON_B64 instead of failing later at child CLI spawn.
-  const SUBAGENT_MODEL_ID = "opencode/gemini-3-flash";
+  // global scout/auditor profiles) pin google/gemini-3.1-flash-lite-preview
+  // via frontmatter. Probe it here so cold boot fails loudly when the google
+  // provider is not seeded (GEMINI_API_KEY missing) instead of failing later
+  // at child CLI spawn.
+  const SUBAGENT_MODEL_ID = "google/gemini-3.1-flash-lite-preview";
   const subSlash = SUBAGENT_MODEL_ID.indexOf("/");
   const subProvider = SUBAGENT_MODEL_ID.slice(0, subSlash);
   const subId = SUBAGENT_MODEL_ID.slice(subSlash + 1);
@@ -292,7 +293,7 @@ try {
   if (subModel) {
     console.log(`✓ Subagent model resolved: ${SUBAGENT_MODEL_ID}`);
   } else {
-    console.error(`✗ Subagent model not found: ${SUBAGENT_MODEL_ID}. Seed opencode auth into PI_AUTH_JSON_B64.`);
+    console.error(`✗ Subagent model not found: ${SUBAGENT_MODEL_ID}. Set GEMINI_API_KEY (Google AI Studio) so Pi's google provider can resolve it.`);
     ok = false;
   }
 } catch (error) {

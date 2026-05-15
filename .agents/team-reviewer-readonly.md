@@ -1,7 +1,7 @@
 ---
 name: team-reviewer-readonly
 description: Reviewer for Slack team: review requests. Reviews files, plans, or diffs with evidence using the default Pi tool surface.
-model: opencode/gemini-3-flash
+model: google/gemini-3.1-flash-lite-preview
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
