@@ -60,12 +60,6 @@ export SLACK_BOT_TOKEN="$(op read 'op://Covent/Covent Pi Slack App/bot-token')"
 export SLACK_APP_TOKEN="$(op read 'op://Covent/Covent Pi Slack App/app-token')"
 ```
 
-Required before `PI_MOM_MODE=pi` unless you intentionally override with `PI_MOM_ALLOW_ANY_CHANNEL=true`:
-
-```bash
-export SLACK_ALLOWED_CHANNEL_ID='C0B05VBGJKF,C0B30N60HGW' # comma-separated channel IDs also supported
-```
-
 Optional for creating Linear issues from Slack threads:
 
 ```bash
@@ -88,16 +82,16 @@ bun --filter pi-mom run start
 
 Before live local testing, confirm whether the Railway production worker is already running. Do not intentionally run duplicate workers against the same Slack app/channel unless you are doing controlled debugging.
 
-## 7. Test in approved Slack channels
+## 7. Test in Slack
 
-In an approved Slack channel such as private `#idea-specs` or another ID listed in `SLACK_ALLOWED_CHANNEL_ID(S)`:
+In any channel where the bot is present, or via DM, or the Polaris assistant surface:
 
 ```text
 /invite @Covent Pi
 @Covent Pi hello — prove the Slack → Pi → Slack loop works
 ```
 
-The app will reply in the thread. For Pi mode, keep `SLACK_ALLOWED_CHANNEL_ID` / `SLACK_ALLOWED_CHANNEL_IDS` set to the intended channel IDs so the bot fails closed outside those channels.
+The app will reply in the thread.
 
 Built-in bridge commands:
 

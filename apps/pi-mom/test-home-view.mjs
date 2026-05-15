@@ -156,7 +156,6 @@ function viewText(view) {
     pendingApprovals: [],
     status: {
       mode: "pi",
-      allowedChannelId: "C123",
       linearConfigured: true,
       slackStreamingAvailable: true,
       browserUseConfigured: true,
@@ -167,7 +166,6 @@ function viewText(view) {
   });
   const text = viewText(view);
   assert.match(text, /mode `pi`/);
-  assert.match(text, /C123/);
   assert.match(text, /Slack :white_check_mark: streaming ok/);
   assert.match(text, /Browser Use key/);
   assert.match(text, /Linear :white_check_mark: configured/);
