@@ -1,8 +1,8 @@
 # ADR 0006: Read-only GitHub MCP access for pi-mom
 
 Date: 2026-05-14
-Status: accepted
-Related: PR #76
+Status: superseded by ADR 0010
+Related: PR #76, ADR 0010 (write-capable posture, issue #121)
 
 ## Context
 

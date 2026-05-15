@@ -245,6 +245,15 @@ The schema lives in [`/examples/mcp.example.json`](../../examples/mcp.example.js
 
 **Railway:** set `PI_MCP_JSON_B64` to `base64 -w0 < mcp.json`. The runner seeds `${PI_AGENT_DIR}/mcp.json` on cold boot only when the file is missing, so OAuth tokens and `directTools` overrides persisted by the adapter on the volume are preserved across deploys. Rotate by deleting the file on the volume and redeploying.
 
+**Rotating `${PI_AGENT_DIR}/mcp.json` (Railway persistent volume):** because the seed runs only when the file is missing, updating `PI_MCP_JSON_B64` alone is a silent no-op against an existing volume. To roll a config change to production:
+
+1. Edit the source `mcp.json` (the canonical sanitized template lives at [`/examples/mcp.example.json`](../../examples/mcp.example.json)). Keep token values in env-var references — never paste literal tokens.
+2. Update Railway's `PI_MCP_JSON_B64` to `base64 -w0 < mcp.json`.
+3. **Either** delete `/data/pi-agent/mcp.json` on the Railway volume and redeploy `pi-mom` (the runner reseeds the file from `PI_MCP_JSON_B64` and logs `Seeded /data/pi-agent/mcp.json from PI_MCP_JSON_B64`), **or** edit `/data/pi-agent/mcp.json` in place via the Railway shell — taking care not to print or log token values — then restart `pi-mom`.
+4. From an approved Slack channel, ask Covent Pi to list MCP tools and verify the expected server's tools are advertised. Confirm no token value appears in deploy logs, Slack replies, or this repo.
+
+**GitHub MCP (write-capable, ADR 0010):** the production GitHub MCP server entry is write-capable so future agents can create and merge PRs in `goose4500/covent-agent-os`. PR create/merge are gated by explicit Slack user approval in the originating thread — see ADR 0010 for the approval boundary and the credential-scope table. The seeded entry omits `X-MCP-Readonly` / `X-MCP-Lockdown`, scopes the exposed surface with `X-MCP-Toolsets: context,repos,pull_requests,issues,actions`, and references its bearer token via `bearerTokenEnv: GITHUB_MCP_PAT` only.
+
 **Slack MCP preset:** set `SLACK_MCP_ENABLED=1` when you want the runner to seed a lazy Slack MCP server and no `mcp.json` exists. The generated config uses `https://mcp.slack.com/mcp`, `auth: "bearer"`, and `bearerTokenEnv` (default `SLACK_MCP_USER_TOKEN`) so token values stay in the secret manager, not git or disk. `PI_MCP_JSON_B64` takes precedence for fully custom MCP configs.
 
 **directTools:** by default every MCP tool is reached through the `mcp` proxy. Set `directTools: true` (or a list of original tool names) per server to register that server's tools as top-level Pi tools so the model sees them next to `read`, `bash`, `edit`, etc.
