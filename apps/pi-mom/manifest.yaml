@@ -37,6 +37,15 @@ features:
   - command: /thread-spec
     description: Draft a spec from a Slack thread
     should_escape: false
+  shortcuts:
+  - name: Draft spec from message
+    type: message
+    callback_id: pi_thread_spec_message
+    description: Draft a spec from the selected message/thread
+  - name: Draft spec from thread URL
+    type: global
+    callback_id: pi_thread_spec_global
+    description: Draft a spec from a Slack message/thread URL
 oauth_config:
   pkce_enabled: false
   scopes:

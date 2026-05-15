@@ -30,6 +30,16 @@ import {
   resolveInputSubmission,
   resolveSelectAction,
 } from "./lib/slack-ui-context.mjs";
+import {
+  buildThreadSpecEvent,
+  buildThreadSpecGlobalShortcutModalView,
+  extractThreadSpecGlobalShortcutSubmission,
+  getThreadSpecMessageShortcutTarget,
+  THREAD_SPEC_GLOBAL_MODAL_CALLBACK_ID,
+  THREAD_SPEC_GLOBAL_SHORTCUT_CALLBACK_ID,
+  THREAD_SPEC_MESSAGE_SHORTCUT_CALLBACK_ID,
+  THREAD_SPEC_URL_BLOCK_ID,
+} from "./lib/slack-shortcuts.mjs";
 import { checkPersistence } from "./lib/persistence-check.mjs";
 import {
   buildRoutes,
@@ -778,6 +788,29 @@ async function handleRequest({ client, event, mode, utilities }) {
   }
 }
 
+async function postEphemeralBestEffort(client, { channel, user, text, requestId, traceEvent }) {
+  if (!channel || !user || !text) return;
+  try {
+    await client.chat.postEphemeral({ channel, user, text });
+    if (traceEvent) trace(traceEvent, { requestId, channel, user });
+  } catch (error) {
+    trace("slack.ephemeral_failed", {
+      requestId,
+      channel,
+      user,
+      error: error?.data?.error || error.message,
+    });
+  }
+}
+
+async function runThreadSpecRequest({ client, channel, user, threadTs, focus, team, mode }) {
+  await handleRequest({
+    client,
+    mode,
+    event: buildThreadSpecEvent({ channel, user, threadTs, focus, team }),
+  });
+}
+
 async function handleThreadSpecSlashCommand({ command, client, respond }) {
   const requestId = `cmd_${Date.now().toString(36)}`;
   const channel = command.channel_id;
@@ -818,24 +851,128 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
     text: `Working on a spec draft for <${reference.url}|this Slack thread>… (req: ${requestId})`,
   });
 
-  await handleRequest({
+  await runThreadSpecRequest({
     client,
+    channel: targetChannel,
+    user,
+    threadTs: reference.threadTs,
+    focus,
+    team: command.team_id,
     mode: "slash_command:/thread-spec",
-    event: {
-      channel: targetChannel,
-      user,
-      ts: reference.threadTs,
-      thread_ts: reference.threadTs,
-      text: `spec: ${focus}`,
-      team: command.team_id,
-      team_id: command.team_id,
-    },
   });
 }
 
 app.command("/thread-spec", async ({ command, ack, client, respond }) => {
   await ack();
   await handleThreadSpecSlashCommand({ command, client, respond });
+});
+
+app.shortcut(THREAD_SPEC_MESSAGE_SHORTCUT_CALLBACK_ID, async ({ shortcut, ack, client }) => {
+  await ack();
+  const requestId = `shortcut_${Date.now().toString(36)}`;
+  const target = getThreadSpecMessageShortcutTarget(shortcut);
+  trace("slack.shortcut_received", {
+    requestId,
+    callbackId: shortcut?.callback_id,
+    type: shortcut?.type,
+    channel: target?.channel,
+    user: target?.user,
+    threadTs: target?.threadTs,
+  });
+
+  if (!target) {
+    trace("slack.shortcut_ignored", { requestId, reason: "missing_message_target" });
+    return;
+  }
+
+  if (!isAllowedChannel(target.channel)) {
+    await postEphemeralBestEffort(client, {
+      channel: target.channel,
+      user: target.user,
+      requestId,
+      text: `I can only work in the configured test channel for now. Target channel: \`${target.channel}\`; allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`.`,
+    });
+    trace("slack.shortcut_ignored", { requestId, reason: "channel_not_allowed", targetChannel: target.channel, allowed: ALLOWED_CHANNEL_ID });
+    return;
+  }
+
+  await postEphemeralBestEffort(client, {
+    channel: target.channel,
+    user: target.user,
+    requestId,
+    traceEvent: "slack.shortcut_acknowledged",
+    text: `Working on a spec draft for this thread… (req: ${requestId})`,
+  });
+
+  await runThreadSpecRequest({
+    client,
+    channel: target.channel,
+    user: target.user,
+    threadTs: target.threadTs,
+    focus: "Turn this Slack thread into a concise PRD/spec draft.",
+    team: target.team,
+    mode: "shortcut:message/thread-spec",
+  });
+});
+
+app.shortcut(THREAD_SPEC_GLOBAL_SHORTCUT_CALLBACK_ID, async ({ shortcut, ack, client }) => {
+  await ack();
+  try {
+    await client.views.open({
+      trigger_id: shortcut.trigger_id,
+      view: buildThreadSpecGlobalShortcutModalView(),
+    });
+    trace("slack.shortcut_modal_opened", { callbackId: shortcut?.callback_id, user: shortcut?.user?.id || shortcut?.user_id });
+  } catch (error) {
+    trace("slack.shortcut_modal_failed", { callbackId: shortcut?.callback_id, error: error?.data?.error || error.message });
+  }
+});
+
+app.view(THREAD_SPEC_GLOBAL_MODAL_CALLBACK_ID, async ({ ack, body, view, client }) => {
+  const requestId = `shortcut_${Date.now().toString(36)}`;
+  const user = body?.user?.id;
+  const { threadUrl, focus } = extractThreadSpecGlobalShortcutSubmission(view);
+  const reference = parseSlackThreadReference(`${threadUrl} ${focus || ""}`);
+
+  if (!reference) {
+    await ack({
+      response_action: "errors",
+      errors: { [THREAD_SPEC_URL_BLOCK_ID]: "Paste a valid Slack message or thread URL." },
+    });
+    trace("slack.shortcut_modal_invalid", { requestId, reason: "invalid_thread_url", user });
+    return;
+  }
+
+  const targetChannel = reference.channel;
+  if (!isAllowedChannel(targetChannel)) {
+    await ack({
+      response_action: "errors",
+      errors: { [THREAD_SPEC_URL_BLOCK_ID]: `That thread is outside the configured test channel(s): ${ALLOWED_CHANNEL_ID || "any"}.` },
+    });
+    trace("slack.shortcut_modal_invalid", { requestId, reason: "channel_not_allowed", targetChannel, allowed: ALLOWED_CHANNEL_ID, user });
+    return;
+  }
+
+  await ack();
+  trace("slack.shortcut_modal_submitted", { requestId, channel: targetChannel, user, threadTs: reference.threadTs });
+
+  await postEphemeralBestEffort(client, {
+    channel: targetChannel,
+    user,
+    requestId,
+    traceEvent: "slack.shortcut_acknowledged",
+    text: `Working on a spec draft for <${reference.url}|this Slack thread>… (req: ${requestId})`,
+  });
+
+  await runThreadSpecRequest({
+    client,
+    channel: targetChannel,
+    user,
+    threadTs: reference.threadTs,
+    focus: focus || reference.remainingText,
+    team: body?.team?.id || body?.team_id,
+    mode: "shortcut:global/thread-spec",
+  });
 });
 
 

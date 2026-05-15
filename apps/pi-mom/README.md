@@ -14,13 +14,15 @@ This enables:
 - Assistant container events (`assistant_thread_started`, `assistant_thread_context_changed`)
 - Agents & AI Apps surface (top-bar entry + split-view + Chat/History tabs in App Home) via `features.agent_view` with the four canonical suggested prompts (spec, linear, agenda, summarize)
 - slash command `/thread-spec`
+- message shortcut `Draft spec from message`
+- global shortcut `Draft spec from thread URL`
 - private-channel thread context for channels the app is invited into
 
 When updating the deployed Covent app, update the existing app that owns bot user `covent_pi` / `U0B0VJJDKFH`; do not create a new Slack app. If editing an existing remote manifest, merge this command into the exported app config instead of overwriting pre-existing shortcuts, commands, scopes, functions, or event subscriptions.
 
 ## 2. Reinstall the app
 
-After changing scopes/events/slash commands, go to **OAuth & Permissions** and reinstall the app to Covent. Slash commands require the `commands` bot scope to be installed/authorized.
+After changing scopes/events/slash commands/shortcuts, go to **OAuth & Permissions** and reinstall the app to Covent. Slash commands require the `commands` bot scope to be installed/authorized.
 
 Copy the **Bot User OAuth Token** (`xoxb-...`) into your local secret manager. Do not paste it into chat or git.
 
@@ -122,6 +124,15 @@ Fallback slash command:
 ```
 
 Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
+
+Shortcut UX:
+
+```text
+Message shortcut: More actions → Draft spec from message
+Global shortcut: Draft spec from thread URL → paste a Slack message/thread URL
+```
+
+Both shortcuts use the same spec route as `/thread-spec` and post the draft into the target Slack thread.
 
 Routed workflow prefixes (defined in `lib/routes.mjs`):
 
