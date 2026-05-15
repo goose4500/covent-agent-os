@@ -2,7 +2,7 @@
 name: linear-subissue-auditor
 description: Specialized read-only Linear sub-issue auditor. Use whenever the user asks to go through, review, audit, summarize, or inspect sub-issues under a Linear parent issue by title or identifier, especially with project/team scope. Follows the linear-subissue-audit skill for context-efficient parent discovery, parentId child listing, parallel detail/comment reads, and secret-safe reporting.
 tools: mcp, contact_supervisor
-model: opencode/gemini-3-flash
+model: google/gemini-3.1-flash-lite-preview
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false

@@ -17,12 +17,13 @@ const expectedSkills = new Map([
   ["team-planner", ["covent-project-context-primer"]],
   ["team-reviewer-readonly", ["covent-project-context-primer"]],
 ]);
-// Read-only/scout-like team agents default to Gemini 3 Flash (issue #96);
+// Read-only/scout-like team agents default to Gemini 3.1 Flash Lite Preview
+// via Pi's `google` provider (Google Generative AI direct, GEMINI_API_KEY).
 // team-planner stays on the Codex GPT-5.5 model used by the parent session.
 const expectedModels = new Map([
-  ["team-scout", "opencode/gemini-3-flash"],
+  ["team-scout", "google/gemini-3.1-flash-lite-preview"],
   ["team-planner", "openai-codex/gpt-5.5"],
-  ["team-reviewer-readonly", "opencode/gemini-3-flash"],
+  ["team-reviewer-readonly", "google/gemini-3.1-flash-lite-preview"],
 ]);
 const projectSkillSources = new Set(["project", "project-package", "project-settings"]);
 
