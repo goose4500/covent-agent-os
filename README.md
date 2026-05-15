@@ -136,6 +136,7 @@ Deploys are triggered by pushes to `main`. Do **not** `railway up` from a local 
 Start here:
 
 - [`docs/architecture.md`](docs/architecture.md) — canonical post-rebuild architecture (the file tree, route table, env vars, extensions, deploy lifecycle).
+- [`docs/architecture-diagrams.html`](docs/architecture-diagrams.html) — team-facing single-file visual guide with 10 architecture diagrams.
 - [`docs/SYSTEM_INDEX.md`](docs/SYSTEM_INDEX.md) — system-wide source-of-truth map across Slack, Pi, Linear, Git, Railway, Whimsical.
 - [`docs/AGENT_CONTEXT.md`](docs/AGENT_CONTEXT.md) — read-first operating context for future agents.
 - [`BOUNDARY.md`](BOUNDARY.md) — authority, mutation boundaries, and secret/data-handling rules.

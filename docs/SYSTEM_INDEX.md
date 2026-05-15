@@ -53,6 +53,7 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 - [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md) — this file; system-wide source-of-truth map.
 - [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — read-first operating context for future agents.
 - [`docs/architecture.md`](architecture.md) — post-rebuild canonical architecture (3 primitives, file tree, routes, extensions, deploy lifecycle).
+- [`docs/architecture-diagrams.html`](architecture-diagrams.html) — team-facing single-file visual guide with 10 architecture diagrams.
 
 ### Safety and authority
 
@@ -103,8 +104,9 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Visual map
 
+- HTML guide: [`docs/architecture-diagrams.html`](architecture-diagrams.html) — structured source outline for the 10 team-facing architecture diagrams.
 - Whimsical board: [Covent Agent OS — Slack/Pi/Linear System Map](https://whimsical.com/covent-agent-os-slack-pi-linear-system-map-FhNbKxykWy2gtzshPe8zoe?ref=mcp).
-- The board visualizes this file; this file remains canonical.
+- The HTML guide and board visualize this file; this file remains canonical.
 
 ## Current pi-mom production behavior
 
