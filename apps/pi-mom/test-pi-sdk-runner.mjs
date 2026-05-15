@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
   buildPiMomExtensionFactories,
   buildResourceLoaderOptions,
+  buildSlackMcpConfigFromEnv,
   createRunner,
   resolvePiWorkdir,
   resolveProjectSkillsDir,
   resolveWebAccessResourcePaths,
+  seedMcpJsonFromEnv,
   subagentsEnabledFromEnv,
   webAccessEnabledFromEnv,
 } from "./lib/pi-sdk-runner.mjs";
@@ -395,6 +399,50 @@ function fakeAssistantErrorMessage(message) {
   } finally {
     if (previousChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
     else process.env.PI_SUBAGENT_CHILD = previousChild;
+  }
+}
+
+// Case 14: Slack MCP preset is opt-in and stores only an env-var reference.
+{
+  assert.equal(buildSlackMcpConfigFromEnv({}), null, "Slack MCP preset is disabled by default");
+  const config = buildSlackMcpConfigFromEnv({
+    SLACK_MCP_ENABLED: "1",
+    SLACK_MCP_BEARER_TOKEN_ENV: "MY_SLACK_MCP_TOKEN",
+    SLACK_MCP_DIRECT_TOOLS: "true",
+    SLACK_MCP_IDLE_TIMEOUT_MINUTES: "7",
+  });
+  assert.equal(config.mcpServers.slack.url, "https://mcp.slack.com/mcp");
+  assert.equal(config.mcpServers.slack.auth, "bearer");
+  assert.equal(config.mcpServers.slack.bearerTokenEnv, "MY_SLACK_MCP_TOKEN");
+  assert.equal(config.mcpServers.slack.directTools, true);
+  assert.equal(config.mcpServers.slack.idleTimeout, 7);
+  assert.equal(JSON.stringify(config).includes("xox"), false, "preset must not embed Slack token values");
+}
+
+// Case 15: mcp.json seeding honors PI_MCP_JSON_B64 first, otherwise uses Slack MCP preset.
+{
+  const agentDir = mkdtempSync(join(tmpdir(), "pi-mom-mcp-seed-"));
+  try {
+    const seeded = seedMcpJsonFromEnv({
+      agentDir,
+      env: { SLACK_MCP_ENABLED: "true", SLACK_MCP_BEARER_TOKEN_ENV: "SLACK_MCP_TOKEN" },
+      log: { log() {}, error() {} },
+    });
+    assert.equal(seeded.seeded, true);
+    assert.equal(seeded.source, "SLACK_MCP_ENABLED");
+    const written = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8"));
+    assert.equal(written.mcpServers.slack.url, "https://mcp.slack.com/mcp");
+    assert.equal(written.mcpServers.slack.bearerTokenEnv, "SLACK_MCP_TOKEN");
+
+    const skipped = seedMcpJsonFromEnv({
+      agentDir,
+      env: { PI_MCP_JSON_B64: Buffer.from('{"mcpServers":{}}').toString("base64") },
+      log: { log() {}, error() {} },
+    });
+    assert.equal(skipped.seeded, false, "existing mcp.json is never overwritten");
+    assert.equal(skipped.reason, "exists");
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
   }
 }
 

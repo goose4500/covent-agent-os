@@ -2,6 +2,8 @@ const WEB_ACCESS_INSTRUCTION = `Web access tools are available by default. Use t
 
 const TEAM_ROUTE_INSTRUCTION = `Run a Team Subagents workflow. The subagent tool is available by default, so use the simplest subagent call that fits the user request and summarize useful artifacts/results back into Slack.`;
 
+const SLACK_DEV_ROUTE_INSTRUCTION = `Use the slack-dev-fundamentals and slack-mcp-agent-ux skills. Help implement or debug Slack apps, Slack MCP, Real-time Search API, Agents & AI Apps, Block Kit UI, approval flows, and Slack CLI workflows. Keep Slack data boundaries explicit, never expose tokens, prefer thread-safe/draft-first output, and use Slack interactive tools for approval or disambiguation before writes.`;
+
 export function subagentsEnabledFromEnv(_env = process.env) {
   return true;
 }
@@ -34,6 +36,10 @@ export function buildRoutes(_options = {}) {
       label: "Spec / PRD draft",
       instruction: "Convert the Slack idea/context into a concise spec draft. Output: problem, user/customer, proposed solution, non-goals, success criteria, implementation notes, risks, validation plan, and open questions.",
     },
+    slack: {
+      label: "Slack app/MCP development",
+      instruction: SLACK_DEV_ROUTE_INSTRUCTION,
+    },
     bash: {
       label: "Execute bash command",
       instruction: "Execute the user's bash command via the bash tool, then summarize the exit code, stdout, and stderr concisely.",
@@ -61,6 +67,7 @@ export function formatHelpText({ routes = buildRoutes() } = {}) {
     `• \`@Covent Pi summarize: decisions, open questions, next actions\`\n` +
     `• \`@Covent Pi linear: create an issue from this thread\`\n` +
     `• \`@Covent Pi spec: turn this idea into a PRD draft\`\n` +
+    `• \`@Covent Pi slack: design an approval modal for this workflow\`\n` +
     `• \`@Covent Pi team: use subagents to inspect and plan this change\`\n` +
     `• \`@Covent Pi bash: pwd && git status --short\`\n`;
 }
@@ -95,7 +102,7 @@ export function formatStatusText({
     `• allowed channel(s): \`${allowedChannelId || "any"}\`\n` +
     `• pi model: \`${piModelLabel || "?"}\` (thinking: \`${piThinkingLabel || "?"}\`)\n` +
     `• pi tools: \`all registered tools active by default\`\n` +
-    `• app extensions: \`default-on\` (Linear, Slack UI, subagents, browser-use, pi-web-access, git checkpoint)\n` +
+    `• app extensions: \`default-on\` (Linear, Slack UI, MCP adapter, subagents, browser-use, pi-web-access, git checkpoint)\n` +
     `• Browser Use key: \`${browserUseLabel}\`\n` +
     `• skills: \`repo + app/package skills enabled\`\n` +
     `• Linear config: \`${linearLabel}\`\n` +

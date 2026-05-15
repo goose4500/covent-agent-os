@@ -19,6 +19,7 @@ const representativeSkills = [
   "covent-project-context-primer",
   "repo-worker",
   "critical-thinking-logical-reasoning",
+  "slack-mcp-agent-ux",
 ];
 
 const agentDir = mkdtempSync(join(tmpdir(), "pi-mom-agent-"));

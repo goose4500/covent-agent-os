@@ -17,7 +17,8 @@
     },
     "slack": {
       "url": "https://mcp.slack.com/mcp",
-      "auth": "oauth",
+      "auth": "bearer",
+      "bearerTokenEnv": "SLACK_MCP_USER_TOKEN",
       "lifecycle": "lazy",
       "idleTimeout": 10,
       "directTools": false
