@@ -301,32 +301,39 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(resolvePiWorkdir({ PI_WORKDIR: "/workspace", HOME: "/root" }, "/app/apps/pi-mom"), "/workspace");
 }
 
-// Case 10: subagents and web access are default-on; app factories load all app extensions.
+// Case 10: subagents, web access, and MCP adapter are default-on; app factories load every app extension.
 {
   assert.equal(subagentsEnabledFromEnv({}), true, "subagents enabled by default");
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "false" }), true, "env no longer disables subagents");
   assert.equal(webAccessEnabledFromEnv({}), true, "web access enabled by default");
   assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "false" }), true, "env no longer disables web access");
 
-  let loadCalls = 0;
+  let subagentLoads = 0;
+  let mcpLoads = 0;
   const fakeSubagentExtension = function fakeSubagentExtension() {};
-  const loadSubagents = async () => { loadCalls += 1; return fakeSubagentExtension; };
+  const fakeMcpAdapter = function fakeMcpAdapter() {};
+  const loadSubagents = async () => { subagentLoads += 1; return fakeSubagentExtension; };
+  const loadMcpAdapter = async () => { mcpLoads += 1; return fakeMcpAdapter; };
 
-  const factories = await buildPiMomExtensionFactories({ loadSubagents });
-  assert.equal(factories.length, 5, "default factories: Linear + Slack UI + Browser Use + git checkpoint + subagents");
-  assert.equal(factories[4], fakeSubagentExtension, "subagents factory is default-on");
-  assert.equal(loadCalls, 1, "imports pi-subagents exactly once for this loader build");
+  const factories = await buildPiMomExtensionFactories({ loadSubagents, loadMcpAdapter });
+  assert.equal(factories.length, 6, "default factories: Linear + Slack UI + Browser Use + git checkpoint + pi-mcp-adapter + subagents");
+  assert.equal(factories[4], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
+  assert.equal(factories[5], fakeSubagentExtension, "subagents factory remains default-on");
+  assert.equal(subagentLoads, 1, "imports pi-subagents exactly once for this loader build");
+  assert.equal(mcpLoads, 1, "imports pi-mcp-adapter exactly once for this loader build");
 }
 
 // Case 11: default resource loader makes app-approved extensions and skills default-on.
 {
   const fakeSubagentExtension = function fakeSubagentExtension() {};
+  const fakeMcpAdapter = function fakeMcpAdapter() {};
   const paths = resolveWebAccessResourcePaths();
   const options = await buildResourceLoaderOptions({
     cwd: "/tmp/pi-mom-test",
     agentDir: "/tmp/pi-agent-test",
     env: { PI_MOM_SUBAGENTS_ENABLED: "false", PI_MOM_WEB_ACCESS_ENABLED: "false" },
     loadSubagents: async () => fakeSubagentExtension,
+    loadMcpAdapter: async () => fakeMcpAdapter,
   });
   assert.equal(options.cwd, "/tmp/pi-mom-test");
   assert.equal(options.agentDir, "/tmp/pi-agent-test");
@@ -336,8 +343,9 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(options.noPromptTemplates, false);
   assert.equal(options.noThemes, false);
   assert.equal(options.noContextFiles, false);
-  assert.equal(options.extensionFactories.length, 5);
-  assert.equal(options.extensionFactories[4], fakeSubagentExtension);
+  assert.equal(options.extensionFactories.length, 6);
+  assert.equal(options.extensionFactories[4], fakeMcpAdapter);
+  assert.equal(options.extensionFactories[5], fakeSubagentExtension);
   assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
 }
 
@@ -378,6 +386,7 @@ function fakeAssistantErrorMessage(message) {
       "browser_use_run",
       "subagent",
       "web_search", "fetch_content", "get_search_content", "code_search",
+      "mcp",
     ]) {
       assert.ok(registeredTools.has(tool), `registered default-on tool: ${tool}`);
     }
