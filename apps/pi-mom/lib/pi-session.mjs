@@ -3,12 +3,13 @@
 // creates a fresh one if absent or stale), and delegates the actual
 // streaming to pi-sdk-runner.runPi with the resolved SessionManager.
 //
-// Accepts an `action` (from the ROUTES map in index.mjs) for tracing and
-// prompt shaping. Tool/skill/extension availability is default-on in the
-// runner rather than gated per route.
+// Tool/skill/extension availability is default-on in the runner — the
+// bridge no longer routes user messages through a fixed set of prefixed
+// workflows, so this layer just hands the prompt to the agent and lets
+// it choose tools/skills dynamically.
 //
 // Public surface:
-//   runTurn({ surface, threadTs, prompt, action, onOutput, signal }) → Promise<string>
+//   runTurn({ surface, threadTs, prompt, onOutput, signal, sink, uiContext }) → Promise<string>
 //
 // Factory `createSession` is DI-friendly for tests: inject runPi, the map,
 // the SessionManager class, and the fs.existsSync probe.
@@ -31,7 +32,7 @@ export function createSession({
 } = {}) {
   const map = threadSessionMap || createThreadSessionMap();
 
-  async function runTurn({ surface, threadTs, prompt, action, onOutput, signal, sink, uiContext } = {}) {
+  async function runTurn({ surface, threadTs, prompt, onOutput, signal, sink, uiContext } = {}) {
     if (!threadTs) throw new Error("runTurn requires threadTs");
     if (typeof prompt !== "string" || !prompt) {
       throw new Error("runTurn requires non-empty prompt");
@@ -59,7 +60,6 @@ export function createSession({
       surface,
       threadTs,
       resumed,
-      action: action?.name,
       toolMode: "all",
     });
 

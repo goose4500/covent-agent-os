@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   buildHomeView,
-  buildRouteHowtoModalView,
   buildSettingsModalView,
 } from "./lib/home-view.mjs";
 
@@ -100,7 +99,7 @@ function viewText(view) {
   assert.equal(approveBtn?.value, "appr_42");
 }
 
-// ---------- case 7: quick launch + filter + settings buttons present ----------
+// ---------- case 7: tips section + filter + settings buttons present ----------
 {
   const view = buildHomeView({
     pendingApprovals: [{ approvalId: "a", type: "confirm", title: "t", requestId: "r" }],
@@ -111,7 +110,8 @@ function viewText(view) {
     if (b.type === "actions") for (const e of b.elements) allIds.add(e.action_id);
     if (b.type === "section" && b.accessory?.action_id) allIds.add(b.accessory.action_id);
   }
-  assert.ok(allIds.has("home_quick_route"), "quick launch buttons must be present");
+  assert.ok(!allIds.has("home_quick_route"), "route quick-launch buttons should be gone");
+  assert.match(viewText(view), /just @-mention/i, "tips section explains the dynamic UX");
   assert.ok(allIds.has("home_filter_approvals"), "filter select must be present when approvals exist");
   assert.ok(allIds.has("home_settings_open"), "settings button must be present");
   assert.ok(allIds.has("home_refresh"), "refresh button must be present");
@@ -138,17 +138,16 @@ function viewText(view) {
   const view = buildHomeView({
     pendingApprovals: [],
     recentRuns: [
-      { route: "linear", outcome: "ok", durationMs: 2300, requestId: "req_a", permalink: "https://slack/permalink/a" },
-      { route: "spec", outcome: "error", durationMs: 4100, requestId: "req_b" },
+      { outcome: "ok", durationMs: 2300, requestId: "req_a", permalink: "https://slack/permalink/a" },
+      { outcome: "error", durationMs: 4100, requestId: "req_b" },
     ],
     now: NOW,
   });
   const text = viewText(view);
   assert.match(text, /Recent activity/);
-  assert.match(text, /linear/);
   assert.match(text, /req_a/);
   assert.match(text, /open thread/);
-  assert.match(text, /spec/);
+  assert.match(text, /req_b/);
 }
 
 // ---------- case 10: status section reflects snapshot ----------
@@ -186,28 +185,6 @@ function viewText(view) {
   assert.match(text, /missing key/);
   assert.match(text, /Team subagents/);
   assert.match(text, /disabled/);
-}
-
-// ---------- case 12: route howto modal builder shape ----------
-{
-  for (const route of ["spec", "linear", "agenda", "summarize", "team"]) {
-    const modal = buildRouteHowtoModalView({ route });
-    assert.equal(modal.type, "modal");
-    assert.equal(modal.callback_id, "home_route_howto_modal");
-    assert.ok(modal.blocks.length > 0, `${route} modal must have blocks`);
-  }
-  // Unknown route falls back to a generic message rather than throwing.
-  const team = buildRouteHowtoModalView({ route: "team" });
-  assert.match(JSON.stringify(team), /Team subagents/);
-  assert.match(JSON.stringify(team), /team: doctor/);
-  assert.match(JSON.stringify(team), /available by default/);
-
-  const homeText = viewText(buildHomeView({ now: NOW }));
-  assert.match(homeText, /Team subagents/);
-
-  const unknown = buildRouteHowtoModalView({ route: "nope" });
-  assert.equal(unknown.type, "modal");
-  assert.ok(unknown.blocks.length > 0);
 }
 
 console.log("home-view tests passed");

@@ -123,22 +123,24 @@ Fallback slash command:
 
 Use this only as an operator/debug fallback; the bridge replies ephemerally with usage/status and routes the spec draft into the referenced Slack thread.
 
-Routed workflow prefixes (defined in `lib/routes.mjs`):
+No colon-prefixed routes. Just @-mention the bot in any thread and ask in plain English:
 
 ```text
-@Covent Pi summarize: decisions, open questions, and next actions
-@Covent Pi linear: create an issue from this thread (uses linear_create_issue tool, search-first)
-@Covent Pi agenda: prep a meeting agenda from this thread
-@Covent Pi spec: turn this idea into a safe implementation/spec draft (mirrors to a Slack canvas)
-@Covent Pi team: doctor | context <scope> | plan <task> | review <target>   (subagent workflow)
-@Covent Pi bash: <command>   (runs via the bash tool)
+@Covent Pi summarize this thread — decisions, open questions, next actions
+@Covent Pi file a Linear issue from this thread (uses linear_create_issue, search-first)
+@Covent Pi build an agenda for tomorrow's sync
+@Covent Pi draft a spec from this idea (the agent opens a Slack canvas via slack_canvas_start)
+@Covent Pi use a subagent to inspect apps/pi-mom and plan the next change
+@Covent Pi pwd && git status --short
 ```
 
-Bare mentions (no prefix) and all Pi-backed prefixes get the full registered Pi tool surface by default: bash/file tools, app extensions, skills, Linear tools, Slack UI tools, Browser Use, `pi-subagents`, and the app-pinned `pi-web-access` tools. Prefixes shape the workflow instruction; they do not restrict tools.
+Every @-mention gets the full registered Pi tool surface by default: bash/file tools, app extensions, skills, Linear tools, Slack UI tools, Slack canvas tools, bridge introspection tools, Browser Use, `pi-subagents`, and the app-pinned `pi-web-access` tools. The agent decides which to invoke based on the user's text.
 
-In `PI_MOM_MODE=echo`, the bridge acknowledges the detected route without invoking Pi. In `PI_MOM_MODE=pi`, the route injects a stronger workflow instruction into the Pi prompt.
+The bare keywords `help` and `status` short-circuit bridge-side without an agent run; the agent can also surface the same content via the `bridge_help` and `bridge_status` tools when asked in natural language.
 
-Linear route behavior in `PI_MOM_MODE=pi`:
+In `PI_MOM_MODE=echo`, the bridge acknowledges the request without invoking Pi. In `PI_MOM_MODE=pi`, the bridge hands the user's text to the agent and lets it choose tools/skills dynamically.
+
+Linear behavior in `PI_MOM_MODE=pi`:
 
 - Driven by the modular Linear Pi custom tools (`extensions/linear-tools.ts`): `linear_search_issues`, `linear_create_issue`, `linear_add_comment`.
 - The model's prompt nudges it to search first, then comment-or-create — idempotency lives in the model's reasoning, not in a post-stream guard.
@@ -148,22 +150,22 @@ Linear route behavior in `PI_MOM_MODE=pi`:
 Team subagents behavior in `PI_MOM_MODE=pi`:
 
 - `pi-subagents` is loaded by default from the app dependency (`pi-subagents@0.24.2`).
-- The `team:` prefix is a workflow convenience for `doctor`, `context`, `plan`, and `review` style requests; the `subagent` tool is available to every Pi-backed route.
+- The `subagent` tool is available on every turn; the agent decides when to spawn subagents based on the user's request.
 - Project-owned team profiles live in `.agents/team-*.md`; they inherit skills, omit tool allowlists, and load the same app-approved extension surface for child `pi` CLI runs.
 - Child subagent runs spawn the `pi` CLI, so the deployment image must have `pi` on PATH.
-- Team subagent Canvas sidecars are attached for the `team:` route when child runs emit subagent tool events.
+- Subagent Canvas sidecars are always wired and auto-activate when child runs emit subagent tool events (no route gating).
 
 Web access behavior in `PI_MOM_MODE=pi`:
 
 - `pi-web-access@0.10.7` is loaded by default from the app-pinned dependency through `DefaultResourceLoader.additionalExtensionPaths`; ambient extension discovery remains off with `noExtensions: true`.
 - Bundled `pi-web-access/skills` are loaded through `additionalSkillPaths`; no global/user package auto-install is required because `PI_OFFLINE=1` is preserved.
-- Web tools are available across Pi-backed routes. Use them when public web or code-search context helps answer the user's request.
+- Web tools are available on every turn. Use them when public web or code-search context helps answer the user's request.
 - Keep browser-cookie Gemini Web off by default (`PI_ALLOW_BROWSER_COOKIES=0`/unset). Optional provider keys are `EXA_API_KEY`, `PERPLEXITY_API_KEY`, and `GEMINI_API_KEY`.
 
 Streaming behavior in `PI_MOM_MODE=pi`:
 
 - Streaming is always on via `lib/slack-sink.mjs` (Stage 5). It batches Pi `text_delta` events every ~200ms and emits zero-width-space heartbeats every 25s to keep Slack's stream session alive across long thinking runs.
-- Pi tool/skill/extension access is default-on for Pi-backed routes. `lib/routes.mjs` provides workflow instructions/help/status, not per-route allowlists. `lib/pi-sdk-runner.mjs` keeps ambient extension auto-discovery disabled (`noExtensions: true`) but explicitly loads app factories (Linear, Slack UI, Browser Use, git checkpoint, `pi-subagents`) plus the app-pinned `pi-web-access` extension and skills. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
+- Pi tool/skill/extension access is fully default-on. `lib/pi-sdk-runner.mjs` keeps ambient extension auto-discovery disabled (`noExtensions: true`) but explicitly loads app factories (Linear, Slack UI, Slack canvas, bridge introspection, Browser Use, git checkpoint, `pi-subagents`) plus the app-pinned `pi-web-access` extension and skills. Token-like output is redacted before posting. Per-thread session resumption is handled by `lib/pi-session.mjs`.
 
 ## Observability & Tracing (DX)
 
@@ -171,7 +173,7 @@ Tracing is enabled by default. Every request logs structured JSON lines prefixed
 
 - `slack.received` — incoming mention/DM
 - `slack.thread_context` — how much context was pulled from the thread
-- `pi.prompt_built` — prompt size sent to Pi, including detected route when present
+- `pi.prompt_built` — prompt size sent to Pi
 - `pi.output_ready` — Pi run completion (SDK agent_end or timeout)
 - `slack.stream_started` / `slack.stream_stopped` / `slack.replied_pi_stream` — streaming response lifecycle
 - `slack.replied_echo` / `slack.replied_pi` / `slack.replied_help` / `slack.replied_status` — bridge response type
@@ -231,7 +233,7 @@ Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
 ## Notes
 
 - Streaming is always on via `lib/slack-sink.mjs`. The legacy `PI_MOM_STREAMING` knob was removed in Stage 5; there is no `chat.update` fallback path.
-- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is default-all: normal Slack turns omit a route tool allowlist, and the runner activates every registered tool returned by the SDK session. Private Slack snippets are still not persisted in Pi session history.
-- Trusted-operator + channel-allowlist + Codex sign-in are the perimeter for this POC; route-specific in-process safety extensions are not loaded.
-- The bridge uses Slack Web API only for the current thread context, final reply, canvas mirror (spec: route), and approval modals.
+- Pi runs in-process with a session resolved per Slack thread (see `lib/pi-session.mjs`). Tool availability is default-all: every registered SDK tool is activated on every turn. Private Slack snippets are still not persisted in Pi session history.
+- Trusted-operator + channel-allowlist + Codex sign-in are the perimeter for this POC; no per-route safety extensions are loaded.
+- The bridge uses Slack Web API only for the current thread context, final reply, canvas mirroring (driven by the `slack_canvas_*` tools), and approval modals.
 - If private-channel thread context fails, verify the app is invited to the channel and has `groups:history`.

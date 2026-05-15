@@ -1,24 +1,23 @@
 // Stage 7+ — App Home cockpit view (interactive foundation).
 //
 // Pure builders that turn a snapshot of bridge state into a Slack Block Kit
-// `home` view payload plus the supporting modal views. Used by
+// `home` view payload plus the supporting settings modal. Used by
 // `app_home_opened` (initial publish), pendingApprovals add/remove pushes,
 // and the home_filter / home_refresh / home_settings_open action handlers.
 //
 // Section order:
 //   1. Header           — title + last-updated context
-//   2. Quick launch     — buttons hinting at the route prefixes
-//                         (`spec:`, `linear:`, `agenda:`, `summarize:`, `team:`).
-//                         Clicks open small read-only "how to" modals so
-//                         users discover the routes without leaving Home.
+//   2. Tips             — a short markdown block telling users to
+//                         just @-mention the bot in a thread; the
+//                         agent picks the right tool/skill itself.
 //   3. Approvals        — pending Pi tool approvals with per-row
-//                         Approve / Cancel buttons that reuse the existing
+//                         Approve / Cancel buttons that reuse the
 //                         `pi_uictx_confirm_approve` / `_cancel` handlers.
 //                         A static_select in the section header filters
 //                         the list (all / confirm / select / input).
-//   4. Recent activity  — last N completed requests (route + outcome +
-//                         duration + permalink). Empty until index.mjs
-//                         feeds entries in; placeholder section meanwhile.
+//   4. Recent activity  — last N completed requests (outcome + duration +
+//                         permalink). Empty until index.mjs feeds entries
+//                         in; placeholder section meanwhile.
 //   5. Status           — single-line bridge health.
 //   6. Settings footer  — "Open settings" button → read-only settings
 //                         modal showing current env-driven config.
@@ -26,11 +25,9 @@
 // Action IDs (handled in index.mjs):
 //   pi_uictx_confirm_approve   (existing — reused, value=approvalId)
 //   pi_uictx_confirm_cancel    (existing — reused, value=approvalId)
-//   home_filter_approvals      (new — selected_option.value=all|confirm|select|input)
-//   home_refresh               (new — no value, just re-publish)
-//   home_settings_open         (new — opens settings modal)
-//   home_quick_route           (new — value=spec|linear|agenda|summarize|team;
-//                               opens a tiny "how to use this route" modal)
+//   home_filter_approvals      (selected_option.value=all|confirm|select|input)
+//   home_refresh               (no value, just re-publish)
+//   home_settings_open         (opens settings modal)
 //
 // 2026-block fallback: @slack/web-api ^7.15.2 predates `table` / `alert` /
 // `markdown` blocks. We emit `section` + `mrkdwn` instead. Swap when the SDK
@@ -46,55 +43,12 @@ const FILTER_OPTIONS = [
   { value: "input", label: "Input only" },
 ];
 
-const QUICK_LAUNCH = [
-  { route: "spec", emoji: ":memo:", label: "Draft a spec" },
-  { route: "linear", emoji: ":ticket:", label: "Create Linear issue" },
-  { route: "agenda", emoji: ":calendar:", label: "Meeting agenda" },
-  { route: "summarize", emoji: ":scroll:", label: "Summarize thread" },
-  { route: "team", emoji: ":busts_in_silhouette:", label: "Team subagents" },
-];
-
-const ROUTE_HOWTO = {
-  spec: {
-    title: "Draft a spec",
-    body:
-      "Open the Slack thread you want turned into a spec, then post:\n\n" +
-      "`@Covent Pi spec:` _(or `@Covent Pi draft spec`)_\n\n" +
-      "Output: problem, proposed solution, non-goals, success criteria, " +
-      "implementation notes, risks, validation plan, open questions.",
-  },
-  linear: {
-    title: "Create a Linear issue",
-    body:
-      "Inside the thread you want filed, post:\n\n" +
-      "`@Covent Pi linear:` _(or `@Covent Pi create Linear issue`)_\n\n" +
-      "The bridge drafts the issue and creates it idempotently — re-runs " +
-      "in the same thread reuse the existing issue.",
-  },
-  agenda: {
-    title: "Meeting agenda",
-    body:
-      "Inside the relevant thread, post:\n\n`@Covent Pi agenda:`\n\n" +
-      "Output: meeting goal, required decisions, agenda items, pre-reads, " +
-      "attendee questions, desired outcomes.",
-  },
-  summarize: {
-    title: "Summarize a thread",
-    body:
-      "Inside the thread, post:\n\n`@Covent Pi summarize:`\n\n" +
-      "Output: decisions, open questions, owners, risks/blockers, next actions.",
-  },
-  team: {
-    title: "Team subagents",
-    body:
-      "Subagents are available by default from any Pi-backed route. The team prefix is just a convenient workflow shape:\n\n" +
-      "`@Covent Pi team: doctor`\n" +
-      "`@Covent Pi team: context apps/pi-mom Slack routing`\n" +
-      "`@Covent Pi team: plan add a focused test`\n" +
-      "`@Covent Pi team: review <target>`\n\n" +
-      "All registered tools stay available; use the prompt to ask for the exact behavior you want.",
-  },
-};
+const TIPS_BODY =
+  ":zap: *Tip* — just @-mention me in a thread and ask. The agent picks the right tool/skill:\n" +
+  "• _draft a spec_ → streams into a Slack canvas\n" +
+  "• _summarize this thread_ / _agenda for tomorrow_\n" +
+  "• _file a Linear issue_ → search-before-create\n" +
+  "• _use a subagent to …_ → spawns subagents with per-agent canvases";
 
 function truncate(text, max) {
   const v = String(text ?? "").trim();
@@ -151,16 +105,8 @@ function headerBlocks({ now }) {
   ];
 }
 
-function quickLaunchBlocks() {
-  return [
-    section(":zap: *Quick launch* — tap a card to see how to start the route from any thread."),
-    {
-      type: "actions",
-      elements: QUICK_LAUNCH.map((q) =>
-        button("home_quick_route", `${q.emoji} ${q.label}`, { value: q.route }),
-      ),
-    },
-  ];
+function tipsBlocks() {
+  return [section(TIPS_BODY)];
 }
 
 function approvalsBlocks({ list, totalCount, filter }) {
@@ -213,11 +159,10 @@ function recentRunsBlocks({ recentRuns }) {
   const head = section(":hourglass_flowing_sand: *Recent activity*");
   const rows = recentRuns.slice(0, RECENT_CAP).map((r) => {
     const icon = r?.outcome === "ok" ? ":white_check_mark:" : r?.outcome === "error" ? ":x:" : ":hourglass:";
-    const route = truncate(r?.route || "default", 24);
-    const reqId = r?.requestId ? ` · \`${r.requestId}\`` : "";
+    const reqId = r?.requestId ? `\`${r.requestId}\`` : "request";
     const dur = Number.isFinite(r?.durationMs) ? ` · ${Math.round(r.durationMs / 100) / 10}s` : "";
     const link = r?.permalink ? ` · <${r.permalink}|open thread>` : "";
-    return section(`${icon} *${route}*${reqId}${dur}${link}`);
+    return section(`${icon} ${reqId}${dur}${link}`);
   });
   return [head, ...rows];
 }
@@ -268,7 +213,7 @@ export function buildHomeView({
     blocks: [
       ...headerBlocks({ now }),
       divider(),
-      ...quickLaunchBlocks(),
+      ...tipsBlocks(),
       divider(),
       ...approvalsBlocks({ list: filtered, totalCount: all.length, filter }),
       divider(),
@@ -312,16 +257,3 @@ export function buildSettingsModalView({ status, prefs } = {}) {
   };
 }
 
-export function buildRouteHowtoModalView({ route } = {}) {
-  const entry = ROUTE_HOWTO[route] || {
-    title: "Covent Pi route",
-    body: "Mention `@Covent Pi` in a thread with the route prefix to start.",
-  };
-  return {
-    type: "modal",
-    callback_id: "home_route_howto_modal",
-    title: { type: "plain_text", text: entry.title.slice(0, 24) },
-    close: { type: "plain_text", text: "Got it" },
-    blocks: [section(entry.body)],
-  };
-}
