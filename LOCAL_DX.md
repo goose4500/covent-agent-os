@@ -30,8 +30,6 @@ bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 - `lib/` — shared JavaScript helpers (legacy; most logic now in `apps/pi-mom/lib/`).
 - `skills/` — Pi skills.
 - `agents/` — subagent definitions.
-- `packages/pi-chrome-access/` — local Chrome/DevTools Pi package.
-- `packages/pi-ext-covent-aws/` — EC2 operator extension scaffolding (not yet wired into prod).
 - `docs/` — architecture, ADRs, runbooks, specs, source-of-truth notes, historical research.
 
 ## Local Slack testing
