@@ -15,7 +15,13 @@ import {
   createSubagentCanvasSidecarSink,
   formatSubagentCanvasFooter,
 } from "./lib/subagent-canvas-sidecar-sink.mjs";
+import { formatPiFailureForSlack } from "./lib/failure-summary.mjs";
+import {
+  buildIntegrationHealth,
+  logIntegrationHealth,
+} from "./lib/integration-health.mjs";
 import { redactSensitiveText } from "./lib/redaction.mjs";
+import { normalizeSlackMarkdown } from "./lib/slack-format.mjs";
 import {
   buildInputModalView,
   createSlackUIContext,
@@ -133,7 +139,7 @@ function stripBotMentions(text = "") {
 }
 
 function truncateForSlack(text) {
-  const safeText = redactSensitiveText(text || "");
+  const safeText = normalizeSlackMarkdown(redactSensitiveText(text || ""));
   if (!safeText) return "I did not get a response from Pi.";
   if (safeText.length <= MAX_SLACK_TEXT) return safeText;
   return `${safeText.slice(0, MAX_SLACK_TEXT - 200)}\n\n...truncated by pi-mom because Slack messages have length limits.`;
@@ -266,6 +272,13 @@ async function formatStatus(client) {
     linearTeamId: LINEAR_TEAM_ID,
     linearProjectId: LINEAR_PROJECT_ID,
     linearStateId: LINEAR_STATE_ID,
+    integrationHealth: buildIntegrationHealth({
+      env: process.env,
+      slackClient: client,
+      linearTeamId: LINEAR_TEAM_ID,
+      linearProjectId: LINEAR_PROJECT_ID,
+      linearStateId: LINEAR_STATE_ID,
+    }),
     traceEnabled: TRACE_ENABLED,
     routes: ROUTES,
     subagentsEnabled: SUBAGENTS_ENABLED,
@@ -494,6 +507,18 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
 
 async function preflight() {
   const web = new WebClient(process.env.SLACK_BOT_TOKEN);
+  const startupHealth = buildIntegrationHealth({
+    env: process.env,
+    slackClient: web,
+    linearTeamId: LINEAR_TEAM_ID,
+    linearProjectId: LINEAR_PROJECT_ID,
+    linearStateId: LINEAR_STATE_ID,
+  });
+  logIntegrationHealth(startupHealth);
+  if (!startupHealth.slackStreaming.ok) {
+    throw new Error("Slack WebClient.chatStream is unavailable; upgrade @slack/web-api before starting pi-mom.");
+  }
+
   const auth = await web.auth.test();
   AUTH_TEAM_ID = auth.team_id || AUTH_TEAM_ID;
   console.log(`🔑 Bot auth: ${auth.user} (${auth.user_id}) on ${auth.team}`);
@@ -571,12 +596,21 @@ export function recordRecentRun(entry) {
 }
 
 function buildHomeStatusSnapshot() {
+  const integrationHealth = buildIntegrationHealth({
+    env: process.env,
+    slackClient,
+    linearTeamId: LINEAR_TEAM_ID,
+    linearProjectId: LINEAR_PROJECT_ID,
+    linearStateId: LINEAR_STATE_ID,
+  });
   return {
     mode: MODE,
     allowedChannelId: ALLOWED_CHANNEL_ID || null,
     piModel: PI_MODEL_LABEL,
     piThinking: PI_THINKING_LABEL,
-    linearConfigured: Boolean(process.env.LINEAR_API_KEY),
+    linearConfigured: integrationHealth.linear.ok,
+    slackStreamingAvailable: integrationHealth.slackStreaming.ok,
+    browserUseConfigured: integrationHealth.browserUse.ok,
     subagentsEnabled: SUBAGENTS_ENABLED,
     traceEnabled: TRACE_ENABLED,
     uptimeSeconds: Math.round((Date.now() - STARTED_AT.getTime()) / 1000),
@@ -739,7 +773,7 @@ async function handleRequest({ client, event, mode, utilities }) {
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
-      text: `Pi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`,
+      text: truncateForSlack(formatPiFailureForSlack({ error, requestId, redact: redactSensitiveText })),
     });
   }
 }
