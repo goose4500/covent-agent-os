@@ -47,3 +47,6 @@ jobs:
 
       - name: bun run check (secret-scan + validators + typecheck + pi-mom tests)
         run: bun run check
+
+      - name: Slack manifest drift check
+        run: bun scripts/sync-slack-manifest.mjs --check

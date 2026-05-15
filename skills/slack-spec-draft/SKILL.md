@@ -6,6 +6,9 @@ description: >-
   "write a spec", "spec this out", "PRD this", or similar. Produces a
   scannable structured doc — not a full deep-research PRD; for that, use
   the `to-prd` skill instead.
+slash_commands:
+  - command: /thread-spec
+    description: Draft a spec from a Slack thread
 ---
 
 # Slack spec draft
