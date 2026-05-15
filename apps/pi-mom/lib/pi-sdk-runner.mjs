@@ -74,6 +74,33 @@ function _resolveAgentDir() {
   }
 })();
 
+// MCP server config seeder. Mirrors the auth.json pattern: pi-mcp-adapter
+// reads `${PI_AGENT_DIR}/mcp.json` (the "Pi global override" slot in its
+// precedence list — see pi-mcp-adapter/config.ts). On Railway the file
+// doesn't exist on cold boot of a fresh volume, so we materialize it from
+// PI_MCP_JSON_B64. We only seed when the file is missing because the
+// adapter persists OAuth tokens and directTools overrides back into this
+// file on user-driven /mcp commands; overwriting would clobber that state.
+// To rotate the seed, edit on the volume or delete the file and redeploy.
+(function seedMcpJsonFromEnv() {
+  const seed = process.env.PI_MCP_JSON_B64;
+  if (!seed) return;
+  const dir = _resolveAgentDir();
+  const mcpPath = _join(dir, "mcp.json");
+  if (existsSync(mcpPath)) return;
+  try {
+    const json = _NodeBuffer.from(seed, "base64").toString("utf-8");
+    JSON.parse(json); // syntax check before writing
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(mcpPath, json, { mode: 0o600 });
+    console.log(`✓ Seeded ${mcpPath} from PI_MCP_JSON_B64 (${json.length} bytes)`);
+  } catch (err) {
+    console.error(
+      `Failed to seed mcp.json from PI_MCP_JSON_B64: ${err?.message || err}`,
+    );
+  }
+})();
+
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -129,14 +156,28 @@ async function loadSubagentsExtension() {
   return mod.default || mod;
 }
 
+// pi-mcp-adapter is the community Pi extension that proxies arbitrary MCP
+// servers through a single `mcp` tool (and optional per-server direct
+// tools). It's loaded inline the same way pi-subagents is — as an in-process
+// extension factory, NOT via `pi install` — so PI_OFFLINE=1 has no effect
+// on it. Server config lives at `${PI_AGENT_DIR}/mcp.json` (seeded above
+// from PI_MCP_JSON_B64 on Railway) or `.mcp.json` / `.pi/mcp.json` for
+// project-scoped servers. See pi-mcp-adapter/README.md for the schema.
+async function loadMcpAdapterExtension() {
+  const mod = await import("pi-mcp-adapter");
+  return mod.default || mod;
+}
+
 export async function buildPiMomExtensionFactories({
   loadSubagents = loadSubagentsExtension,
+  loadMcpAdapter = loadMcpAdapterExtension,
 } = {}) {
   return [
     linearTools,
     slackInteractiveTools,
     browserUseTools,
     gitCheckpoint,
+    await loadMcpAdapter(),
     await loadSubagents(),
   ];
 }
@@ -146,6 +187,7 @@ export async function buildResourceLoaderOptions({
   agentDir = getAgentDir(),
   env = process.env,
   loadSubagents = loadSubagentsExtension,
+  loadMcpAdapter = loadMcpAdapterExtension,
   resolveWebAccessPaths = resolveWebAccessResourcePaths,
 } = {}) {
   const webAccess = resolveWebAccessPaths();
@@ -157,7 +199,7 @@ export async function buildResourceLoaderOptions({
     // disabled by PI_OFFLINE; the app explicitly loads its own extension
     // factories plus the app-pinned pi-web-access package path.
     noExtensions: true,
-    extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents }),
+    extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents, loadMcpAdapter }),
     additionalExtensionPaths: [webAccess.extensionPath],
     // Skills are no longer route-gated: repo skills plus pi-web-access skills
     // are always available, and ambient/default skill discovery is allowed.

@@ -16,6 +16,7 @@
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.15.2",
+    "pi-mcp-adapter": "^2.6.1",
     "pi-subagents": "0.24.2",
     "pi-web-access": "0.10.7"
   },
