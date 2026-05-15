@@ -3,28 +3,28 @@ _metadata:
   minor_version: 2
 display_information:
   background_color: '#2E2B5F'
-  description: Local Pi AI agent bridge for Covent Slack testing.
-  long_description: Covent Pi is a local, human-in-the-loop AI agent bridge for testing Pi coding and research agents from Slack. It runs through Socket Mode, replies in threads, keeps tokens local, and starts with a small private-channel testing surface before broader rollout.
-  name: Covent Pi
+  description: Polaris is Covent's Slack-native Pi agent for specs, Linear handoffs, summaries, images, and bounded agent runs.
+  long_description: Polaris is Covent's Slack-native, human-in-the-loop Pi agent. It appears in the Slack assistant surface, App Home, DMs, app mentions, and operator slash-command fallbacks; routes requests through Socket Mode; replies in threads; keeps tokens local; and supports spec drafts, Linear-ready issues, meeting agendas, summaries, images, and bounded agent runs.
+  name: polaris
 features:
-  agent_view:
-    agent_description: Covent Pi — internal cockpit for spec drafts, Linear filing, meeting agendas, thread summaries, and bounded Pi agent runs.
+  assistant_view:
+    assistant_description: Polaris helps Covent teammates turn Slack context into summaries, specs, Linear-ready issues, images, and bounded agent runs.
     suggested_prompts:
+      - title: Summarize context
+        message: "summarize: Summarize this Slack context into decisions, open questions, owners, and next actions."
       - title: Draft a spec
-        message: "spec: "
-      - title: Create a Linear issue
-        message: "linear: "
-      - title: Meeting agenda
-        message: "agenda: "
-      - title: Summarize a thread
-        message: "summarize: paste the thread URL or context"
+        message: "spec: Draft a concise PRD/spec from this Slack context."
+      - title: Create Linear-ready issue
+        message: "linear: Draft a Linear-ready issue from this Slack context with acceptance criteria and open questions."
+      - title: Show help
+        message: "help:"
   app_home:
     home_tab_enabled: true
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
     always_online: true
-    display_name: Covent Pi
+    display_name: polaris
   rich_previews:
     entity_types:
     - slack#/entities/content_item
