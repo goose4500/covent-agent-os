@@ -48,28 +48,49 @@ function printHelp() {
   );
 }
 
-async function pushToSlack(manifestText) {
+// Push strategy: export live manifest → patch slash_commands → push as JSON.
+// This avoids sending the repo's YAML directly (Slack expects JSON) and
+// prevents accidentally overwriting live settings we don't control (user
+// scopes, functions, hermes_app_type, is_mcp_enabled, etc.).
+async function pushToSlack(commands) {
   const token = process.env.SLACK_APP_CONFIG_TOKEN;
   const appId = process.env.SLACK_APP_ID;
   if (!token) throw new Error("SLACK_APP_CONFIG_TOKEN is required for --push (xoxe-… app configuration token)");
   if (!appId) throw new Error("SLACK_APP_ID is required for --push");
 
-  const body = new URLSearchParams({
-    token,
-    app_id: appId,
-    manifest: manifestText,
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+
+  // 1. Export the live manifest so we patch only slash_commands.
+  const expRes = await fetch("https://slack.com/api/apps.manifest.export", {
+    method: "POST",
+    headers,
+    body: new URLSearchParams({ token, app_id: appId }),
+  });
+  const expData = await expRes.json();
+  if (!expData.ok) {
+    throw new Error(`apps.manifest.export failed: ${expData.error || JSON.stringify(expData)}`);
+  }
+
+  // 2. Patch slash_commands in the live manifest object.
+  const manifest = expData.manifest;
+  manifest.features = manifest.features ?? {};
+  manifest.features.slash_commands = commands.map((c) => {
+    const entry = { command: c.command, description: c.description, should_escape: c.should_escape ?? false };
+    if (c.usage_hint) entry.usage_hint = c.usage_hint;
+    return entry;
   });
 
+  // 3. Push back as JSON (Slack requires JSON.stringify of the manifest object).
   const res = await fetch("https://slack.com/api/apps.manifest.update", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-    body,
+    headers,
+    body: new URLSearchParams({ token, app_id: appId, manifest: JSON.stringify(manifest) }),
   });
   const data = await res.json();
   if (!data.ok) {
     const detail = data.errors
       ? `${data.error}: ${JSON.stringify(data.errors)}`
-      : data.error || JSON.stringify(data);
+      : data.response_metadata?.messages?.join("; ") || data.error || JSON.stringify(data);
     throw new Error(`apps.manifest.update failed: ${detail}`);
   }
   return data;
@@ -130,7 +151,7 @@ async function main() {
 
   if (opts.mode === "push") {
     process.stdout.write("Pushing manifest to Slack via apps.manifest.update…\n");
-    const result = await pushToSlack(next);
+    const result = await pushToSlack(commands);
     const permalink = result.permalink || `app_id=${process.env.SLACK_APP_ID}`;
     process.stdout.write(`✓ Slack manifest updated (${permalink}).\n`);
   }
