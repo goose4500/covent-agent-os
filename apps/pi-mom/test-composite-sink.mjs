@@ -94,4 +94,59 @@ function makeFakeSink(name, { startThrows, stopThrows, handleThrows } = {}) {
   assert.equal(a.calls.filter((c) => c[0] === "stop").length, 1);
 }
 
+// Case 7: addSink attaches mid-run so subsequent events fan to the new sink.
+{
+  const a = makeFakeSink("a");
+  const composite = createCompositeSink([a]);
+  composite.handle({ id: 1 });
+  const b = makeFakeSink("b");
+  const added = composite.addSink(b);
+  assert.equal(added, true);
+  composite.handle({ id: 2 });
+  assert.deepEqual(a.calls.filter((c) => c[0] === "handle").map((c) => c[1].id), [1, 2]);
+  assert.deepEqual(b.calls.filter((c) => c[0] === "handle").map((c) => c[1].id), [2], "b receives only events after attachment");
+  // adding the same sink twice is a no-op.
+  assert.equal(composite.addSink(b), false);
+}
+
+// Case 8: removeSink detaches; the sink stops receiving events.
+{
+  const a = makeFakeSink("a");
+  const b = makeFakeSink("b");
+  const composite = createCompositeSink([a, b]);
+  composite.handle({ id: 1 });
+  const removed = composite.removeSink(b);
+  assert.equal(removed, true);
+  composite.handle({ id: 2 });
+  assert.deepEqual(b.calls.filter((c) => c[0] === "handle").map((c) => c[1].id), [1], "b stops receiving events after removal");
+  // removing again is a no-op.
+  assert.equal(composite.removeSink(b), false);
+}
+
+// Case 9: a sink that throws while handling does not break the snapshot iteration.
+{
+  const a = makeFakeSink("a");
+  const b = makeFakeSink("b", { handleThrows: true });
+  const c = makeFakeSink("c");
+  const composite = createCompositeSink([a, b, c]);
+  // Add another sink mid-handle by hooking a's handle. Snapshot iteration
+  // means the new sink should NOT receive this same event but should
+  // receive subsequent ones.
+  const d = makeFakeSink("d");
+  const origHandle = a.handle.bind(a);
+  a.handle = (evt) => { origHandle(evt); composite.addSink(d); };
+  composite.handle({ id: 1 });
+  composite.handle({ id: 2 });
+  assert.deepEqual(d.calls.filter((c) => c[0] === "handle").map((c) => c[1].id), [2], "d only sees events after the dispatch that added it");
+}
+
+// Case 10: addSink is rejected after stop.
+{
+  const a = makeFakeSink("a");
+  const composite = createCompositeSink([a]);
+  await composite.stop({});
+  const b = makeFakeSink("b");
+  assert.equal(composite.addSink(b), false);
+}
+
 console.log("composite-sink tests passed");

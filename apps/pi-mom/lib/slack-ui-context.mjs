@@ -36,6 +36,9 @@
 const DEFAULT_NOTIFY_ICONS = { info: "ℹ️", warning: "⚠️", error: "🛑" };
 const NOOP_THEME = Object.freeze({ name: "slack" });
 
+const NOT_CANVAS_BOUND_HINT =
+  "Slack canvas is unavailable in this turn (no Slack channel context, or this is a non-Slack surface).";
+
 let _approvalCounter = 0;
 function nextApprovalId(requestId) {
   _approvalCounter += 1;
@@ -57,6 +60,21 @@ export function createSlackUIContext({
   trace = () => {},
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
+  // Canvas plumbing — when provided, ctx.ui.startCanvas creates a Slack
+  // canvas and attaches a canvas-sink to the live event fan so subsequent
+  // text deltas mirror into the canvas. Without these the canvas methods
+  // return an error result.
+  compositeSink,
+  createCanvasSinkFn,
+  teamId,
+  accessUserIds = [],
+  redact,
+  // Bridge introspection — bridgeHelp/bridgeStatus return canned strings
+  // the model can post back to the user via bridge_help/bridge_status
+  // tools. Plain string returners so the bridge can recompute live state
+  // (uptime, auth) per call.
+  bridgeHelp,
+  bridgeStatus,
 } = {}) {
   if (!client || typeof client.chat?.postMessage !== "function") {
     throw new Error("slack-ui-context: client.chat.postMessage is required");
@@ -70,6 +88,20 @@ export function createSlackUIContext({
 
   const owned = new Set();
   let disposed = false;
+
+  // Active canvas-sink (if any). startCanvas creates one and attaches it
+  // to the compositeSink; stopCanvas detaches and finalizes. We only
+  // support one live canvas per turn — the model can finish-and-start to
+  // open another, but parallel canvases would race on the slack-sink
+  // text-delta accumulator.
+  let activeCanvasSink;
+  const canCanvas = Boolean(
+    compositeSink &&
+      typeof compositeSink.addSink === "function" &&
+      typeof compositeSink.removeSink === "function" &&
+      typeof createCanvasSinkFn === "function" &&
+      typeof client?.canvases?.create === "function",
+  );
 
   function register(entry, opts = {}) {
     pendingApprovals.set(entry.approvalId, entry);
@@ -435,10 +467,87 @@ export function createSlackUIContext({
     trace("slack_ui.setStatus", { requestId, key, text: text || null });
   }
 
+  async function startCanvas({ title, initialText, postLinkToThread = true } = {}) {
+    if (disposed) return { ok: false, error: "ui_disposed" };
+    if (!canCanvas) return { ok: false, error: "canvas_unavailable" };
+    if (activeCanvasSink) return { ok: false, error: "canvas_already_open", canvasId: activeCanvasSink.canvasId, url: activeCanvasSink.url };
+    const sink = createCanvasSinkFn({
+      client,
+      channel,
+      title: String(title || "Covent Pi document"),
+      requestId,
+      teamId,
+      accessUserIds,
+      trace,
+      redact,
+    });
+    let started;
+    try {
+      started = await sink.start(initialText ? { initialText } : undefined);
+    } catch (err) {
+      trace("slack_ui.canvas_start_failed", { requestId, error: err?.data?.error || err?.message || "unknown" });
+      return { ok: false, error: "canvas_start_failed" };
+    }
+    if (!started?.canvasId) return { ok: false, error: "canvas_create_failed" };
+    activeCanvasSink = sink;
+    compositeSink.addSink(sink);
+    trace("slack_ui.canvas_started", { requestId, canvasId: started.canvasId, hasUrl: Boolean(started.url) });
+    if (postLinkToThread && started.url) {
+      try {
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `📄 Streaming into a canvas → <${started.url}|${String(title || "document")}>`,
+        });
+      } catch (err) {
+        trace("slack_ui.canvas_link_post_failed", { requestId, error: err?.data?.error || err?.message });
+      }
+    }
+    return { ok: true, canvasId: started.canvasId, url: started.url };
+  }
+
+  async function stopCanvas({ finalMarkdown } = {}) {
+    if (!activeCanvasSink) return { ok: false, error: "no_active_canvas" };
+    const sink = activeCanvasSink;
+    activeCanvasSink = undefined;
+    try { compositeSink.removeSink(sink); } catch {}
+    let stopResult;
+    try {
+      stopResult = await sink.stop({ result: typeof finalMarkdown === "string" ? finalMarkdown : undefined });
+    } catch (err) {
+      trace("slack_ui.canvas_stop_failed", { requestId, error: err?.data?.error || err?.message || "unknown" });
+      return { ok: false, error: "canvas_stop_failed", canvasId: sink.canvasId, url: sink.url };
+    }
+    trace("slack_ui.canvas_stopped", { requestId, canvasId: stopResult?.canvasId, streamedChars: stopResult?.streamedChars });
+    return { ok: true, canvasId: stopResult?.canvasId || sink.canvasId, url: stopResult?.url || sink.url, streamedChars: stopResult?.streamedChars || 0 };
+  }
+
+  async function getBridgeHelp() {
+    if (typeof bridgeHelp === "function") {
+      try { return String((await bridgeHelp()) || ""); } catch (err) { return `bridge_help unavailable: ${err?.message || "unknown"}`; }
+    }
+    return "Bridge help is not configured.";
+  }
+
+  async function getBridgeStatus() {
+    if (typeof bridgeStatus === "function") {
+      try { return String((await bridgeStatus()) || ""); } catch (err) { return `bridge_status unavailable: ${err?.message || "unknown"}`; }
+    }
+    return "Bridge status is not configured.";
+  }
+
   function dispose(reason = "dispose") {
     if (disposed) return;
     disposed = true;
     for (const approvalId of [...owned]) finalize(approvalId, reason);
+    // If the agent opened a canvas but never closed it, detach and
+    // finalize so the canvas-sink's final replace lands. Best-effort.
+    if (activeCanvasSink) {
+      const sink = activeCanvasSink;
+      activeCanvasSink = undefined;
+      try { compositeSink?.removeSink?.(sink); } catch {}
+      Promise.resolve(sink.stop({})).catch(() => {});
+    }
   }
 
   return {
@@ -450,6 +559,10 @@ export function createSlackUIContext({
     inputRequest,
     notify,
     setStatus,
+    startCanvas,
+    stopCanvas,
+    bridgeHelp: getBridgeHelp,
+    bridgeStatus: getBridgeStatus,
     onTerminalInput: () => () => {},
     setWorkingMessage: () => {},
     setWorkingVisible: () => {},

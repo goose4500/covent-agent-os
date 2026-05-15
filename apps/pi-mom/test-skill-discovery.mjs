@@ -19,6 +19,14 @@ const representativeSkills = [
   "covent-project-context-primer",
   "repo-worker",
   "critical-thinking-logical-reasoning",
+  // The four Slack-context workflow skills introduced when the colon-prefixed
+  // route layer was deleted. The model picks one of these (or none) per turn
+  // based on the user's natural-language prompt, so they must be loadable.
+  "slack-spec-draft",
+  "slack-thread-summary",
+  "slack-meeting-agenda",
+  "slack-linear-from-thread",
+  // Slack MCP agent UX skill landed alongside the pi-mcp-adapter wiring.
   "slack-mcp-agent-ux",
 ];
 

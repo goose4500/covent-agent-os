@@ -162,6 +162,17 @@ import linearTools from "../../../extensions/linear-tools.ts";
 // slack-ui-context.mjs which the SDK threads through as ctx.ui to every
 // extension and tool handler.
 import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
+// slack-canvas-tools: registers `slack_canvas_start` /
+// `slack_canvas_finish` so the model can open a Slack canvas mid-turn
+// for long-form deliverables. The canvas-sink attaches to the live
+// composite event fan via ctx.ui.startCanvas, so text deltas mirror
+// into the canvas automatically until ctx.ui.stopCanvas detaches.
+import slackCanvasTools from "../../../extensions/slack-canvas-tools.ts";
+// bridge-tools: registers `bridge_help` / `bridge_status` so the model
+// can surface bridge help and live status when the user asks. Backed
+// by ctx.ui.bridgeHelp / ctx.ui.bridgeStatus closures supplied by the
+// bridge per-turn.
+import bridgeTools from "../../../extensions/bridge-tools.ts";
 import browserUseTools from "../../../extensions/browser-use-tools.ts";
 import gitCheckpoint from "../../../extensions/git-checkpoint.ts";
 
@@ -216,6 +227,8 @@ export async function buildPiMomExtensionFactories({
   return [
     linearTools,
     slackInteractiveTools,
+    slackCanvasTools,
+    bridgeTools,
     browserUseTools,
     gitCheckpoint,
     await loadMcpAdapter(),

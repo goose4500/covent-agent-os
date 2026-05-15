@@ -320,9 +320,9 @@ function fakeAssistantErrorMessage(message) {
   const loadMcpAdapter = async () => { mcpLoads += 1; return fakeMcpAdapter; };
 
   const factories = await buildPiMomExtensionFactories({ loadSubagents, loadMcpAdapter });
-  assert.equal(factories.length, 6, "default factories: Linear + Slack UI + Browser Use + git checkpoint + pi-mcp-adapter + subagents");
-  assert.equal(factories[4], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
-  assert.equal(factories[5], fakeSubagentExtension, "subagents factory remains default-on");
+  assert.equal(factories.length, 8, "default factories: Linear + Slack UI + Slack canvas + bridge + Browser Use + git checkpoint + pi-mcp-adapter + subagents");
+  assert.equal(factories[6], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
+  assert.equal(factories[7], fakeSubagentExtension, "subagents factory remains default-on (last)");
   assert.equal(subagentLoads, 1, "imports pi-subagents exactly once for this loader build");
   assert.equal(mcpLoads, 1, "imports pi-mcp-adapter exactly once for this loader build");
 }
@@ -347,9 +347,9 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(options.noPromptTemplates, false);
   assert.equal(options.noThemes, false);
   assert.equal(options.noContextFiles, false);
-  assert.equal(options.extensionFactories.length, 6);
-  assert.equal(options.extensionFactories[4], fakeMcpAdapter);
-  assert.equal(options.extensionFactories[5], fakeSubagentExtension);
+  assert.equal(options.extensionFactories.length, 8);
+  assert.equal(options.extensionFactories[6], fakeMcpAdapter);
+  assert.equal(options.extensionFactories[7], fakeSubagentExtension);
   assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
 }
 
