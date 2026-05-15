@@ -34,6 +34,7 @@
 //      modal cannot wedge the next turn.
 
 import { stat as fsStat } from "node:fs/promises";
+import { buildPreviewZip } from "./preview-zip.mjs";
 
 const DEFAULT_NOTIFY_ICONS = { info: "ℹ️", warning: "⚠️", error: "🛑" };
 const NOOP_THEME = Object.freeze({ name: "slack" });
@@ -534,6 +535,109 @@ export function createSlackUIContext({
     }
   }
 
+  // Deploy a Pi-generated HTML bundle to covent-pi-preview and post the
+  // resulting public URL into the current Slack thread. Source can be a
+  // single HTML file or a directory containing `index.html` + sibling assets.
+  // The bot zips locally and PUTs to PREVIEW_BASE_INTERNAL over the private
+  // Railway network with the shared secret; the preview service returns
+  // `{ id, url }`. We then post the public URL as text and let Slack's
+  // built-in link unfurl render the summary card from the OG tags the
+  // preview service injects on read. Fail-soft mirrors `notify` / `postFile`.
+  async function postPreview(filename, sourcePath, opts = {}) {
+    if (disposed) return { ok: false, error: "ui_disposed" };
+    const safeName = String(filename || "preview").slice(0, 200);
+
+    const internalBase = (process.env.PREVIEW_BASE_INTERNAL || "").replace(/\/$/, "");
+    const secret = process.env.PREVIEW_SHARED_SECRET || "";
+    if (!internalBase) {
+      trace("slack_ui.postPreview_not_configured", { requestId, filename: safeName, reason: "PREVIEW_BASE_INTERNAL" });
+      return { ok: false, error: "preview_host_not_configured" };
+    }
+    if (!secret) {
+      trace("slack_ui.postPreview_not_configured", { requestId, filename: safeName, reason: "PREVIEW_SHARED_SECRET" });
+      return { ok: false, error: "preview_host_not_configured" };
+    }
+
+    let bundle;
+    try {
+      bundle = await buildPreviewZip(sourcePath);
+    } catch (err) {
+      const error = err?.message || String(err);
+      trace("slack_ui.postPreview_zip_failed", { requestId, filename: safeName, sourcePath, error });
+      return { ok: false, error };
+    }
+
+    const controller = new AbortController();
+    const externalSignal = opts.signal;
+    const onExternalAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    const timeoutMs = Math.max(1000, Math.min(60000, Number(opts.timeoutMs) || 30000));
+    const timer = setTimeoutFn(() => controller.abort(), timeoutMs);
+    let resp;
+    try {
+      resp = await fetch(`${internalBase}/upload`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/zip",
+          "x-preview-secret": secret,
+        },
+        body: bundle.zip,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const error = err?.name === "AbortError" ? "preview_upload_timeout" : (err?.message || String(err));
+      trace("slack_ui.postPreview_upload_failed", { requestId, filename: safeName, error });
+      return { ok: false, error };
+    } finally {
+      clearTimeoutFn(timer);
+      if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      const error = `preview_upload_status_${resp.status}${text ? `:${text.slice(0, 200)}` : ""}`;
+      trace("slack_ui.postPreview_upload_failed", { requestId, filename: safeName, status: resp.status, error });
+      return { ok: false, error };
+    }
+
+    let body;
+    try { body = await resp.json(); } catch { body = null; }
+    const previewUrl = body?.url;
+    const previewId = body?.id;
+    if (!previewUrl || !previewId) {
+      trace("slack_ui.postPreview_bad_response", { requestId, filename: safeName, body });
+      return { ok: false, error: "preview_host_bad_response" };
+    }
+
+    let followup = null;
+    try {
+      const lines = [`🌐 *${safeName}* — live preview`];
+      if (opts.description) lines.push(String(opts.description).slice(0, 600));
+      lines.push(previewUrl);
+      followup = await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: lines.join("\n"),
+        unfurl_links: true,
+        unfurl_media: true,
+      });
+    } catch (err) {
+      trace("slack_ui.postPreview_post_failed", { requestId, filename: safeName, error: err?.data?.error || err.message });
+    }
+
+    trace("slack_ui.postPreview", {
+      requestId,
+      filename: safeName,
+      previewId,
+      files: bundle.count,
+      bytes: bundle.bytes,
+    });
+    return { ok: true, url: previewUrl, id: previewId, followup };
+  }
+
   function setStatus(key, text) {
     if (disposed) return;
     if (surface === "assistant" && typeof assistantSetStatus === "function" && text) {
@@ -557,6 +661,7 @@ export function createSlackUIContext({
     inputRequest,
     notify,
     postFile,
+    postPreview,
     setStatus,
     onTerminalInput: () => () => {},
     setWorkingMessage: () => {},

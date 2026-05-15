@@ -1,6 +1,6 @@
 const WEB_ACCESS_INSTRUCTION = `Web access tools are available by default. Use them when public web or code-search context helps answer the user's request. Cite useful public sources and keep Slack output compact.`;
 
-const ARTIFACT_INSTRUCTION = `When the user asks for a file artifact (code, CSV, JSON, Markdown, PDF, DOC, etc.), generate the contents, write the file to an absolute path under /tmp/, then call slack_post_artifact with that path. Pass a short one-line description so the Card body explains what's in the file. Do not also paste the file contents inline — the upload shows them.`;
+const ARTIFACT_INSTRUCTION = `When the user wants a file artifact (code, CSV, JSON, Markdown, PDF, DOC, etc.), generate the contents, write the file to an absolute path under /tmp/, then call slack_post_artifact with that path. When the user wants to SEE AN HTML PAGE RUNNING in their browser, write the HTML (and optional CSS/JS/images) under /tmp/ — a single self-contained .html file is best, or a directory containing index.html plus assets — then call slack_post_preview with that path. Call both tools if the user wants both the downloadable source and the live page. Pass a short one-line description either way. Do not paste file contents inline — the upload (or live page) shows them.`;
 
 const TEAM_ROUTE_INSTRUCTION = `Run a Team Subagents workflow. The subagent tool is available by default, so use the simplest subagent call that fits the user request and summarize useful artifacts/results back into Slack.`;
 

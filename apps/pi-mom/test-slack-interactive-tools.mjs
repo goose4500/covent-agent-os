@@ -62,7 +62,7 @@ function makeCtx(uiOverrides = {}) {
   const fakePi = makeFakePi();
   slackInteractiveTools(fakePi);
   const names = fakePi.registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["slack_approval_card", "slack_choice_card", "slack_input_request", "slack_post_artifact"]);
+  assert.deepEqual(names, ["slack_approval_card", "slack_choice_card", "slack_input_request", "slack_post_artifact", "slack_post_preview"]);
 
   const approval = findTool(fakePi, "slack_approval_card");
   assert.equal(typeof approval.parameters, "object");
@@ -397,6 +397,90 @@ function makeCtx(uiOverrides = {}) {
     filename: "a.txt",
     file_path: "/tmp/a.txt",
   }, ac.signal, undefined, ctx);
+  assert.equal(observedSignal, ac.signal);
+}
+
+// Case 20: slack_post_preview registers with the expected parameter shape.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_preview");
+  assert.equal(typeof tool.parameters, "object");
+  assert.equal(typeof tool.execute, "function");
+  assert.ok(tool.promptSnippet);
+  assert.ok(Array.isArray(tool.promptGuidelines));
+}
+
+// Case 21: slack_post_preview returns "deployed preview at <url>" on success
+// and forwards options to ctx.ui.postPreview.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_preview");
+  const calls = [];
+  const ctx = makeCtx({
+    postPreview: async (filename, sourcePath, opts) => {
+      calls.push({ filename, sourcePath, opts });
+      return { ok: true, url: "https://covent-pi-preview.up.railway.app/p/abc12345/", id: "abc12345" };
+    },
+  });
+  const r = await tool.execute("tcp1", {
+    filename: "Color Picker Demo",
+    source_path: "/tmp/preview-xyz",
+    description: "Interactive color picker with HSL sliders",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, undefined);
+  assert.match(r.content[0].text, /deployed preview at https:\/\/.*\/p\/abc12345\//);
+  assert.equal(r.details?.url, "https://covent-pi-preview.up.railway.app/p/abc12345/");
+  assert.equal(r.details?.id, "abc12345");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].filename, "Color Picker Demo");
+  assert.equal(calls[0].sourcePath, "/tmp/preview-xyz");
+  assert.equal(calls[0].opts.description, "Interactive color picker with HSL sliders");
+}
+
+// Case 22: slack_post_preview surfaces postPreview errors as isError results.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_preview");
+  const ctx = makeCtx({ postPreview: async () => ({ ok: false, error: "preview_host_not_configured" }) });
+  const r = await tool.execute("tcp2", {
+    filename: "x",
+    source_path: "/tmp/x.html",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /preview_host_not_configured/);
+}
+
+// Case 23: slack_post_preview returns isError when ctx.ui.postPreview is missing.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_preview");
+  const ctx = makeCtx({});
+  const r = await tool.execute("tcp3", {
+    filename: "x",
+    source_path: "/tmp/x.html",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Slack-bound/);
+}
+
+// Case 24: slack_post_preview forwards AbortSignal.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_preview");
+  let observedSignal;
+  const ctx = makeCtx({
+    postPreview: async (_f, _s, opts) => {
+      observedSignal = opts?.signal;
+      return { ok: true, url: "https://x/p/y/", id: "y" };
+    },
+  });
+  const ac = new AbortController();
+  await tool.execute("tcp4", { filename: "x", source_path: "/tmp/x.html" }, ac.signal, undefined, ctx);
   assert.equal(observedSignal, ac.signal);
 }
 

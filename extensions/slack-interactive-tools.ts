@@ -70,6 +70,11 @@ type SlackUI = {
     mimeType: string | undefined,
     opts?: { description?: string; signal?: AbortSignal },
   ) => Promise<{ ok: boolean; upload?: any; followup?: any; error?: string }>;
+  postPreview?: (
+    filename: string,
+    sourcePath: string,
+    opts?: { description?: string; signal?: AbortSignal; timeoutMs?: number },
+  ) => Promise<{ ok: boolean; url?: string; id?: string; followup?: any; error?: string }>;
 };
 
 function getSlackUI(ctx: ExtensionContext | undefined): SlackUI | undefined {
@@ -272,6 +277,58 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
         return textResult(`uploaded ${params.filename}`, { permalink, fileId: uploadedFile?.id });
       } catch (err: any) {
         return errorResult(`slack_post_artifact failed: ${err?.message || String(err)}`);
+      }
+    },
+  });
+
+  // ---- slack_post_preview --------------------------------------------------
+  pi.registerTool({
+    name: "slack_post_preview",
+    label: "Slack post HTML preview",
+    description:
+      "Deploy a Pi-generated HTML bundle to the covent-pi-preview Railway service and post the public preview URL into the current Slack thread. Use this when the user wants to SEE THE PAGE RUNNING in their browser (interactive HTML, CSS, JS). Source can be either a single self-contained HTML file or a directory containing `index.html` plus sibling assets (css, js, images). The bundle is zipped locally and uploaded over private Railway networking. The user clicks the resulting URL to open the live page. Companion to slack_post_artifact, which is for downloadable source files.",
+    promptSnippet:
+      "slack_post_preview: deploy an HTML bundle and post the live preview URL into Slack.",
+    promptGuidelines: [
+      "When the user wants to see the page running in a browser, generate the HTML (and optional CSS/JS/images) under a /tmp/ path, then call slack_post_preview.",
+      "Pass `source_path` as either a single .html file OR a directory containing index.html plus assets. The directory is zipped recursively.",
+      "Pass `filename` as a human-readable label (e.g. 'Color Picker Demo', 'Sales Dashboard') — it shows above the URL in Slack, not on disk.",
+      "Pass a one-line `description` of what the page does or shows; it appears alongside the URL.",
+      "For interactive HTML, prefer self-contained files (inline <style> and <script>) so the bundle is one entry. Use a source directory only when external assets are necessary.",
+      "After the tool succeeds, do NOT also paste the HTML source inline — the user can open the URL. Send slack_post_artifact alongside only if they explicitly asked for both the source file and the live page.",
+    ],
+    parameters: Type.Object({
+      filename: Type.String({
+        description: "Human-readable label for the preview shown in Slack (e.g. 'Color Picker Demo'). Not a path.",
+        minLength: 1,
+        maxLength: 200,
+      }),
+      source_path: Type.String({
+        description: "Absolute path to either a single .html file OR a directory containing index.html (plus sibling assets to bundle). Should be under /tmp/.",
+        minLength: 1,
+        maxLength: 4096,
+      }),
+      description: Type.Optional(Type.String({
+        description: "One-line summary of what the page does or shows. Appears alongside the URL in Slack.",
+        maxLength: 600,
+      })),
+    }),
+    async execute(_toolCallId, params: any, signal, _onUpdate, ctx) {
+      const ui = getSlackUI(ctx);
+      if (!ui?.postPreview) {
+        return errorResult(`slack_post_preview requires a Slack-bound Pi turn. ${NOT_SLACK_BOUND_HINT}`);
+      }
+      try {
+        const result = await ui.postPreview(params.filename, params.source_path, {
+          description: params.description,
+          signal,
+        });
+        if (!result?.ok) {
+          return errorResult(`slack_post_preview failed: ${result?.error || "unknown_error"}`);
+        }
+        return textResult(`deployed preview at ${result.url}`, { url: result.url, id: result.id });
+      } catch (err: any) {
+        return errorResult(`slack_post_preview failed: ${err?.message || String(err)}`);
       }
     },
   });

@@ -1,0 +1,17 @@
+{
+  "name": "covent-pi-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tiny Railway-hosted preview service: accepts zipped HTML bundles from covent-pi-mom over private networking, serves them publicly at /p/<slug>.",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "start": "bun index.mjs",
+    "check": "bun test-preview.mjs"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  }
+}

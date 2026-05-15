@@ -5,14 +5,17 @@
   "type": "module",
   "description": "Private Covent AI automation operating layer for Slack, Pi, skills, agents, and bounded tools.",
   "workspaces": [
-    "apps/pi-mom"
+    "apps/pi-mom",
+    "apps/pi-preview"
   ],
   "scripts": {
-    "check": "bun run typecheck && bun run check:pi-mom",
+    "check": "bun run typecheck && bun run check:pi-mom && bun run check:pi-preview",
     "doctor": "bun run doctor:pi-mom",
     "dev:pi-mom": "cd apps/pi-mom && bun run start",
+    "dev:pi-preview": "cd apps/pi-preview && bun run start",
     "doctor:pi-mom": "cd apps/pi-mom && bun run doctor",
     "check:pi-mom": "cd apps/pi-mom && bun run check",
+    "check:pi-preview": "cd apps/pi-preview && bun run check",
     "typecheck": "tsc --noEmit",
     "install:pi": "bash scripts/install-local.sh"
   },

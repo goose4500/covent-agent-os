@@ -673,4 +673,183 @@ function makeTimerHarness() {
   assert.equal(result.error, "ui_disposed");
 }
 
+// --- postPreview cases ----------------------------------------------------
+// postPreview uploads a zipped HTML bundle to the preview-host service over
+// the Railway private network, then posts the returned public URL into the
+// current Slack thread. The bridge reads PREVIEW_BASE_INTERNAL and
+// PREVIEW_SHARED_SECRET from process.env; tests set/restore them around each
+// case, and globalThis.fetch is patched to assert the request shape.
+
+// Pass `null` to delete a var; omit the key to use the default; pass a string
+// to set explicitly. (Default destructuring + `undefined` ignores undefined,
+// so we use `null` as the explicit-delete sentinel.)
+async function withPreviewEnv(overrides = {}, fn) {
+  const baseInternal = "baseInternal" in overrides ? overrides.baseInternal : "http://covent-pi-preview.railway.internal:8080";
+  const secret = "secret" in overrides ? overrides.secret : "test-secret";
+  const prev = {
+    base: process.env.PREVIEW_BASE_INTERNAL,
+    secret: process.env.PREVIEW_SHARED_SECRET,
+    fetch: globalThis.fetch,
+  };
+  if (baseInternal === null) delete process.env.PREVIEW_BASE_INTERNAL;
+  else process.env.PREVIEW_BASE_INTERNAL = baseInternal;
+  if (secret === null) delete process.env.PREVIEW_SHARED_SECRET;
+  else process.env.PREVIEW_SHARED_SECRET = secret;
+  try {
+    return await fn();
+  } finally {
+    if (prev.base === undefined) delete process.env.PREVIEW_BASE_INTERNAL;
+    else process.env.PREVIEW_BASE_INTERNAL = prev.base;
+    if (prev.secret === undefined) delete process.env.PREVIEW_SHARED_SECRET;
+    else process.env.PREVIEW_SHARED_SECRET = prev.secret;
+    globalThis.fetch = prev.fetch;
+  }
+}
+
+// Case 24: postPreview happy path — zips a single-file source, PUTs to the
+// preview-host with the secret header, posts the returned URL into the thread.
+{
+  _resetApprovalCounterForTests();
+  const fs = await import("node:fs/promises");
+  const tmp = await import("node:os").then((m) => m.tmpdir());
+  const filePath = `${tmp}/pi-postpreview-${Date.now()}-1.html`;
+  await fs.writeFile(filePath, "<!doctype html><html><body>preview</body></html>");
+
+  await withPreviewEnv({}, async () => {
+    const captured = [];
+    globalThis.fetch = async (url, init) => {
+      captured.push({ url, method: init?.method, headers: init?.headers, bodyBytes: init?.body?.byteLength ?? 0 });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "abc12345", url: "https://covent-pi-preview.up.railway.app/p/abc12345/" }),
+        text: async () => "",
+      };
+    };
+
+    const client = makeFakeClient();
+    const pendingApprovals = new Map();
+    const traces = [];
+    const ui = createSlackUIContext({
+      client, channel: "C24", threadTs: "24.0",
+      requestId: "req_pp24", pendingApprovals,
+      trace: (event, data) => traces.push({ event, data }),
+    });
+
+    const result = await ui.postPreview("Color Picker", filePath, { description: "HSL sliders, no deps" });
+    assert.equal(result.ok, true);
+    assert.equal(result.id, "abc12345");
+    assert.equal(result.url, "https://covent-pi-preview.up.railway.app/p/abc12345/");
+
+    assert.equal(captured.length, 1, "exactly one fetch call");
+    assert.match(captured[0].url, /covent-pi-preview\.railway\.internal:8080\/upload$/);
+    assert.equal(captured[0].method, "PUT");
+    assert.equal(captured[0].headers["content-type"], "application/zip");
+    assert.equal(captured[0].headers["x-preview-secret"], "test-secret");
+    assert.ok(captured[0].bodyBytes > 0, "zip body has bytes");
+
+    assert.equal(client.postMessages.length, 1);
+    assert.match(client.postMessages[0].text, /Color Picker/);
+    assert.match(client.postMessages[0].text, /HSL sliders/);
+    assert.match(client.postMessages[0].text, /\/p\/abc12345\//);
+    assert.ok(traces.some((t) => t.event === "slack_ui.postPreview"));
+  });
+  await fs.unlink(filePath);
+}
+
+// Case 25: postPreview returns preview_host_not_configured when env is missing.
+{
+  _resetApprovalCounterForTests();
+  await withPreviewEnv({ baseInternal: null, secret: null }, async () => {
+    const client = makeFakeClient();
+    const pendingApprovals = new Map();
+    const traces = [];
+    const ui = createSlackUIContext({
+      client, channel: "C25", threadTs: "25.0",
+      requestId: "req_pp25", pendingApprovals,
+      trace: (event, data) => traces.push({ event, data }),
+    });
+    const result = await ui.postPreview("x", "/tmp/x.html");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "preview_host_not_configured");
+    assert.equal(client.postMessages.length, 0, "no Slack message when not configured");
+    assert.ok(traces.some((t) => t.event === "slack_ui.postPreview_not_configured"));
+  });
+}
+
+// Case 26: postPreview surfaces a non-2xx response as preview_upload_status_*
+// and does not post a Slack message.
+{
+  _resetApprovalCounterForTests();
+  const fs = await import("node:fs/promises");
+  const tmp = await import("node:os").then((m) => m.tmpdir());
+  const filePath = `${tmp}/pi-postpreview-${Date.now()}-26.html`;
+  await fs.writeFile(filePath, "<!doctype html><html><body>x</body></html>");
+
+  await withPreviewEnv({}, async () => {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 403,
+      text: async () => "forbidden",
+      json: async () => ({}),
+    });
+    const client = makeFakeClient();
+    const pendingApprovals = new Map();
+    const ui = createSlackUIContext({
+      client, channel: "C26", threadTs: "26.0",
+      requestId: "req_pp26", pendingApprovals,
+    });
+    const result = await ui.postPreview("x", filePath);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /preview_upload_status_403/);
+    assert.equal(client.postMessages.length, 0);
+  });
+  await fs.unlink(filePath);
+}
+
+// Case 27: postPreview surfaces a zip-build failure (missing index.html in a
+// dir source) without contacting the preview host.
+{
+  _resetApprovalCounterForTests();
+  const fs = await import("node:fs/promises");
+  const tmp = await import("node:os").then((m) => m.tmpdir());
+  const dir = `${tmp}/pi-postpreview-noidx-${Date.now()}`;
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(`${dir}/main.html`, "<html></html>");
+
+  await withPreviewEnv({}, async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => { fetchCalled = true; return { ok: true }; };
+    const client = makeFakeClient();
+    const pendingApprovals = new Map();
+    const ui = createSlackUIContext({
+      client, channel: "C27", threadTs: "27.0",
+      requestId: "req_pp27", pendingApprovals,
+    });
+    const result = await ui.postPreview("x", dir);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /missing_index_html_in_source_dir/);
+    assert.equal(fetchCalled, false, "no fetch when zip build fails");
+    assert.equal(client.postMessages.length, 0);
+  });
+  await fs.rm(dir, { recursive: true });
+}
+
+// Case 28: postPreview returns ui_disposed after dispose().
+{
+  _resetApprovalCounterForTests();
+  await withPreviewEnv({}, async () => {
+    const client = makeFakeClient();
+    const pendingApprovals = new Map();
+    const ui = createSlackUIContext({
+      client, channel: "C28", threadTs: "28.0",
+      requestId: "req_pp28", pendingApprovals,
+    });
+    ui.dispose();
+    const result = await ui.postPreview("x", "/tmp/x.html");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "ui_disposed");
+  });
+}
+
 console.log("slack-ui-context tests passed");
