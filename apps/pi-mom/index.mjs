@@ -11,6 +11,7 @@ import { runTurn } from "./lib/pi-session.mjs";
 import { createSlackSink } from "./lib/slack-sink.mjs";
 import { createCanvasSink } from "./lib/canvas-sink.mjs";
 import { createCompositeSink } from "./lib/composite-sink.mjs";
+import { createPrewarmer } from "./lib/cache-prewarm.mjs";
 import {
   createSubagentCanvasSidecarSink,
   formatSubagentCanvasFooter,
@@ -988,6 +989,14 @@ app.assistant(assistant);
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
     console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
+    // Pre-warm the provider's prompt-prefix cache so the first real Slack
+    // turn after a Railway redeploy lands on a warm prefix. Skipped in
+    // PI_MOM_MODE=echo (no Pi calls happen there anyway) and when
+    // PI_MOM_PREWARM_ENABLED=false. Fire-and-forget — never blocks the
+    // Bolt socket from accepting events.
+    if (MODE === "pi") {
+      createPrewarmer({ runPi }).start();
+    }
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);
     process.exit(1);
