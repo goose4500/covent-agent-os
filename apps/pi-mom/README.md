@@ -227,6 +227,7 @@ Known-good non-secret values:
 - Default mode for proof: `PI_MOM_MODE=echo`
 - Full mode: `PI_MOM_MODE=pi`
 - Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
+- Subagent models: read-only / scout-like profiles (`team-scout`, `team-reviewer-readonly`, `scout-fast`, `frontend-polish`, `linear-auditor`, `linear-subissue-auditor`) pin `opencode/gemini-3-flash` in their `.agents/*.md` / `agents/*.md` frontmatter. `team-planner` and write-capable profiles stay on `openai-codex/gpt-5.5`. The deployed `PI_AUTH_JSON_B64` must include opencode credentials or `bun run doctor:pi-mom` will fail the subagent-model probe.
 
 Detailed historical runbook: `docs/archive/runbooks/covent-pi-mom-known-good.md` (archived evidence only; not current instructions).
 

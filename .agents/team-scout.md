@@ -1,7 +1,7 @@
 ---
 name: team-scout
 description: Project scout for Slack team: context requests. Finds relevant files, symbols, constraints, public web context, and validation paths using the default Pi tool surface.
-model: openai-codex/gpt-5.5
+model: opencode/gemini-3-flash
 thinking: low
 systemPromptMode: replace
 inheritProjectContext: true

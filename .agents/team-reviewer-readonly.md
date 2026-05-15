@@ -1,7 +1,7 @@
 ---
 name: team-reviewer-readonly
 description: Reviewer for Slack team: review requests. Reviews files, plans, or diffs with evidence using the default Pi tool surface.
-model: openai-codex/gpt-5.5
+model: opencode/gemini-3-flash
 thinking: medium
 systemPromptMode: replace
 inheritProjectContext: true
