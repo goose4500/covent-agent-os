@@ -17,6 +17,13 @@ const expectedSkills = new Map([
   ["team-planner", ["covent-project-context-primer"]],
   ["team-reviewer-readonly", ["covent-project-context-primer"]],
 ]);
+// Read-only/scout-like team agents default to Gemini 3 Flash (issue #96);
+// team-planner stays on the Codex GPT-5.5 model used by the parent session.
+const expectedModels = new Map([
+  ["team-scout", "opencode/gemini-3-flash"],
+  ["team-planner", "openai-codex/gpt-5.5"],
+  ["team-reviewer-readonly", "opencode/gemini-3-flash"],
+]);
 const projectSkillSources = new Set(["project", "project-package", "project-settings"]);
 
 function isUnderDir(filePath, dir) {
@@ -31,7 +38,7 @@ for (const name of ["team-scout", "team-planner", "team-reviewer-readonly"]) {
   assert.ok(byName.has(name), `${name} should be discoverable as a project subagent from apps/pi-mom cwd`);
   const agent = byName.get(name);
   assert.equal(agent.source, "project", `${name} must be project-scoped, not user/builtin`);
-  assert.equal(agent.model, "openai-codex/gpt-5.5", `${name} should pin the deployed Codex model for child CLI runs`);
+  assert.equal(agent.model, expectedModels.get(name), `${name} should pin the expected model for child CLI runs`);
   assert.equal(agent.disabled, undefined, `${name} should be executable`);
   assert.equal(agent.inheritSkills, true, `${name} should inherit the default skill surface`);
   assert.deepEqual(agent.skills || [], expectedSkills.get(name), `${name} should still inject the Covent project primer`);

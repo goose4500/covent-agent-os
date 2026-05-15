@@ -2,7 +2,7 @@
 name: frontend-polish
 description: Review UI/frontend deliverables for visual polish, responsive behavior, accessibility, and file:// single-file app constraints.
 tools: read, grep, find, ls, bash
-model: openai-codex/gpt-5.5
+model: opencode/gemini-3-flash
 thinking: medium
 inheritProjectContext: true
 inheritSkills: true
