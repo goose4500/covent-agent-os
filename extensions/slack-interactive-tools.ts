@@ -68,7 +68,7 @@ type SlackUI = {
     filename: string,
     filePath: string,
     mimeType: string | undefined,
-    opts?: { description?: string; regeneratePrompt?: string; signal?: AbortSignal },
+    opts?: { description?: string; signal?: AbortSignal },
   ) => Promise<{ ok: boolean; upload?: any; followup?: any; error?: string }>;
 };
 
@@ -224,14 +224,14 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
     name: "slack_post_artifact",
     label: "Slack post file artifact",
     description:
-      "Upload a generated file (code, CSV, JSON, Markdown, PDF, DOC, etc.) into the current Slack thread, optionally followed by a Regenerate button. Use this whenever the user asks for a file artifact: first write the file to a path under /tmp/, then call this tool with the absolute path. The tool reads the file and uploads it via files.uploadV2; the user will see the file in the thread, so do not also paste the file contents inline.",
+      "Upload a generated file (code, CSV, JSON, Markdown, PDF, DOC, etc.) into the current Slack thread. The upload is followed by a Slack Card block (Apr-2026 Block Kit) showing the filename, format, size, and an optional description, plus a context line with the request id and timestamp. Use this whenever the user asks for a file artifact: first write the file to a path under /tmp/, then call this tool with the absolute path. The user sees the file inline, so do not also paste the file contents.",
     promptSnippet:
       "slack_post_artifact: upload a generated file artifact (code, CSV, PDF, etc.) into the Slack thread.",
     promptGuidelines: [
       "When the user asks for a file artifact, write it to an absolute /tmp/ path first, then call slack_post_artifact with that path.",
       "Pick a descriptive `filename` with the right extension (e.g. 'sales.csv', 'schema.ts'). The user sees this name in Slack.",
-      "Set `mime_type` when known (e.g. 'text/csv', 'application/json') so Slack renders the preview correctly.",
-      "Set `regenerate_prompt` to the original user request (paraphrased if needed) when the artifact is reproducible — Slack shows a Regenerate button that re-fires it as a fresh turn.",
+      "Set `mime_type` when known (e.g. 'text/csv', 'application/json') so the Card subtitle shows a clean format label.",
+      "Set `description` to a one-line summary of what's in the file (≤200 chars after truncation). It appears as the Card body.",
       "Do not paste the file contents into the chat reply; the upload already shows them. Reply with a short caption about what was generated.",
     ],
     parameters: Type.Object({
@@ -246,16 +246,12 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
         maxLength: 4096,
       }),
       mime_type: Type.Optional(Type.String({
-        description: "MIME type (e.g. 'text/csv', 'application/json'). Helps Slack render previews.",
+        description: "MIME type (e.g. 'text/csv', 'application/json'). Helps Slack render previews and produces a cleaner Card subtitle.",
         maxLength: 100,
       })),
       description: Type.Optional(Type.String({
-        description: "One-line caption shown above the file in Slack. Defaults to '📎 <filename>'.",
+        description: "One-line summary of what's in the file. Appears as the Card body, truncated to 200 chars.",
         maxLength: 1000,
-      })),
-      regenerate_prompt: Type.Optional(Type.String({
-        description: "If set, a 'Regenerate' button is attached that re-fires this prompt as a new Pi turn in the same thread. Paraphrase the original user request so the new turn can stand on its own.",
-        maxLength: 1900,
       })),
     }),
     async execute(_toolCallId, params: any, signal, _onUpdate, ctx) {
@@ -266,7 +262,6 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
       try {
         const result = await ui.postFile(params.filename, params.file_path, params.mime_type, {
           description: params.description,
-          regeneratePrompt: params.regenerate_prompt,
           signal,
         });
         if (!result?.ok) {

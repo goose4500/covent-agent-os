@@ -340,7 +340,6 @@ function makeCtx(uiOverrides = {}) {
     file_path: "/tmp/sales.csv",
     mime_type: "text/csv",
     description: "Q1 sales",
-    regenerate_prompt: "generate a sales CSV for Q1",
   }, undefined, undefined, ctx);
   assert.equal(r.isError, undefined);
   assert.equal(r.content[0].text, "uploaded sales.csv");
@@ -350,7 +349,7 @@ function makeCtx(uiOverrides = {}) {
   assert.equal(calls[0].filePath, "/tmp/sales.csv");
   assert.equal(calls[0].mimeType, "text/csv");
   assert.equal(calls[0].opts.description, "Q1 sales");
-  assert.equal(calls[0].opts.regeneratePrompt, "generate a sales CSV for Q1");
+  assert.equal(calls[0].opts.regeneratePrompt, undefined, "regeneratePrompt is no longer forwarded");
 }
 
 // Case 17: slack_post_artifact surfaces postFile errors as isError results.

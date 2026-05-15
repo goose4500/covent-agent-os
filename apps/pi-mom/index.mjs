@@ -865,38 +865,6 @@ app.view({ callback_id: "pi_uictx_input_modal", type: "view_closed" }, async ({ 
 
 const { dispatchToAction } = createDispatcher({ handleRequest, trace });
 
-// Regenerate button posted alongside slack_post_artifact uploads. The original
-// user request is embedded in the button's `value` (capped to 1900 chars to
-// stay under Slack's 2000-char limit). We synthesize an app_mention event and
-// route it through the existing dispatcher so the regenerated turn lands in
-// the same thread.
-app.action("pi_run_regenerate", async ({ ack, body, action, client }) => {
-  await ack();
-  const prompt = String(action?.value || "").slice(0, 1900);
-  const channel = body?.channel?.id;
-  const threadTs = body?.message?.thread_ts || body?.message?.ts;
-  const user = body?.user?.id;
-  if (!prompt || !channel || !threadTs || !user) {
-    trace("slack.regenerate_unparsable", {
-      hasPrompt: !!prompt,
-      hasChannel: !!channel,
-      hasThreadTs: !!threadTs,
-      hasUser: !!user,
-    });
-    return;
-  }
-  trace("slack.regenerate_dispatch", { channel, threadTs, user, promptLength: prompt.length });
-  try {
-    await dispatchToAction({
-      surface: "app_mention",
-      event: { channel, thread_ts: threadTs, ts: threadTs, text: prompt, user },
-      client,
-    });
-  } catch (error) {
-    trace("slack.regenerate_dispatch_failed", { error: error?.data?.error || error?.message });
-  }
-});
-
 // Stage 7 — App Home cockpit. The user opening the bot's Home tab triggers
 // `app_home_opened`; we publish the current state (pending approvals).
 // Subsequent pushes are fired from the pendingApprovals set/delete wrappers
