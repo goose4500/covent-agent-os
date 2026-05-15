@@ -110,6 +110,7 @@ PI_ALLOW_BROWSER_COOKIES           0        keep Gemini Web browser cookies off 
 PI_AUTH_JSON_B64                   base64(~/.pi/agent/auth.json) — seeded on cold boot
 PI_AGENT_DIR                       /data/pi-agent   persistent volume
 PI_MCP_JSON_B64                    optional base64(mcp.json) — seeded to ${PI_AGENT_DIR}/mcp.json when missing
+APIFY_TOKEN                        apify_api_...  bearer for the apify server in .mcp.json (see docs/runbooks/covent-apify-mcp-setup.md)
 
 OPENAI_API_KEY                     sk-...
 EXA_API_KEY / PERPLEXITY_API_KEY / GEMINI_API_KEY optional providers for default-on web tools
