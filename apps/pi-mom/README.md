@@ -226,7 +226,7 @@ Known-good non-secret values:
 - Full mode: `PI_MOM_MODE=pi`
 - Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
 
-Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
+Detailed historical runbook: `docs/archive/runbooks/covent-pi-mom-known-good.md` (archived evidence only; not current instructions).
 
 ## Notes
 
