@@ -22,6 +22,17 @@
       "lifecycle": "lazy",
       "idleTimeout": 10,
       "directTools": false
+    },
+    "github": {
+      "_comment": "Write-capable GitHub MCP server (ADR 0010). PR create/merge are gated by explicit Slack user approval — see ADR 0010 for the approval boundary and apps/pi-mom/README.md for the persistent-volume reseed procedure. X-MCP-Readonly / X-MCP-Lockdown are intentionally omitted so write tools surface; X-MCP-Toolsets still scopes the exposed surface. The bearer token is referenced by env-var name only; the value lives in Railway secrets, never in git or logs.",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": "bearer",
+      "bearerTokenEnv": "GITHUB_MCP_PAT",
+      "lifecycle": "lazy",
+      "directTools": false,
+      "headers": {
+        "X-MCP-Toolsets": "context,repos,pull_requests,issues,actions"
+      }
     }
   }
 }
