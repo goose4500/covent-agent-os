@@ -1,9 +1,9 @@
 # Covent Agent OS System Index
 
 Status: canonical navigation map
-Last updated: 2026-05-12 (post-foundation-rebuild)
+Last updated: 2026-05-15 (archive cleanup + validation-command drift fix)
 Primary Linear parent: FE-460 — Slack App
-Implementation truth: `main` HEAD (production cutover merge: `1ab169c`)
+Implementation truth: `main` HEAD
 Foundation-v2 cutover commits: `a75858f` (Stage 10) → `1ab169c` (merge)
 
 This file is the front door for humans and agents working on the Covent Slack ↔ Pi ↔ Linear system. If important operating knowledge only exists in Slack, a Pi session, or a Linear comment, it is not durable yet. Put the stable version here or in a linked canonical doc.
@@ -53,18 +53,19 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 - [`docs/SYSTEM_INDEX.md`](SYSTEM_INDEX.md) — this file; system-wide source-of-truth map.
 - [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — read-first operating context for future agents.
 - [`docs/architecture.md`](architecture.md) — post-rebuild canonical architecture (3 primitives, file tree, routes, extensions, deploy lifecycle).
+- [`docs/architecture-diagrams.html`](architecture-diagrams.html) — team-facing single-file visual guide with 10 architecture diagrams.
 
 ### Safety and authority
 
 - [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, route-policy requirements, secret handling, and data-as-data rule.
 - `.gitignore` — local/runtime state that must stay out of git.
-- `scripts/secret-scan.sh` — lightweight pre-commit secret scan.
+- GitHub Actions Gitleaks step — full-history secret scan before `bun run check`.
 
 ### Slack/Pi runtime
 
-- [`docs/runbooks/covent-ec2-pi-agent-machine.md`](runbooks/covent-ec2-pi-agent-machine.md) — EC2 Pi Agent Machine POC runbook, runtime lanes, AWS asks, and supervised bash/filesystem boundaries.
-- [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — the 2026-05-12 cutover lifecycle; reusable pattern for future blue-green Railway migrations.
 - [`apps/pi-mom/README.md`](../apps/pi-mom/README.md) — primary pi-mom setup, route, streaming, and Linear behavior runbook.
+- [`docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md`](archive/runbooks/foundation-v2-cutover-2026-05-12.md) — archived cutover evidence from the 2026-05-12 foundation rebuild.
+- [`docs/archive/runbooks/covent-ec2-pi-agent-machine.md`](archive/runbooks/covent-ec2-pi-agent-machine.md) — archived EC2 POC runbook; not live Slack bridge policy.
 - [`apps/pi-mom/index.mjs`](../apps/pi-mom/index.mjs) — implementation truth for request handling.
 - [`apps/pi-mom/lib/routes.mjs`](../apps/pi-mom/lib/routes.mjs) — route labels/instructions/help/status; prefixes shape workflow, not tool access.
 - [`apps/pi-mom/doctor.mjs`](../apps/pi-mom/doctor.mjs) — non-secret readiness diagnostics.
@@ -74,20 +75,20 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 
 ### Specs
 
-- [`docs/specs/registry-yaml-schema.md`](specs/registry-yaml-schema.md) — historical/deprecated registry format note; live routes are in `apps/pi-mom/lib/routes.mjs`.
 - [`docs/specs/context7-pi-agent-harness-spec.md`](specs/context7-pi-agent-harness-spec.md) — Context7 Pi harness design.
-- [`docs/specs/covent-slack-pi-harness.md`](specs/covent-slack-pi-harness.md) — older Slack MCP bearer-token harness spec; historical/staged.
+- [`docs/archive/specs/registry-yaml-schema.md`](archive/specs/registry-yaml-schema.md) — archived/deprecated registry format note; live routes are in `apps/pi-mom/lib/routes.mjs`.
+- [`docs/archive/specs/covent-slack-pi-harness.md`](archive/specs/covent-slack-pi-harness.md) — archived Slack MCP bearer-token harness spec; current Slack MCP setup uses OAuth.
 
 ### Source-of-truth / product operating model
 
-- [`docs/source-of-truth/COVENT_OPERATING_SOURCE_OF_TRUTH_V0.md`](source-of-truth/COVENT_OPERATING_SOURCE_OF_TRUTH_V0.md) — strategic operating model; still contains draft-era language, so prefer this index for current system boundaries.
-- [`docs/source-of-truth/DISTRIBUTION_AGENT_LOOP_SOURCE_OF_TRUTH.md`](source-of-truth/DISTRIBUTION_AGENT_LOOP_SOURCE_OF_TRUTH.md) — historical Distribution-agent context; useful evidence, not live instruction.
+- [`docs/archive/source-of-truth/COVENT_OPERATING_SOURCE_OF_TRUTH_V0.md`](archive/source-of-truth/COVENT_OPERATING_SOURCE_OF_TRUTH_V0.md) — archived draft-era strategic operating model.
+- [`docs/archive/source-of-truth/DISTRIBUTION_AGENT_LOOP_SOURCE_OF_TRUTH.md`](archive/source-of-truth/DISTRIBUTION_AGENT_LOOP_SOURCE_OF_TRUTH.md) — archived Distribution-agent context; evidence only, not live instruction.
 
 ### Runbooks
 
 - [`docs/runbooks/covent-slack-mcp-setup.md`](runbooks/covent-slack-mcp-setup.md) — current Slack MCP OAuth/safety runbook.
-- [`docs/runbooks/covent-pi-mom-known-good.md`](runbooks/covent-pi-mom-known-good.md) — historical known-good notes from the pre-rebuild era; reference the post-rebuild architecture in `docs/architecture.md` instead.
 - [`docs/runbooks/branch-protection.md`](runbooks/branch-protection.md) — main-branch protection rules.
+- [`docs/archive/runbooks/covent-pi-mom-known-good.md`](archive/runbooks/covent-pi-mom-known-good.md) — archived pre-rebuild known-good notes.
 
 ### ADRs
 
@@ -99,12 +100,13 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 ### History/archive
 
 - `docs/history/**` — evidence and recovery context only. Do not treat historical files as current instructions.
-- `docs/research/2026-05-10/**` — archived research from the foundation-rebuild scoping pass. Useful for understanding why decisions were made; not authoritative for current state.
+- [`docs/archive/**`](archive/README.md) — archived/superseded docs. Do not treat them as current instructions, route contracts, validation commands, or implementation truth.
 
 ### Visual map
 
+- HTML guide: [`docs/architecture-diagrams.html`](architecture-diagrams.html) — structured source outline for the 10 team-facing architecture diagrams.
 - Whimsical board: [Covent Agent OS — Slack/Pi/Linear System Map](https://whimsical.com/covent-agent-os-slack-pi-linear-system-map-FhNbKxykWy2gtzshPe8zoe?ref=mcp).
-- The board visualizes this file; this file remains canonical.
+- The HTML guide and board visualize this file; this file remains canonical.
 
 ## Current pi-mom production behavior
 
@@ -170,21 +172,21 @@ Project/service: covent-pi-mom
 Environment:     production
 Runtime:         long-running Slack Socket Mode worker (bun 1.3+)
 Source branch:   main (auto-deploy on push)
-Latest deploy:   commit 1ab169c (2026-05-12)
+Latest deploy:   verify with Railway (`railway status --json`) because production auto-deploys from `main`
 ```
 
 Canary service:
 
 ```text
 Service:  covent-pi-mom-v2
-Status:   down (kept as hot rollback target for ~24h post-cutover)
-Restore:  railway up --service covent-pi-mom-v2
+Status:   historical cutover canary; verify current Railway state before use
+Restore:  only intentionally, after confirming the service/env is still valid
 ```
 
 Useful commands from repo root:
 
 ```bash
-bun run check                                     # secret-scan + validators + pi-mom tests + tsc --noEmit
+bun run check                                     # tsc --noEmit + pi-mom test suites
 bun run doctor:pi-mom                             # non-secret diagnostics
 
 railway service covent-pi-mom
@@ -211,7 +213,7 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 
 - Thread context is capped at 12 messages with no pagination.
 - App Home cockpit is approvals-only after Stage 10 (runs/activity sections trimmed when `runStore` was deleted; an SDK-backed runs index could re-light them).
-- Default-on `bash` lands in the Railway container's ephemeral app runtime; EC2 wiring via `covent-aws-operator` is deferred.
+- Default-on `bash` lands in the Railway container's ephemeral app runtime; any supervised EC2/operator-lane routing remains a future decision.
 - Slack manifest scopes are still POC-broad and should be reviewed before broader workspace rollout.
 - Image generation is permanently removed (Stage 9 killed).
 
@@ -223,15 +225,16 @@ Do not paste raw logs without redaction. Logs can contain sensitive context even
 4. Run validation before commit/push:
 
 ```bash
-bun run secret-scan
 bun run check
 ```
+
+GitHub Actions runs Gitleaks before `bun run check`; there is no local `bun run secret-scan` script in the current repo.
 
 5. Link code changes back to the relevant Linear issue.
 
 ## Open follow-ups (tracked)
 
 - **Rotate exposed secrets** (`OPENAI_API_KEY`, `LINEAR_API_KEY`, `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`) — surfaced earlier in `railway variables --kv` dumps; deferred.
-- **EC2 wiring via `covent-aws-operator`** — default-on shell/file workflows should land on a real workstation, not the Railway container.
-- **Retire `covent-pi-mom-v2` Railway service** after ~24h of prod stability.
+- **Supervised EC2/operator-lane decision** — default-on shell/file workflows currently land in the Railway container; decide whether/when to route them to a trusted workstation.
+- **Retire or document `covent-pi-mom-v2` Railway service** if it still exists after the cutover window.
 - **App Home cockpit re-light** — trimmed to approvals-only when `runStore` was deleted.

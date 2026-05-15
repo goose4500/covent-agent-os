@@ -158,6 +158,8 @@ function viewText(view) {
       mode: "pi",
       allowedChannelId: "C123",
       linearConfigured: true,
+      slackStreamingAvailable: true,
+      browserUseConfigured: true,
       subagentsEnabled: true,
       uptimeSeconds: 42,
     },
@@ -166,6 +168,8 @@ function viewText(view) {
   const text = viewText(view);
   assert.match(text, /mode `pi`/);
   assert.match(text, /C123/);
+  assert.match(text, /Slack :white_check_mark: streaming ok/);
+  assert.match(text, /Browser Use key/);
   assert.match(text, /Linear :white_check_mark: configured/);
   assert.match(text, /team subagents :white_check_mark: enabled/);
   assert.match(text, /uptime 42s/);
@@ -174,7 +178,7 @@ function viewText(view) {
 // ---------- case 11: settings modal builder shape ----------
 {
   const modal = buildSettingsModalView({
-    status: { mode: "echo", linearConfigured: false, subagentsEnabled: false, traceEnabled: true, uptimeSeconds: 9 },
+    status: { mode: "echo", linearConfigured: false, slackStreamingAvailable: false, browserUseConfigured: false, subagentsEnabled: false, traceEnabled: true, uptimeSeconds: 9 },
   });
   assert.equal(modal.type, "modal");
   assert.equal(modal.callback_id, "home_settings_modal");
@@ -182,6 +186,8 @@ function viewText(view) {
   const text = JSON.stringify(modal);
   assert.match(text, /Mode/);
   assert.match(text, /echo/);
+  assert.match(text, /Slack streaming/);
+  assert.match(text, /Browser Use key/);
   assert.match(text, /missing key/);
   assert.match(text, /Team subagents/);
   assert.match(text, /disabled/);

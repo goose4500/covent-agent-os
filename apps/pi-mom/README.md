@@ -228,7 +228,29 @@ Known-good non-secret values:
 - Full mode: `PI_MOM_MODE=pi`
 - Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
 
-Detailed historical runbook: `docs/runbooks/covent-pi-mom-known-good.md`
+Detailed historical runbook: `docs/archive/runbooks/covent-pi-mom-known-good.md` (archived evidence only; not current instructions).
+
+## MCP servers (pi-mcp-adapter)
+
+The bridge plugs arbitrary MCP servers in through [`pi-mcp-adapter`](https://www.npmjs.com/package/pi-mcp-adapter), loaded inline alongside `pi-subagents` / `pi-web-access` in `lib/pi-sdk-runner.mjs#buildPiMomExtensionFactories`. The adapter registers one `mcp` proxy tool (~200 tokens) that handles discovery (`mcp({ search: "…" })`), describe, and call; servers start lazily on first tool call.
+
+**Config file precedence** (first match wins):
+1. `~/.config/mcp/mcp.json` — user-global shared
+2. `${PI_AGENT_DIR}/mcp.json` — Pi global override (the Railway target)
+3. `.mcp.json` — project shared
+4. `.pi/mcp.json` — Pi project override (gitignored)
+
+The schema lives in [`/examples/mcp.example.json`](../../examples/mcp.example.json). Use `${VAR}` / `$env:VAR` for header/env/bearer values so secrets stay in your secret manager.
+
+**Railway:** set `PI_MCP_JSON_B64` to `base64 -w0 < mcp.json`. The runner seeds `${PI_AGENT_DIR}/mcp.json` on cold boot only when the file is missing, so OAuth tokens and `directTools` overrides persisted by the adapter on the volume are preserved across deploys. Rotate by deleting the file on the volume and redeploying.
+
+**Slack MCP preset:** set `SLACK_MCP_ENABLED=1` when you want the runner to seed a lazy Slack MCP server and no `mcp.json` exists. The generated config uses `https://mcp.slack.com/mcp`, `auth: "bearer"`, and `bearerTokenEnv` (default `SLACK_MCP_USER_TOKEN`) so token values stay in the secret manager, not git or disk. `PI_MCP_JSON_B64` takes precedence for fully custom MCP configs.
+
+**directTools:** by default every MCP tool is reached through the `mcp` proxy. Set `directTools: true` (or a list of original tool names) per server to register that server's tools as top-level Pi tools so the model sees them next to `read`, `bash`, `edit`, etc.
+
+**Interactive auth:** OAuth flows (`/mcp-auth <server>`) require a TUI Pi session — run them locally against the same `PI_AGENT_DIR`, then redeploy. Bearer / `client_credentials` servers don't need this.
+
+`bun run doctor:pi-mom` reports adapter resolution and the active `mcp.json` path/server count.
 
 ## Notes
 

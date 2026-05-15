@@ -2,12 +2,12 @@
 
 Private monorepo for Covent's AI automation operating layer — the Slack ↔ Pi (AI coding agent) bridge plus the Pi extensions, skills, and runbooks that back it.
 
-> **Production status (2026-05-12):** `covent-pi-mom` (the Slack bridge) is **live in production on Railway**. Foundation rebuilt on `foundation-v2`, merged to `main` as commit `1ab169c` via PR #24. The bot does work end-to-end for the first time since the project started. See [docs/architecture.md](docs/architecture.md) for the post-rebuild architecture and [docs/runbooks/foundation-v2-cutover-2026-05-12.md](docs/runbooks/foundation-v2-cutover-2026-05-12.md) for the cutover lifecycle.
+> **Production status:** `covent-pi-mom` (the Slack bridge) is live in production on Railway and auto-deploys from `main`. Foundation rebuilt on `foundation-v2`, merged as commit `1ab169c` via PR #24. See [docs/architecture.md](docs/architecture.md) for the current architecture; the cutover record is archived at [docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md](docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md).
 
 ## What this repo is
 
 - **Slack bridge runtime**: `apps/pi-mom/` — Bolt 4.7 Assistant container + `app_mention` parity, surfaces Pi agent execution into Slack threads.
-- **Pi agent layer**: `extensions/`, `skills/`, `agents/`, `packages/` — Pi custom tools (Linear, Slack UI, Browser Use, git checkpoint, web access) and reusable operating modes.
+- **Pi agent layer**: `extensions/`, `skills/`, and `agents/` — Pi custom tools (Linear, Slack UI, Browser Use, git checkpoint, web access) and reusable operating modes.
 - **Route control**: `apps/pi-mom/lib/routes.mjs` — pure route catalog for workflow instructions plus Slack help/status text. Tool/skill/extension access is default-on for Pi-backed routes.
 - **Operating docs**: `docs/` — architecture, ADRs, runbooks, specs, source-of-truth, and historical research.
 
@@ -28,7 +28,7 @@ Runtime: **bun 1.3+**.
 ```bash
 bun install
 bun run install:pi     # required for default-on team/subagent child runs
-bun run check          # secret-scan + skill/agent validators + pi-mom test suites + tsc --noEmit
+bun run check          # tsc --noEmit + pi-mom test suites
 bun run doctor:pi-mom  # non-secret readiness diagnostics; verifies pi CLI availability
 ```
 
@@ -86,7 +86,7 @@ The production Slack bot runs as a Railway service:
 Project:     covent-pi-mom
 Environment: production
 Service:     covent-pi-mom        (auto-deploy from main)
-Canary:      covent-pi-mom-v2     (currently `down`; hot rollback target for ~24h post-cutover)
+Canary:      covent-pi-mom-v2     (historical cutover canary; verify current Railway state before using)
 Runtime:     long-running Socket Mode worker (no public ingress)
 ```
 
@@ -109,6 +109,7 @@ PI_OFFLINE                         1        no SDK auto-npm-install
 PI_ALLOW_BROWSER_COOKIES           0        keep Gemini Web browser cookies off by default
 PI_AUTH_JSON_B64                   base64(~/.pi/agent/auth.json) — seeded on cold boot
 PI_AGENT_DIR                       /data/pi-agent   persistent volume
+PI_MCP_JSON_B64                    optional base64(mcp.json) — seeded to ${PI_AGENT_DIR}/mcp.json when missing
 
 OPENAI_API_KEY                     sk-...
 EXA_API_KEY / PERPLEXITY_API_KEY / GEMINI_API_KEY optional providers for default-on web tools
@@ -136,10 +137,11 @@ Deploys are triggered by pushes to `main`. Do **not** `railway up` from a local 
 Start here:
 
 - [`docs/architecture.md`](docs/architecture.md) — canonical post-rebuild architecture (the file tree, route table, env vars, extensions, deploy lifecycle).
+- [`docs/architecture-diagrams.html`](docs/architecture-diagrams.html) — team-facing single-file visual guide with 10 architecture diagrams.
 - [`docs/SYSTEM_INDEX.md`](docs/SYSTEM_INDEX.md) — system-wide source-of-truth map across Slack, Pi, Linear, Git, Railway, Whimsical.
 - [`docs/AGENT_CONTEXT.md`](docs/AGENT_CONTEXT.md) — read-first operating context for future agents.
 - [`BOUNDARY.md`](BOUNDARY.md) — authority, mutation boundaries, and secret/data-handling rules.
-- [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/runbooks/foundation-v2-cutover-2026-05-12.md) — the cutover lifecycle (also the reusable pattern for future blue-green Railway migrations).
+- [`docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md) — archived cutover evidence from the 2026-05-12 foundation rebuild.
 
 ## Operating spine
 

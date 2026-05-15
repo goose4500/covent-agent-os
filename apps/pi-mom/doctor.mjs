@@ -197,6 +197,44 @@ if (subagentsEnabled) {
 }
 if (!(await reportTeamSkillDiscovery(projectSkillsCheck.projectSkillsDir))) ok = false;
 
+// pi-mcp-adapter is loaded inline as a Pi extension factory; report its
+// resolution and which mcp.json the adapter will read at startup so the
+// MCP wiring is observable without booting a session.
+try {
+  const appPkg = readJsonFile(new URL("./package.json", import.meta.url));
+  const declared = appPkg?.dependencies?.["pi-mcp-adapter"];
+  const pkgJsonPath = require.resolve("pi-mcp-adapter/package.json");
+  const resolvedPkg = readJsonFile(pkgJsonPath);
+  if (!declared) {
+    console.error("✗ apps/pi-mom does not declare pi-mcp-adapter dependency");
+    ok = false;
+  } else {
+    console.log(`✓ pi-mcp-adapter app dependency resolves: declared ${declared}, installed ${resolvedPkg.version}`);
+  }
+} catch (error) {
+  console.error(`✗ pi-mcp-adapter did not resolve from app dependencies: ${error?.message || error}`);
+  ok = false;
+}
+
+{
+  const agentDir = process.env.PI_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || path.join(process.env.HOME || "/root", ".pi", "agent");
+  const mcpJsonPath = path.join(agentDir, "mcp.json");
+  if (fs.existsSync(mcpJsonPath)) {
+    try {
+      const raw = readJsonFile(mcpJsonPath);
+      const serverCount = raw?.mcpServers ? Object.keys(raw.mcpServers).length : 0;
+      console.log(`✓ Pi global override mcp.json present: ${mcpJsonPath} (${serverCount} server${serverCount === 1 ? "" : "s"})`);
+    } catch (error) {
+      console.error(`✗ ${mcpJsonPath} exists but is not valid JSON: ${error?.message || error}`);
+      ok = false;
+    }
+  } else if (process.env.PI_MCP_JSON_B64) {
+    console.log(`! ${mcpJsonPath} missing; will be seeded from PI_MCP_JSON_B64 on next cold boot`);
+  } else {
+    console.log(`! ${mcpJsonPath} missing and PI_MCP_JSON_B64 is unset; pi-mcp-adapter will register the proxy with zero servers`);
+  }
+}
+
 const webAccessEnabled = webAccessEnabledFromEnv(process.env);
 console.log(`Web access: ${webAccessEnabled ? "enabled by default" : "disabled"}`);
 if (webAccessEnabled) {

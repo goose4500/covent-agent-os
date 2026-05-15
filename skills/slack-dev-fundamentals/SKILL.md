@@ -13,6 +13,10 @@ Use this skill to orient around Slack from first principles before touching app
 config, code, scopes, events, or API calls. Optimize for speed-to-value: separate
 user-facing leverage from prerequisite plumbing.
 
+For May 2026 Slack MCP, Real-time Search API, Agents & AI Apps, or rich agent
+UX patterns, also load `skills/slack-mcp-agent-ux/SKILL.md` and use this file as
+the foundation layer.
+
 ## Core model
 A useful Slack app/agent needs five capabilities:
 ```text
@@ -28,9 +32,12 @@ Slack ecosystem buckets:
 2. Events/interactivity runtime = user intent enters your system
 3. Web API/SDKs = read/write Slack data
 4. CLI/platform tooling = manage, validate, run, deploy
+5. Slack AI surfaces = MCP, Real-time Search API, Agents & AI Apps
 ```
 Important nuance: OAuth/apps are necessary substrate, but events/interactivity are
 usually where UX leverage lives. Web API is the muscle. CLI is operator tooling.
+Slack AI surfaces are context/tool layers for agents, not a replacement for app
+identity, permissions, or deterministic product code.
 
 ## 1 — Slack App, OAuth, manifests, scopes
 **Definition:** the installable app container and permission system.
@@ -82,6 +89,16 @@ Good for: `slack auth list`, `slack doctor`, `slack manifest validate`,
 and datastores. Not a general-purpose `gh api` equivalent; use SDK scripts, MCP
 tools, or carefully redacted direct HTTP for arbitrary Slack API behavior tests.
 
+## 5 — Slack AI surfaces
+**Definition:** official Slack context and agent UX surfaces introduced for
+LLM-backed apps.
+
+Use **Slack MCP Server** when an MCP host/client needs Slack tools discovered at
+runtime. Use the **Real-time Search API** when an AI-enabled Slack app needs
+user-scoped search context and citations. Use **Agents & AI Apps** features for
+assistant threads, suggested prompts, status, streaming, and task/plan updates.
+For implementation details, switch to `slack-mcp-agent-ux`.
+
 ## Seven fundamentals for agent UX
 - **Surfaces:** Slack UX lives on surfaces: channel messages, thread replies, DMs,
   App Home, modals, files/canvases. Choose the surface before designing behavior.
@@ -130,6 +147,10 @@ Avoid building a broad platform before one loop is excellent.
 - Block Kit: https://docs.slack.dev/block-kit/
 - Slack app surfaces: https://docs.slack.dev/surfaces/
 - Slack CLI: https://docs.slack.dev/tools/slack-cli/
+- Slack MCP Server: https://docs.slack.dev/ai/mcp-server/
+- Real-time Search API: https://docs.slack.dev/apis/web-api/real-time-search-api
+- Developing agents: https://docs.slack.dev/ai/developing-agents
+- Agent design: https://docs.slack.dev/ai/agent-design/
 
 ## Output style when used
 Map the problem to the four buckets, identify the highest-leverage layer, then

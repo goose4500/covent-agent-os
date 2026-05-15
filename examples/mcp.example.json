@@ -1,7 +1,27 @@
 {
+  "_comment": "Starter MCP config for pi-mom (loaded by pi-mcp-adapter, wired in apps/pi-mom/lib/pi-sdk-runner.mjs). Copy/edit, then either (a) drop the result at ${PI_AGENT_DIR}/mcp.json, (b) base64-encode it into PI_MCP_JSON_B64 for the runner to seed onto the Railway volume on cold boot, or (c) commit a sanitized version at .mcp.json for project-scoped servers. Env-var interpolation uses ${VAR} / $env:VAR — never paste real tokens into git. Lifecycle defaults to lazy (server starts on first tool call). Set directTools per-server to surface specific tools alongside Pi's read/bash/edit/write; otherwise tools stay behind the single `mcp` proxy.",
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10
+  },
   "mcpServers": {
-    "linear": { "command": "example", "args": [] },
-    "slack": { "command": "example", "args": [] },
-    "chrome-devtools": { "command": "example", "args": [] }
+    "context7": {
+      "url": "https://mcp.context7.com/mcp",
+      "lifecycle": "lazy",
+      "directTools": ["resolve-library-id", "query-docs"]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "lifecycle": "lazy"
+    },
+    "slack": {
+      "url": "https://mcp.slack.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "SLACK_MCP_USER_TOKEN",
+      "lifecycle": "lazy",
+      "idleTimeout": 10,
+      "directTools": false
+    }
   }
 }

@@ -26,6 +26,8 @@ const representativeSkills = [
   "slack-thread-summary",
   "slack-meeting-agenda",
   "slack-linear-from-thread",
+  // Slack MCP agent UX skill landed alongside the pi-mcp-adapter wiring.
+  "slack-mcp-agent-ux",
 ];
 
 const agentDir = mkdtempSync(join(tmpdir(), "pi-mom-agent-"));

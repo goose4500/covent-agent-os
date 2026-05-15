@@ -172,6 +172,8 @@ function statusBlocks({ status }) {
     return [section(":satellite_antenna: *Status* — open settings for full bridge configuration.")];
   }
   const linear = status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key";
+  const slackStream = status.slackStreamingAvailable ? ":white_check_mark: streaming ok" : ":warning: streaming unchecked/missing";
+  const browserUse = status.browserUseConfigured ? ":white_check_mark: Browser Use key" : ":warning: Browser Use key missing";
   const subagents = status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled";
   const allowed = status.allowedChannelId ? `\`${status.allowedChannelId}\`` : "any";
   const uptime = Number.isFinite(status.uptimeSeconds) ? `${status.uptimeSeconds}s` : "—";
@@ -179,6 +181,8 @@ function statusBlocks({ status }) {
     section(
       `:satellite_antenna: *Status* · mode \`${status.mode || "?"}\`` +
         ` · allowed channel(s) ${allowed}` +
+        ` · Slack ${slackStream}` +
+        ` · ${browserUse}` +
         ` · Linear ${linear}` +
         ` · team subagents ${subagents}` +
         ` · uptime ${uptime}`,
@@ -231,6 +235,8 @@ export function buildSettingsModalView({ status, prefs } = {}) {
     lines.push(`*Mode*: \`${status.mode || "?"}\``);
     lines.push(`*Allowed channel(s)*: \`${status.allowedChannelId || "any"}\``);
     lines.push(`*Pi model*: \`${status.piModel || "?"}\` (thinking \`${status.piThinking || "?"}\`)`);
+    lines.push(`*Slack streaming*: ${status.slackStreamingAvailable ? ":white_check_mark: client.chatStream available" : ":warning: client.chatStream missing/unchecked"}`);
+    lines.push(`*Browser Use key*: ${status.browserUseConfigured ? ":white_check_mark: configured" : ":warning: missing"}`);
     lines.push(`*Linear*: ${status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key"}`);
     lines.push(`*Team subagents*: ${status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled"}`);
     lines.push(`*Trace*: \`${status.traceEnabled ? "on" : "off"}\``);

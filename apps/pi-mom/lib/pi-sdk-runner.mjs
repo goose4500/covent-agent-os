@@ -74,6 +74,74 @@ function _resolveAgentDir() {
   }
 })();
 
+function isTruthyEnv(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+export function buildSlackMcpConfigFromEnv(env = process.env) {
+  if (!isTruthyEnv(env.SLACK_MCP_ENABLED)) return null;
+  const bearerTokenEnv = env.SLACK_MCP_BEARER_TOKEN_ENV || "SLACK_MCP_USER_TOKEN";
+  const server = {
+    url: env.SLACK_MCP_URL || "https://mcp.slack.com/mcp",
+    lifecycle: env.SLACK_MCP_LIFECYCLE || "lazy",
+    auth: "bearer",
+    bearerTokenEnv,
+    directTools: isTruthyEnv(env.SLACK_MCP_DIRECT_TOOLS),
+  };
+  if (env.SLACK_MCP_IDLE_TIMEOUT_MINUTES) {
+    const idleTimeout = Number(env.SLACK_MCP_IDLE_TIMEOUT_MINUTES);
+    if (Number.isFinite(idleTimeout)) server.idleTimeout = idleTimeout;
+  }
+  return {
+    settings: {
+      toolPrefix: "server",
+    },
+    mcpServers: {
+      slack: server,
+    },
+  };
+}
+
+export function seedMcpJsonFromEnv({ env = process.env, agentDir = _resolveAgentDir(), log = console } = {}) {
+  const mcpPath = _join(agentDir, "mcp.json");
+  if (existsSync(mcpPath)) return { seeded: false, reason: "exists", path: mcpPath };
+
+  let json = "";
+  let source = "";
+  if (env.PI_MCP_JSON_B64) {
+    source = "PI_MCP_JSON_B64";
+    json = _NodeBuffer.from(env.PI_MCP_JSON_B64, "base64").toString("utf-8");
+  } else {
+    const slackMcpConfig = buildSlackMcpConfigFromEnv(env);
+    if (!slackMcpConfig) return { seeded: false, reason: "not-configured", path: mcpPath };
+    source = "SLACK_MCP_ENABLED";
+    json = `${JSON.stringify(slackMcpConfig, null, 2)}\n`;
+  }
+
+  try {
+    JSON.parse(json); // syntax check before writing
+    mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+    writeFileSync(mcpPath, json, { mode: 0o600 });
+    log?.log?.(`✓ Seeded ${mcpPath} from ${source} (${json.length} bytes)`);
+    return { seeded: true, source, path: mcpPath };
+  } catch (err) {
+    log?.error?.(
+      `Failed to seed mcp.json from ${source}: ${err?.message || err}`,
+    );
+    return { seeded: false, reason: "error", source, path: mcpPath, error: err };
+  }
+}
+
+// MCP server config seeder. Mirrors the auth.json pattern: pi-mcp-adapter
+// reads `${PI_AGENT_DIR}/mcp.json` (the "Pi global override" slot in its
+// precedence list — see pi-mcp-adapter/config.ts). On Railway the file
+// doesn't exist on cold boot of a fresh volume, so we materialize it from
+// PI_MCP_JSON_B64 or, when SLACK_MCP_ENABLED=1, from a built-in Slack MCP
+// preset that reads its bearer token from an env var without writing the
+// token into git or disk. We only seed when the file is missing because the
+// adapter persists OAuth/directTools state back into this file.
+seedMcpJsonFromEnv();
+
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -140,8 +208,21 @@ async function loadSubagentsExtension() {
   return mod.default || mod;
 }
 
+// pi-mcp-adapter is the community Pi extension that proxies arbitrary MCP
+// servers through a single `mcp` tool (and optional per-server direct
+// tools). It's loaded inline the same way pi-subagents is — as an in-process
+// extension factory, NOT via `pi install` — so PI_OFFLINE=1 has no effect
+// on it. Server config lives at `${PI_AGENT_DIR}/mcp.json` (seeded above
+// from PI_MCP_JSON_B64 on Railway) or `.mcp.json` / `.pi/mcp.json` for
+// project-scoped servers. See pi-mcp-adapter/README.md for the schema.
+async function loadMcpAdapterExtension() {
+  const mod = await import("pi-mcp-adapter");
+  return mod.default || mod;
+}
+
 export async function buildPiMomExtensionFactories({
   loadSubagents = loadSubagentsExtension,
+  loadMcpAdapter = loadMcpAdapterExtension,
 } = {}) {
   return [
     linearTools,
@@ -150,6 +231,7 @@ export async function buildPiMomExtensionFactories({
     bridgeTools,
     browserUseTools,
     gitCheckpoint,
+    await loadMcpAdapter(),
     await loadSubagents(),
   ];
 }
@@ -159,6 +241,7 @@ export async function buildResourceLoaderOptions({
   agentDir = getAgentDir(),
   env = process.env,
   loadSubagents = loadSubagentsExtension,
+  loadMcpAdapter = loadMcpAdapterExtension,
   resolveWebAccessPaths = resolveWebAccessResourcePaths,
 } = {}) {
   const webAccess = resolveWebAccessPaths();
@@ -170,7 +253,7 @@ export async function buildResourceLoaderOptions({
     // disabled by PI_OFFLINE; the app explicitly loads its own extension
     // factories plus the app-pinned pi-web-access package path.
     noExtensions: true,
-    extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents }),
+    extensionFactories: await buildPiMomExtensionFactories({ env, loadSubagents, loadMcpAdapter }),
     additionalExtensionPaths: [webAccess.extensionPath],
     // Skills are no longer route-gated: repo skills plus pi-web-access skills
     // are always available, and ambient/default skill discovery is allowed.

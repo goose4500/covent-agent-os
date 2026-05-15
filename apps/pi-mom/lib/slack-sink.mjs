@@ -22,7 +22,9 @@
 // DI-friendly: tests inject a fake client.chatStream() returning a
 // minimal { append, stop } object plus a fake timers pair.
 
+import { formatPiFailureForSlack } from "./failure-summary.mjs";
 import { createStreamingRedactor } from "./redaction.mjs";
+import { normalizeSlackMarkdown } from "./slack-format.mjs";
 
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_HEARTBEAT_THRESHOLD_MS = 25_000;
@@ -120,9 +122,15 @@ export function createSlackSink({
     lastActivityMs = now();
   }
 
-  function appendNow(markdown_text) {
+  function appendNow(markdown_text, { normalize = true } = {}) {
     if (!markdown_text) return streamChain;
-    const safeMarkdown = redact(String(markdown_text));
+    const redactedMarkdown = redact(String(markdown_text));
+    const safeMarkdown = normalize
+      ? normalizeSlackMarkdown(redactedMarkdown, {
+          preserveWhitespaceOnly: true,
+          preserveOpenLineTrailingSpace: true,
+        })
+      : redactedMarkdown;
     if (!safeMarkdown) return streamChain;
     // Rotate to a fresh stream before this append if it would push the
     // current stream past Slack's per-message cumulative ceiling. The
@@ -204,7 +212,7 @@ export function createSlackSink({
     if (stopped) return;
     const idle = now() - lastActivityMs;
     if (idle >= heartbeatThresholdMs) {
-      appendNow(ZERO_WIDTH_SPACE);
+      appendNow(ZERO_WIDTH_SPACE, { normalize: false });
       trace("slack.stream_heartbeat", { requestId, idleMs: idle });
     }
     if (surface === "assistant" && typeof setStatus === "function") {
@@ -318,10 +326,9 @@ export function createSlackSink({
     await streamChain;
     if (started && error) {
       try {
+        const failureText = formatPiFailureForSlack({ error, requestId, redact });
         streamChain = streamChain.then(() =>
-          stream.append({
-            markdown_text: `\n\nPi encountered an error (req: ${requestId}). Check the pi-mom terminal for details.`,
-          }),
+          stream.append({ markdown_text: `\n\n${failureText}` }),
         );
         await streamChain;
         if (error && typeof error === "object") error.slackStreamNotified = true;

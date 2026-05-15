@@ -254,7 +254,7 @@ function makeFakeTimers() {
   assert.ok(markdown.includes("final fallback answer"), "final result fallback appended before stop");
 }
 
-// Case 7: stop({error}) appends error chunk + marks error.slackStreamNotified.
+// Case 7: stop({error}) appends a structured, actionable error chunk + marks error.slackStreamNotified.
 {
   const fakeStream = makeFakeStream();
   const client = makeFakeClient({ streamFactory: () => fakeStream });
@@ -264,12 +264,15 @@ function makeFakeTimers() {
     surface: "app_mention", requestId: "req_t7", ...T,
   });
   await sink.start({});
-  const err = new Error("boom");
+  const err = new Error("Pi timed out after 180000ms");
   await sink.stop({ error: err });
   const errAppend = fakeStream.appends.find((a) =>
-    typeof a.markdown_text === "string" && a.markdown_text.includes("Pi encountered an error"),
+    typeof a.markdown_text === "string" && a.markdown_text.includes("Pi run failed"),
   );
-  assert.ok(errAppend, "error chunk appended on failure");
+  assert.ok(errAppend, "structured error chunk appended on failure");
+  assert.match(errAppend.markdown_text, /req_t7/);
+  assert.match(errAppend.markdown_text, /category: `timeout`/);
+  assert.match(errAppend.markdown_text, /try next:/);
   assert.equal(err.slackStreamNotified, true, "error tagged slackStreamNotified");
 }
 

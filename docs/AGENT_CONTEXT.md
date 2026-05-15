@@ -1,7 +1,7 @@
 # Agent Context — Covent Slack/Pi/Linear System
 
 Status: canonical read-first context for agents
-Last updated: 2026-05-14 (default-all Pi tools update)
+Last updated: 2026-05-15 (archive cleanup + validation-command drift fix)
 Parent Linear issue: FE-460
 System-map issue: FE-531
 Foundation-v2 cutover: PR #24, merge commit `1ab169c`
@@ -87,9 +87,9 @@ If stable knowledge only exists in Slack, a Pi session, or a Linear comment, pro
 - [`docs/AGENT_CONTEXT.md`](AGENT_CONTEXT.md) — this file.
 - [`BOUNDARY.md`](../BOUNDARY.md) — authority model, mutation boundaries, and secret/data handling.
 - [`docs/architecture.md`](architecture.md) — post-rebuild architecture (the file tree, route table, flow diagram).
-- [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](runbooks/foundation-v2-cutover-2026-05-12.md) — cutover lifecycle + reusable canary pattern.
+- [`docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md`](archive/runbooks/foundation-v2-cutover-2026-05-12.md) — archived cutover evidence from the 2026-05-12 foundation rebuild.
 - [`apps/pi-mom/lib/routes.mjs`](../apps/pi-mom/lib/routes.mjs) — route labels/instructions/help/status.
-- [`apps/pi-mom/index.mjs`](../apps/pi-mom/index.mjs) — implementation truth (~799 LOC after Stage 10).
+- [`apps/pi-mom/index.mjs`](../apps/pi-mom/index.mjs) — implementation truth for Slack/Bolt request handling.
 - [`apps/pi-mom/lib/*.mjs`](../apps/pi-mom/lib/) — dispatch, routes, pi-sdk-runner, pi-session, slack-sink, slack-ui-context, canvas-sink, subagent sidecar sink, composite-sink, thread-session-map, home-view.
 - [`apps/pi-mom/doctor.mjs`](../apps/pi-mom/doctor.mjs) — non-secret diagnostics.
 - [`apps/pi-mom/manifest.yaml`](../apps/pi-mom/manifest.yaml) — Slack app manifest source.
@@ -99,7 +99,7 @@ If stable knowledge only exists in Slack, a Pi session, or a Linear comment, pro
 - [`extensions/browser-use-tools.ts`](../extensions/browser-use-tools.ts), [`extensions/git-checkpoint.ts`](../extensions/git-checkpoint.ts) — default-on app tools.
 - [Whimsical system map](https://whimsical.com/covent-agent-os-slack-pi-linear-system-map-FhNbKxykWy2gtzshPe8zoe?ref=mcp) — visual orientation layer only.
 
-Treat `docs/history/**` and `docs/research/2026-05-10/**` as evidence/archive, not current instructions.
+Treat `docs/history/**` and `docs/archive/**` as evidence/archive, not current instructions.
 
 ## Runtime behavior map
 
@@ -230,12 +230,11 @@ Parent Pi runs **in-process** via `createAgentSession`. The `team:`/`subagent` w
 From repo root:
 
 ```bash
-bun run secret-scan
 bun run check
 bun run doctor:pi-mom
 ```
 
-`bun run check` includes secret-scan, skill validators, agent validators, all 13 pi-mom test suites, and `tsc --noEmit`.
+`bun run check` currently runs `tsc --noEmit` plus the pi-mom test suites. GitHub Actions runs the full-history Gitleaks scan before `bun run check`; there is no local `bun run secret-scan` script in the current repo.
 
 ## Deployment notes
 
@@ -247,10 +246,10 @@ Environment:    production
 Service:        covent-pi-mom
 Source branch:  main (auto-deploy on push)
 Builder:        Railpack
-Latest deploy:  commit 1ab169c (2026-05-12, post-foundation-rebuild)
+Latest deploy:  verify with Railway (`railway status --json`) because production auto-deploys from `main`
 ```
 
-Canary service `covent-pi-mom-v2` is currently `down`; it's a hot rollback target for ~24h post-cutover. Restore with `railway up --service covent-pi-mom-v2`.
+Canary service `covent-pi-mom-v2` was the 2026-05-12 cutover canary. Verify current Railway state before using it for any rollback experiment.
 
 Production and git should not diverge. If deployed behavior changes, commit and push to `main` after validation; Railway auto-deploys on push.
 

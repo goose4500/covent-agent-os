@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
   buildPiMomExtensionFactories,
   buildResourceLoaderOptions,
+  buildSlackMcpConfigFromEnv,
   createRunner,
   resolvePiWorkdir,
   resolveProjectSkillsDir,
   resolveWebAccessResourcePaths,
+  seedMcpJsonFromEnv,
   subagentsEnabledFromEnv,
   webAccessEnabledFromEnv,
 } from "./lib/pi-sdk-runner.mjs";
@@ -301,32 +305,39 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(resolvePiWorkdir({ PI_WORKDIR: "/workspace", HOME: "/root" }, "/app/apps/pi-mom"), "/workspace");
 }
 
-// Case 10: subagents and web access are default-on; app factories load all app extensions.
+// Case 10: subagents, web access, and MCP adapter are default-on; app factories load every app extension.
 {
   assert.equal(subagentsEnabledFromEnv({}), true, "subagents enabled by default");
   assert.equal(subagentsEnabledFromEnv({ PI_MOM_SUBAGENTS_ENABLED: "false" }), true, "env no longer disables subagents");
   assert.equal(webAccessEnabledFromEnv({}), true, "web access enabled by default");
   assert.equal(webAccessEnabledFromEnv({ PI_MOM_WEB_ACCESS_ENABLED: "false" }), true, "env no longer disables web access");
 
-  let loadCalls = 0;
+  let subagentLoads = 0;
+  let mcpLoads = 0;
   const fakeSubagentExtension = function fakeSubagentExtension() {};
-  const loadSubagents = async () => { loadCalls += 1; return fakeSubagentExtension; };
+  const fakeMcpAdapter = function fakeMcpAdapter() {};
+  const loadSubagents = async () => { subagentLoads += 1; return fakeSubagentExtension; };
+  const loadMcpAdapter = async () => { mcpLoads += 1; return fakeMcpAdapter; };
 
-  const factories = await buildPiMomExtensionFactories({ loadSubagents });
-  assert.equal(factories.length, 7, "default factories: Linear + Slack UI + Slack canvas + bridge + Browser Use + git checkpoint + subagents");
-  assert.equal(factories[factories.length - 1], fakeSubagentExtension, "subagents factory is default-on (last)");
-  assert.equal(loadCalls, 1, "imports pi-subagents exactly once for this loader build");
+  const factories = await buildPiMomExtensionFactories({ loadSubagents, loadMcpAdapter });
+  assert.equal(factories.length, 8, "default factories: Linear + Slack UI + Slack canvas + bridge + Browser Use + git checkpoint + pi-mcp-adapter + subagents");
+  assert.equal(factories[6], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
+  assert.equal(factories[7], fakeSubagentExtension, "subagents factory remains default-on (last)");
+  assert.equal(subagentLoads, 1, "imports pi-subagents exactly once for this loader build");
+  assert.equal(mcpLoads, 1, "imports pi-mcp-adapter exactly once for this loader build");
 }
 
 // Case 11: default resource loader makes app-approved extensions and skills default-on.
 {
   const fakeSubagentExtension = function fakeSubagentExtension() {};
+  const fakeMcpAdapter = function fakeMcpAdapter() {};
   const paths = resolveWebAccessResourcePaths();
   const options = await buildResourceLoaderOptions({
     cwd: "/tmp/pi-mom-test",
     agentDir: "/tmp/pi-agent-test",
     env: { PI_MOM_SUBAGENTS_ENABLED: "false", PI_MOM_WEB_ACCESS_ENABLED: "false" },
     loadSubagents: async () => fakeSubagentExtension,
+    loadMcpAdapter: async () => fakeMcpAdapter,
   });
   assert.equal(options.cwd, "/tmp/pi-mom-test");
   assert.equal(options.agentDir, "/tmp/pi-agent-test");
@@ -336,8 +347,9 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(options.noPromptTemplates, false);
   assert.equal(options.noThemes, false);
   assert.equal(options.noContextFiles, false);
-  assert.equal(options.extensionFactories.length, 7);
-  assert.equal(options.extensionFactories[options.extensionFactories.length - 1], fakeSubagentExtension);
+  assert.equal(options.extensionFactories.length, 8);
+  assert.equal(options.extensionFactories[6], fakeMcpAdapter);
+  assert.equal(options.extensionFactories[7], fakeSubagentExtension);
   assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
 }
 
@@ -378,6 +390,7 @@ function fakeAssistantErrorMessage(message) {
       "browser_use_run",
       "subagent",
       "web_search", "fetch_content", "get_search_content", "code_search",
+      "mcp",
     ]) {
       assert.ok(registeredTools.has(tool), `registered default-on tool: ${tool}`);
     }
@@ -386,6 +399,50 @@ function fakeAssistantErrorMessage(message) {
   } finally {
     if (previousChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
     else process.env.PI_SUBAGENT_CHILD = previousChild;
+  }
+}
+
+// Case 14: Slack MCP preset is opt-in and stores only an env-var reference.
+{
+  assert.equal(buildSlackMcpConfigFromEnv({}), null, "Slack MCP preset is disabled by default");
+  const config = buildSlackMcpConfigFromEnv({
+    SLACK_MCP_ENABLED: "1",
+    SLACK_MCP_BEARER_TOKEN_ENV: "MY_SLACK_MCP_TOKEN",
+    SLACK_MCP_DIRECT_TOOLS: "true",
+    SLACK_MCP_IDLE_TIMEOUT_MINUTES: "7",
+  });
+  assert.equal(config.mcpServers.slack.url, "https://mcp.slack.com/mcp");
+  assert.equal(config.mcpServers.slack.auth, "bearer");
+  assert.equal(config.mcpServers.slack.bearerTokenEnv, "MY_SLACK_MCP_TOKEN");
+  assert.equal(config.mcpServers.slack.directTools, true);
+  assert.equal(config.mcpServers.slack.idleTimeout, 7);
+  assert.equal(JSON.stringify(config).includes("xox"), false, "preset must not embed Slack token values");
+}
+
+// Case 15: mcp.json seeding honors PI_MCP_JSON_B64 first, otherwise uses Slack MCP preset.
+{
+  const agentDir = mkdtempSync(join(tmpdir(), "pi-mom-mcp-seed-"));
+  try {
+    const seeded = seedMcpJsonFromEnv({
+      agentDir,
+      env: { SLACK_MCP_ENABLED: "true", SLACK_MCP_BEARER_TOKEN_ENV: "SLACK_MCP_TOKEN" },
+      log: { log() {}, error() {} },
+    });
+    assert.equal(seeded.seeded, true);
+    assert.equal(seeded.source, "SLACK_MCP_ENABLED");
+    const written = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8"));
+    assert.equal(written.mcpServers.slack.url, "https://mcp.slack.com/mcp");
+    assert.equal(written.mcpServers.slack.bearerTokenEnv, "SLACK_MCP_TOKEN");
+
+    const skipped = seedMcpJsonFromEnv({
+      agentDir,
+      env: { PI_MCP_JSON_B64: Buffer.from('{"mcpServers":{}}').toString("base64") },
+      log: { log() {}, error() {} },
+    });
+    assert.equal(skipped.seeded, false, "existing mcp.json is never overwritten");
+    assert.equal(skipped.reason, "exists");
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
   }
 }
 

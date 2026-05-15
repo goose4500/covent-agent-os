@@ -10,13 +10,12 @@
 
 ```bash
 bun install                    # workspace install
-bun run check                  # secret-scan + skill/agent validators + pi-mom tests + tsc --noEmit
+bun run check                  # tsc --noEmit + pi-mom test suites
 bun run doctor                 # alias for doctor:pi-mom
 bun run doctor:pi-mom          # non-secret readiness diagnostics
 bun run dev:pi-mom             # run the Slack bridge locally
 bun run install:pi             # required if pi is not already on PATH; team/subagent child runs use it
 bun run typecheck              # tsc --noEmit
-bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 ```
 
 `npm` works in compat mode via bun, but the canonical runtime is **bun 1.3+**. The package.json's `"engines": {"bun": ">=1.3.0"}` field is the source of truth.
@@ -30,8 +29,6 @@ bun run secret-scan            # scripts/secret-scan.sh (gitleaks + rg patterns)
 - `lib/` — shared JavaScript helpers (legacy; most logic now in `apps/pi-mom/lib/`).
 - `skills/` — Pi skills.
 - `agents/` — subagent definitions.
-- `packages/pi-chrome-access/` — local Chrome/DevTools Pi package.
-- `packages/pi-ext-covent-aws/` — EC2 operator extension scaffolding (not yet wired into prod).
 - `docs/` — architecture, ADRs, runbooks, specs, source-of-truth notes, historical research.
 
 ## Local Slack testing
@@ -45,10 +42,10 @@ If Pi credentials aren't seeded locally (`~/.pi/agent/auth.json`), the SDK will 
 
 ## Syncing from `~/.pi/agent` (historical)
 
-The repo was originally bootstrapped by copying state from `~/.pi/agent/pi-mom/`. That migration is complete; `MIGRATION_MAP.md` documents the one-time copy. The sync scripts under `scripts/` are kept for evidence but should not be re-run — this repo is now the canonical source.
+The repo was originally bootstrapped by copying state from `~/.pi/agent/pi-mom/`. That migration is complete; the archived [`docs/archive/root/migration-map.md`](docs/archive/root/migration-map.md) documents the one-time copy. This repo is now the canonical source.
 
 ## Production deploy
 
-Production runs on Railway. The bridge auto-deploys from `main`. See [`README.md`](README.md) and [`docs/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/runbooks/foundation-v2-cutover-2026-05-12.md) for the deploy lifecycle.
+Production runs on Railway. The bridge auto-deploys from `main`. See [`README.md`](README.md) for the current deploy shape; the 2026-05-12 cutover record is archived at [`docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md`](docs/archive/runbooks/foundation-v2-cutover-2026-05-12.md).
 
 Do not run `bun run dev:pi-mom` locally against production Slack tokens unless you intentionally want a local instance to hold the Socket Mode connection (which kicks the Railway worker off).
