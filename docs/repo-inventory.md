@@ -1,6 +1,6 @@
 # Repo inventory
 
-> **Status (2026-05-14):** current pi-mom inventory. `covent-pi-mom` is live in production. See `docs/architecture.md` for the canonical architecture.
+> **Status (2026-05-15):** current pi-mom inventory. `covent-pi-mom` is live in production. See `docs/architecture.md` for the canonical architecture.
 
 ## What's in this repo
 
@@ -9,7 +9,7 @@
 - `README.md` — repo overview + quick start + production deploy table.
 - `BOUNDARY.md` — authority model, mutation boundaries, and secret/data handling.
 - `LOCAL_DX.md` — local development commands.
-- `MIGRATION_MAP.md` — historical bootstrap evidence (the `~/.pi/agent` → repo copy).
+- `docs/archive/root/migration-map.md` — archived bootstrap evidence (the `~/.pi/agent` → repo copy).
 
 ### `apps/pi-mom/` — the Slack bridge (production)
 
@@ -45,30 +45,20 @@ Legacy shared helpers from the bootstrap; most production logic has since moved 
 
 Subagent definitions and Pi skills. `.agents/team-*.md` are used by the default-on Slack `team:` subagent workflow.
 
-### `packages/`
-
-- `pi-chrome-access/` — Chrome/DevTools Pi package.
-- `pi-ext-covent-aws/` — EC2 operator extension scaffolding (not yet wired into production).
-
 ### `docs/`
 
 - `architecture.md` — **canonical current architecture.**
 - `SYSTEM_INDEX.md` — system-wide source-of-truth map.
 - `AGENT_CONTEXT.md` — read-first context for future agents.
 - `adr/` — architecture decision records (0001–0004).
-- `runbooks/` — operational runbooks (foundation-v2 cutover, Slack MCP setup, EC2 Pi agent machine, branch protection, historical known-good).
-- `specs/` — design specs and historical/deprecated registry note.
-- `source-of-truth/` — strategic operating-model docs.
+- `runbooks/` — active operational runbooks (Slack MCP setup, branch protection).
+- `specs/` — active design specs.
 - `history/` — evidence/recovery context only.
-- `research/2026-05-10/` — archived foundation-rebuild scoping research.
+- `archive/` — archived/superseded docs, research, old runbooks, old specs, and stale skills. Do not use as current instructions.
 
 ### `scripts/`
 
-- `secret-scan.sh` — pre-commit secret scan (gitleaks + rg patterns).
-- `validate-skills.mjs`, `validate-agents.mjs` — frontmatter validators.
-- `scaffold-agent.mjs` — agent scaffolder.
 - `install-local.sh` — install repo as a Pi package for local harness experiments.
-- `sync-from-live-pi.sh` — **historical** one-time migration script; do not re-run.
 
 ## Excluded
 
@@ -78,4 +68,4 @@ Subagent definitions and Pi skills. `.agents/team-*.md` are used by the default-
 - Pi sessions/transcripts/raw JSONL.
 - Logs, pidfiles, generated images, browser profiles/cookies.
 
-See `MIGRATION_MAP.md` and `.gitignore`.
+See [`docs/archive/root/migration-map.md`](archive/root/migration-map.md) and `.gitignore`.

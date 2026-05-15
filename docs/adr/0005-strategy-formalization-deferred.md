@@ -36,11 +36,11 @@ When two of these four are true, reopen #41 and #42 with current code references
 
 **Accepted as a trade-off:**
 
-- The `Action / Run / Approval / Artifact` vocabulary stays in `README.md` and `BOUNDARY.md`, not in code. Adding a new route is editing `ROUTES` in `index.mjs`, not a YAML edit.
+- The `Action / Run / Approval / Artifact` vocabulary stays in `README.md` and `BOUNDARY.md`, not in code. Adding a new route is editing `apps/pi-mom/lib/routes.mjs`, not a YAML edit.
 - Adding a new policy gate to a single route requires editing `pi-sdk-runner.mjs:175` (which applies to every route) and gating inside the extension on `event.toolName` or route context. This is more friction than registry-driven `extensions:` arrays would be.
 - All Pi-backed Slack routes now ship the full registered tool/skill/app-extension surface by default. Trust perimeter is `SLACK_ALLOWED_CHANNEL_ID` + Codex sign-in + explicit user intent. PR #47's audit identified this blast-radius trade-off; we explicitly accept it at the current scale.
 - `extensions/env-guard.ts`, `linear-mcp-guard.ts`, `slack-mcp-guard.ts`, and `permission-gate.ts` are all gone. Restoring any of them requires fetching from git history and re-deriving the wiring.
-- Secret/skill/agent validation remains covered by the current `bun run check` path; keep it green before merging.
+- Current local validation is `bun run check` (TypeScript typecheck + pi-mom tests). GitHub Actions runs Gitleaks before `bun run check`; skill/agent validator scripts are no longer part of the repo.
 - Pi-mom explicitly loads app-approved extension factories/paths in `pi-sdk-runner.mjs`; route-specific safety extensions are gone.
 
 **Preserved in this round:**

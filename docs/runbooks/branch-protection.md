@@ -2,7 +2,7 @@
 
 CI checks are only protective if they are *required*. Without a branch protection
 rule, anyone with push access to `goose4500/covent-agent-os` can push directly
-to `main` and bypass `npm run check` entirely.
+to `main` and bypass `bun run check` entirely.
 
 This runbook documents the protection ruleset that should be applied to `main`
 and how to (re)apply it.
@@ -15,7 +15,7 @@ and how to (re)apply it.
 | Required approving reviews | 1 | At a 5-10 person team, anything more is friction without payoff |
 | Dismiss stale approvals on new commits | yes | A force-push/amend invalidates prior review |
 | Require status checks to pass before merging | yes | The whole point |
-| Required status check contexts | `Check (lint, validators, typecheck, secrets)`, `Test packages/pi-ext-covent-aws (bun)` | Both jobs from `.github/workflows/ci.yml` |
+| Required status check contexts | `Check (lint, validators, typecheck, secrets)` | The single current CI job from `.github/workflows/ci.yml`; despite the historical name, it runs Gitleaks plus `bun run check` |
 | Require branches to be up to date before merging | yes | Prevents merging stale PRs that pass against an older `main` |
 | Require conversation resolution before merging | yes | Forces explicit closure on review feedback |
 | Block force pushes | yes | History integrity |
@@ -30,7 +30,6 @@ The fastest path. Run from the repo root after authenticating with `gh auth logi
 gh api -X PUT repos/goose4500/covent-agent-os/branches/main/protection \
   -F required_status_checks[strict]=true \
   -F 'required_status_checks[contexts][]=Check (lint, validators, typecheck, secrets)' \
-  -F 'required_status_checks[contexts][]=Test packages/pi-ext-covent-aws (bun)' \
   -F enforce_admins=true \
   -F required_pull_request_reviews[required_approving_review_count]=1 \
   -F required_pull_request_reviews[dismiss_stale_reviews]=true \
@@ -54,7 +53,7 @@ If the CLI is unavailable:
 1. https://github.com/goose4500/covent-agent-os/settings/branches
 2. Add rule, branch name pattern `main`
 3. Toggle each row in the table above
-4. Under "Status checks that are required" search for and add both job names
+4. Under "Status checks that are required" search for and add the current CI job name: `Check (lint, validators, typecheck, secrets)`
 5. Save changes
 
 ## When required check names change
