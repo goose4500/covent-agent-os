@@ -313,8 +313,8 @@ function fakeAssistantErrorMessage(message) {
   const loadSubagents = async () => { loadCalls += 1; return fakeSubagentExtension; };
 
   const factories = await buildPiMomExtensionFactories({ loadSubagents });
-  assert.equal(factories.length, 5, "default factories: Linear + Slack UI + Browser Use + git checkpoint + subagents");
-  assert.equal(factories[4], fakeSubagentExtension, "subagents factory is default-on");
+  assert.equal(factories.length, 7, "default factories: Linear + Slack UI + Slack canvas + bridge + Browser Use + git checkpoint + subagents");
+  assert.equal(factories[factories.length - 1], fakeSubagentExtension, "subagents factory is default-on (last)");
   assert.equal(loadCalls, 1, "imports pi-subagents exactly once for this loader build");
 }
 
@@ -336,8 +336,8 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(options.noPromptTemplates, false);
   assert.equal(options.noThemes, false);
   assert.equal(options.noContextFiles, false);
-  assert.equal(options.extensionFactories.length, 5);
-  assert.equal(options.extensionFactories[4], fakeSubagentExtension);
+  assert.equal(options.extensionFactories.length, 7);
+  assert.equal(options.extensionFactories[options.extensionFactories.length - 1], fakeSubagentExtension);
   assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
 }
 

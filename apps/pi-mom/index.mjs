@@ -407,8 +407,12 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     });
   }
 
+  // Always use the composite-sink even with a single child sink so that
+  // ctx.ui.startCanvas (slack_canvas_start tool) can attach a canvas-sink
+  // to the live event fan partway through the turn.
   const eventSinks = [slackSink, canvasSink, subagentCanvasSidecarSink].filter(Boolean);
-  const sink = eventSinks.length > 1 ? createCompositeSink(eventSinks) : slackSink;
+  const compositeSink = createCompositeSink(eventSinks);
+  const sink = compositeSink;
 
   // Stage 6: per-turn slack UI context for ctx.ui.{confirm,select,input,notify,setStatus}.
   // The Bolt action/view handlers consult pendingApprovals to resolve the
@@ -423,6 +427,18 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     surface: mode,
     assistantSetStatus: utilities?.setStatus,
     trace,
+    // Canvas plumbing — slack_canvas_start tool calls ctx.ui.startCanvas,
+    // which creates a canvas-sink via this factory and adds it to the
+    // composite-sink so subsequent text deltas mirror into the canvas.
+    compositeSink,
+    createCanvasSinkFn: createCanvasSink,
+    teamId,
+    accessUserIds: user ? [user] : [],
+    redact: redactSensitiveText,
+    // Bridge introspection — bridge_help / bridge_status tools call these
+    // closures to surface live bridge state to the model.
+    bridgeHelp: () => formatHelp(),
+    bridgeStatus: () => formatStatus(client),
   });
 
   const initialText = `👀 Covent Pi is thinking… (req: ${requestId})\n\n`;
