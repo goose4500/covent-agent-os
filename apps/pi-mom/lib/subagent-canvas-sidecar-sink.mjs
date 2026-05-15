@@ -598,12 +598,19 @@ export function createSubagentCanvasSidecarSink({
           enqueue(() => flushChild(child));
         }, rateLimitBackoffMs);
       } else {
+        const code = err?.data?.error || err?.code;
         traceSoft("subagent_canvas.replace_failed", {
           canvasId: child.canvasId,
           agent: child.agent,
           index: child.index,
-          error: err?.data?.error || err?.message || "unknown",
+          error: code || err?.message || "unknown",
         });
+        // Slack signals the canvas can't be edited (deleted, locked, or
+        // entered a bad state). Disable further writes so stop() and
+        // timer-triggered retries don't keep hitting the same broken canvas.
+        if (code === "canvas_editing_failed" || code === "not_found" || code === "invalid_canvas") {
+          child.disabled = true;
+        }
       }
     } finally {
       child.busy = false;

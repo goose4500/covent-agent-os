@@ -34,7 +34,23 @@
 //      modal cannot wedge the next turn.
 
 const DEFAULT_NOTIFY_ICONS = { info: "ℹ️", warning: "⚠️", error: "🛑" };
-const NOOP_THEME = Object.freeze({ name: "slack" });
+// pi-mcp-adapter calls ui.theme.fg/bg/bold etc. to style status-bar text.
+// The headless Slack context has no terminal, so every method is a pass-through.
+const NOOP_THEME = Object.freeze({
+  name: "slack",
+  fg: (_color, text) => String(text ?? ""),
+  bg: (_color, text) => String(text ?? ""),
+  bold: (text) => String(text ?? ""),
+  italic: (text) => String(text ?? ""),
+  underline: (text) => String(text ?? ""),
+  inverse: (text) => String(text ?? ""),
+  strikethrough: (text) => String(text ?? ""),
+  getFgAnsi: () => "",
+  getBgAnsi: () => "",
+  getColorMode: () => "truecolor",
+  getThinkingBorderColor: () => (str) => String(str ?? ""),
+  getBashModeBorderColor: () => (str) => String(str ?? ""),
+});
 
 const NOT_CANVAS_BOUND_HINT =
   "Slack canvas is unavailable in this turn (no Slack channel context, or this is a non-Slack surface).";

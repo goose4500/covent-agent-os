@@ -1,9 +1,9 @@
 // Tests for extensions/linear-tools.ts.
 //
-// The factory registers THREE tools: linear_search_issues,
-// linear_create_issue, linear_add_comment. Tests inject a fake `pi`
-// ExtensionAPI + a fake fetch + an env snapshot, then drive each tool's
-// execute() with crafted GraphQL responses.
+// The factory registers FOUR tools: linear_list_teams,
+// linear_search_issues, linear_create_issue, linear_add_comment. Tests
+// inject a fake `pi` ExtensionAPI + a fake fetch + an env snapshot, then
+// drive each tool's execute() with crafted GraphQL responses.
 
 import assert from "node:assert/strict";
 import { createLinearToolsFactory } from "../../extensions/linear-tools.ts";
@@ -65,21 +65,28 @@ function makeFakeFetch(handler, recorded = []) {
   };
 }
 
-// Case 1: factory registers exactly three tools with the expected names.
+// Case 1: factory registers exactly four tools with the expected names.
 {
   const fakePi = makeFakePi();
   createLinearToolsFactory({ env: baseEnv })(fakePi);
-  assert.equal(fakePi.registered.length, 3, "three tools registered");
+  assert.equal(fakePi.registered.length, 4, "four tools registered");
   assert.deepEqual(
     fakePi.registered.map((t) => t.name).sort(),
-    ["linear_add_comment", "linear_create_issue", "linear_search_issues"],
+    ["linear_add_comment", "linear_create_issue", "linear_list_teams", "linear_search_issues"],
   );
   const create = findTool(fakePi, "linear_create_issue");
   assert.deepEqual(create.parameters.required, ["title", "description"]);
+  // team_id and project_id MUST be optional so the env-default flow keeps working.
+  assert.ok(!create.parameters.required.includes("team_id"), "team_id is optional");
+  assert.ok(!create.parameters.required.includes("project_id"), "project_id is optional");
   const search = findTool(fakePi, "linear_search_issues");
   assert.deepEqual(search.parameters.required, ["query"]);
+  assert.ok(!search.parameters.required.includes("team_id"), "search team_id is optional");
   const comment = findTool(fakePi, "linear_add_comment");
   assert.deepEqual(comment.parameters.required, ["issue_id", "body"]);
+  const teams = findTool(fakePi, "linear_list_teams");
+  // linear_list_teams takes no required params.
+  assert.deepEqual(teams.parameters.required ?? [], []);
 }
 
 // Case 2: linear_create_issue happy path.
@@ -233,10 +240,10 @@ function makeFakeFetch(handler, recorded = []) {
   assert.match(r.content[0].text, /not found/i);
 }
 
-// Case 9: all three tools surface missing LINEAR_API_KEY as isError.
+// Case 9: all four tools surface missing LINEAR_API_KEY as isError.
 {
   const envNoKey = { ...baseEnv, LINEAR_API_KEY: undefined };
-  for (const name of ["linear_search_issues", "linear_create_issue", "linear_add_comment"]) {
+  for (const name of ["linear_list_teams", "linear_search_issues", "linear_create_issue", "linear_add_comment"]) {
     const fakePi = makeFakePi();
     createLinearToolsFactory({ env: envNoKey })(fakePi);
     const tool = findTool(fakePi, name);
@@ -244,14 +251,16 @@ function makeFakeFetch(handler, recorded = []) {
       ? { title: "t", description: "d" }
       : name === "linear_add_comment"
         ? { issue_id: "abc", body: "b" }
-        : { query: "q" };
+        : name === "linear_list_teams"
+          ? {}
+          : { query: "q" };
     const r = await tool.execute("x", args, undefined, undefined, {});
     assert.equal(r.isError, true, `${name} returns isError when API key missing`);
     assert.match(r.content[0].text, /LINEAR_API_KEY/);
   }
 }
 
-// Case 10: AbortSignal aborts all three tools with a clear message.
+// Case 10: AbortSignal aborts all four tools with a clear message.
 {
   const fakeFetch = async (_url, init) => {
     if (init?.signal?.aborted) {
@@ -259,7 +268,7 @@ function makeFakeFetch(handler, recorded = []) {
     }
     throw new Error("should not reach");
   };
-  for (const name of ["linear_search_issues", "linear_create_issue", "linear_add_comment"]) {
+  for (const name of ["linear_list_teams", "linear_search_issues", "linear_create_issue", "linear_add_comment"]) {
     const fakePi = makeFakePi();
     createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
     const tool = findTool(fakePi, name);
@@ -268,7 +277,9 @@ function makeFakeFetch(handler, recorded = []) {
       ? { title: "t", description: "d" }
       : name === "linear_add_comment"
         ? { issue_id: "11111111-2222-3333-4444-555555555555", body: "b" }
-        : { query: "q" };
+        : name === "linear_list_teams"
+          ? {}
+          : { query: "q" };
     const r = await tool.execute("x", args, ac.signal, undefined, {});
     assert.equal(r.isError, true);
     assert.match(r.content[0].text, /aborted/i);
@@ -287,6 +298,155 @@ function makeFakeFetch(handler, recorded = []) {
   assert.equal(r.isError, true);
   assert.ok(!r.content[0].text.includes("LEAKAGE"), "secret redacted in error path");
   assert.match(r.content[0].text, /\[REDACTED\]/);
+}
+
+// Case 12: linear_list_teams returns the four real Covent teams and caches.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const teamsPayload = {
+    data: {
+      teams: {
+        nodes: [
+          { id: "c0c3d247-e279-4928-b27c-ce1d32c33dce", key: "RND", name: "Research and Development", description: "Ideas + experiments" },
+          { id: "a932029a-3599-4324-81e4-88244a5e9cbf", key: "HIS", name: "Historical Data", description: null },
+          { id: "c9c8376e-7fd3-4921-9996-8c98fc2274f2", key: "FE", name: "Frontend Engineering", description: "UI + UX" },
+          { id: "73c38bb9-46d4-45c6-a970-6800214a15a2", key: "BE", name: "Backend Engineering", description: "API + data pipeline" },
+        ],
+      },
+    },
+  };
+  const fakeFetch = makeFakeFetch(() => ({ payload: teamsPayload }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const teams = findTool(fakePi, "linear_list_teams");
+  const r1 = await teams.execute("tc12a", {}, undefined, undefined, {});
+  assert.equal(r1.isError, undefined);
+  assert.equal(r1.details.teams.length, 4);
+  const teamKeys = r1.details.teams.map((t) => t.key).sort();
+  assert.deepEqual(teamKeys, ["BE", "FE", "HIS", "RND"]);
+  const beTeam = r1.details.teams.find((t) => t.key === "BE");
+  assert.equal(beTeam.id, "73c38bb9-46d4-45c6-a970-6800214a15a2");
+  assert.equal(r1.details.cached, false, "first call is not cached");
+  assert.equal(calls.length, 1);
+
+  // Second call should hit the cache, not the network.
+  const r2 = await teams.execute("tc12b", {}, undefined, undefined, {});
+  assert.equal(r2.isError, undefined);
+  assert.equal(r2.details.cached, true, "second call returns cached payload");
+  assert.equal(calls.length, 1, "no extra network call when cached");
+  assert.match(r2.content[0].text, /cached/);
+}
+
+// Case 13: linear_create_issue with explicit team_id overrides env default.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_be_1", identifier: "BE-1", title: "Backend bug", url: "https://linear.app/x/issue/BE-1" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const beTeamId = "73c38bb9-46d4-45c6-a970-6800214a15a2";
+  const r = await create.execute(
+    "tc13",
+    { title: "Backend bug", description: "API returns 500", team_id: beTeamId, project_id: "proj-be-1" },
+    undefined,
+    undefined,
+    {},
+  );
+  assert.equal(r.isError, undefined);
+  assert.equal(r.details.identifier, "BE-1");
+  assert.equal(r.details.teamId, beTeamId, "details echo the explicit team_id");
+  assert.equal(r.details.projectId, "proj-be-1", "details echo the explicit project_id");
+  // Verify the payload that went over the wire used the BE team, not env default.
+  const input = calls[0].body.variables.input;
+  assert.equal(input.teamId, beTeamId, "Linear input.teamId uses explicit team_id");
+  assert.equal(input.projectId, "proj-be-1", "Linear input.projectId uses explicit project_id");
+  // stateId should NOT be applied because team_id != LINEAR_TEAM_ID (state IDs are team-scoped).
+  assert.equal(input.stateId, undefined, "env LINEAR_STATE_ID is NOT forwarded when team_id differs from LINEAR_TEAM_ID");
+}
+
+// Case 14: linear_create_issue with no team_id uses env default + env state.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_2", identifier: "FE-2", title: "T", url: "https://linear.app/x/issue/FE-2" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc14", { title: "T", description: "D" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  const input = calls[0].body.variables.input;
+  assert.equal(input.teamId, "team-abc", "falls back to LINEAR_TEAM_ID env var");
+  assert.equal(input.projectId, "project-xyz", "falls back to LINEAR_PROJECT_ID env var");
+  assert.equal(input.stateId, "state-backlog", "applies LINEAR_STATE_ID env var because team matches default");
+  assert.equal(r.details.teamId, "team-abc");
+  assert.equal(r.details.projectId, "project-xyz");
+}
+
+// Case 15: linear_create_issue with no team_id and no LINEAR_TEAM_ID env errors out.
+{
+  const envNoTeam = { ...baseEnv, LINEAR_TEAM_ID: undefined };
+  const fakePi = makeFakePi();
+  createLinearToolsFactory({ env: envNoTeam })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc15", { title: "T", description: "D" }, undefined, undefined, {});
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /team_id/);
+  assert.match(r.content[0].text, /linear_list_teams/);
+}
+
+// Case 16: linear_search_issues with explicit team_id overrides env default.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: { data: { issues: { nodes: [] } } },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const search = findTool(fakePi, "linear_search_issues");
+  const beTeamId = "73c38bb9-46d4-45c6-a970-6800214a15a2";
+  const r = await search.execute("tc16", { query: "bug", team_id: beTeamId }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  assert.equal(calls[0].body.variables.filter.team.id.eq, beTeamId, "search filters by explicit team_id");
+  assert.equal(r.details.teamId, beTeamId);
+}
+
+// Case 17: linear_create_issue with project_id="" opts out of env default project.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(() => ({
+    payload: {
+      data: {
+        issueCreate: {
+          success: true,
+          issue: { id: "i_np", identifier: "FE-3", title: "T", url: "https://linear.app/x/issue/FE-3" },
+        },
+      },
+    },
+  }), calls);
+  createLinearToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const create = findTool(fakePi, "linear_create_issue");
+  const r = await create.execute("tc17", { title: "T", description: "D", project_id: "" }, undefined, undefined, {});
+  assert.equal(r.isError, undefined);
+  const input = calls[0].body.variables.input;
+  assert.equal(input.projectId, undefined, "empty project_id opts out of env default");
 }
 
 console.log("linear-tools tests passed");
