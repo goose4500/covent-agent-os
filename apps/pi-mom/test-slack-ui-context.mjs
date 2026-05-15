@@ -557,4 +557,97 @@ function makeTimerHarness() {
   assert.equal(await pending, undefined);
 }
 
+// Case 20: postFile uploads via filesUploadV2 with thread_ts + initial_comment;
+// no follow-up message when regeneratePrompt is omitted.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const uploads = [];
+  client.filesUploadV2 = async (args) => {
+    uploads.push(args);
+    return { ok: true, files: [{ id: "F123", files: [{ id: "F123", permalink: "https://slack/F123" }] }] };
+  };
+  const pendingApprovals = new Map();
+  const traces = [];
+  const ui = createSlackUIContext({
+    client, channel: "C20", threadTs: "20.0",
+    requestId: "req_p20", pendingApprovals,
+    trace: (event, data) => traces.push({ event, data }),
+  });
+
+  const result = await ui.postFile("sales.csv", "/tmp/sales.csv", "text/csv");
+  assert.equal(result.ok, true);
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].channel_id, "C20");
+  assert.equal(uploads[0].thread_ts, "20.0");
+  assert.equal(uploads[0].file, "/tmp/sales.csv");
+  assert.equal(uploads[0].filename, "sales.csv");
+  assert.match(uploads[0].initial_comment, /sales\.csv/);
+  assert.equal(client.postMessages.length, 0, "no follow-up when no regenerate prompt");
+  assert.ok(traces.some((t) => t.event === "slack_ui.postFile"));
+}
+
+// Case 21: postFile with regeneratePrompt posts a follow-up actions row carrying the prompt.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  client.filesUploadV2 = async () => ({ ok: true, files: [{ id: "F2", files: [{ id: "F2" }] }] });
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C21", threadTs: "21.0",
+    requestId: "req_p21", pendingApprovals,
+  });
+
+  const result = await ui.postFile("schema.ts", "/tmp/schema.ts", "text/plain", {
+    description: "Initial Postgres schema",
+    regeneratePrompt: "generate a Postgres schema for users and sessions",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(client.postMessages.length, 1, "one follow-up posted");
+  const followup = client.postMessages[0];
+  assert.equal(followup.channel, "C21");
+  assert.equal(followup.thread_ts, "21.0");
+  const actions = followup.blocks.find((b) => b.type === "actions");
+  assert.ok(actions, "actions block present");
+  const regen = actions.elements.find((e) => e.action_id === "pi_run_regenerate");
+  assert.ok(regen, "regenerate button present");
+  assert.equal(regen.value, "generate a Postgres schema for users and sessions");
+  assert.ok(actions.block_id.startsWith("pi_artifact_"), "block_id namespaced");
+}
+
+// Case 22: postFile fail-soft when filesUploadV2 throws — returns { ok:false } and traces.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  client.filesUploadV2 = async () => { throw Object.assign(new Error("network"), { data: { error: "file_uploads_blocked" } }); };
+  const pendingApprovals = new Map();
+  const traces = [];
+  const ui = createSlackUIContext({
+    client, channel: "C22", threadTs: "22.0",
+    requestId: "req_p22", pendingApprovals,
+    trace: (event, data) => traces.push({ event, data }),
+  });
+
+  const result = await ui.postFile("x.txt", "/tmp/x.txt");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "file_uploads_blocked");
+  assert.ok(traces.some((t) => t.event === "slack_ui.postFile_failed"));
+}
+
+// Case 23: postFile returns { ok:false, error:'ui_disposed' } after dispose().
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  client.filesUploadV2 = async () => ({ ok: true, files: [] });
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C23", threadTs: "23.0",
+    requestId: "req_p23", pendingApprovals,
+  });
+  ui.dispose();
+  const result = await ui.postFile("a.csv", "/tmp/a.csv");
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "ui_disposed");
+}
+
 console.log("slack-ui-context tests passed");

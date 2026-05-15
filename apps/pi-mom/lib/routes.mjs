@@ -1,5 +1,7 @@
 const WEB_ACCESS_INSTRUCTION = `Web access tools are available by default. Use them when public web or code-search context helps answer the user's request. Cite useful public sources and keep Slack output compact.`;
 
+const ARTIFACT_INSTRUCTION = `When the user asks for a file artifact (code, CSV, JSON, Markdown, PDF, DOC, etc.), generate the contents, write the file to an absolute path under /tmp/, then call slack_post_artifact with that path. Set regenerate_prompt to the user's request so the post includes a Regenerate button. Do not also paste the file contents inline — the upload shows them.`;
+
 const TEAM_ROUTE_INSTRUCTION = `Run a Team Subagents workflow. The subagent tool is available by default, so use the simplest subagent call that fits the user request and summarize useful artifacts/results back into Slack.`;
 
 export function subagentsEnabledFromEnv(_env = process.env) {
@@ -14,7 +16,7 @@ export function buildRoutes(_options = {}) {
   return {
     plain: {
       label: "Default Pi agent",
-      instruction: WEB_ACCESS_INSTRUCTION,
+      instruction: `${WEB_ACCESS_INSTRUCTION}\n\n${ARTIFACT_INSTRUCTION}`,
     },
     help: { label: "Show help", instruction: "" },
     status: { label: "Show bridge status", instruction: "" },

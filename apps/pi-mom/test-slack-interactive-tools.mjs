@@ -62,7 +62,7 @@ function makeCtx(uiOverrides = {}) {
   const fakePi = makeFakePi();
   slackInteractiveTools(fakePi);
   const names = fakePi.registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["slack_approval_card", "slack_choice_card", "slack_input_request"]);
+  assert.deepEqual(names, ["slack_approval_card", "slack_choice_card", "slack_input_request", "slack_post_artifact"]);
 
   const approval = findTool(fakePi, "slack_approval_card");
   assert.equal(typeof approval.parameters, "object");
@@ -310,6 +310,95 @@ function makeCtx(uiOverrides = {}) {
     title: "X", summary: "Y", preview_md: "Z",
   }, ac.signal, undefined, ctx);
   assert.equal(observedSignal, ac.signal, "signal forwarded");
+}
+
+// Case 15: slack_post_artifact registers with the expected parameter shape.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_artifact");
+  assert.equal(typeof tool.parameters, "object");
+  assert.equal(typeof tool.execute, "function");
+  assert.ok(tool.promptSnippet);
+  assert.ok(Array.isArray(tool.promptGuidelines));
+}
+
+// Case 16: slack_post_artifact returns "uploaded …" on success and forwards options to postFile.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_artifact");
+  const calls = [];
+  const ctx = makeCtx({
+    postFile: async (filename, filePath, mimeType, opts) => {
+      calls.push({ filename, filePath, mimeType, opts });
+      return { ok: true, upload: { files: [{ files: [{ id: "F1", permalink: "https://slack/F1" }] }] } };
+    },
+  });
+  const r = await tool.execute("tc15", {
+    filename: "sales.csv",
+    file_path: "/tmp/sales.csv",
+    mime_type: "text/csv",
+    description: "Q1 sales",
+    regenerate_prompt: "generate a sales CSV for Q1",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, undefined);
+  assert.equal(r.content[0].text, "uploaded sales.csv");
+  assert.equal(r.details?.permalink, "https://slack/F1");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].filename, "sales.csv");
+  assert.equal(calls[0].filePath, "/tmp/sales.csv");
+  assert.equal(calls[0].mimeType, "text/csv");
+  assert.equal(calls[0].opts.description, "Q1 sales");
+  assert.equal(calls[0].opts.regeneratePrompt, "generate a sales CSV for Q1");
+}
+
+// Case 17: slack_post_artifact surfaces postFile errors as isError results.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_artifact");
+  const ctx = makeCtx({ postFile: async () => ({ ok: false, error: "file_too_large" }) });
+  const r = await tool.execute("tc16", {
+    filename: "huge.bin",
+    file_path: "/tmp/huge.bin",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /file_too_large/);
+}
+
+// Case 18: slack_post_artifact returns isError when ctx.ui.postFile is missing (non-Slack-bound turn).
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_artifact");
+  const ctx = makeCtx({});
+  const r = await tool.execute("tc17", {
+    filename: "x.txt",
+    file_path: "/tmp/x.txt",
+  }, undefined, undefined, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Slack-bound/);
+}
+
+// Case 19: slack_post_artifact forwards AbortSignal to postFile.
+{
+  const fakePi = makeFakePi();
+  slackInteractiveTools(fakePi);
+  const tool = findTool(fakePi, "slack_post_artifact");
+  let observedSignal;
+  const ctx = makeCtx({
+    postFile: async (_f, _p, _m, opts) => {
+      observedSignal = opts?.signal;
+      return { ok: true, upload: { files: [] } };
+    },
+  });
+  const ac = new AbortController();
+  await tool.execute("tc18", {
+    filename: "a.txt",
+    file_path: "/tmp/a.txt",
+  }, ac.signal, undefined, ctx);
+  assert.equal(observedSignal, ac.signal);
 }
 
 console.log("slack-interactive-tools tests passed");

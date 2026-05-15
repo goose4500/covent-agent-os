@@ -64,6 +64,12 @@ type SlackUI = {
     prompt: string,
     opts?: { placeholder?: string; multiline?: boolean; signal?: AbortSignal; timeout?: number },
   ) => Promise<string | undefined>;
+  postFile?: (
+    filename: string,
+    filePath: string,
+    mimeType: string | undefined,
+    opts?: { description?: string; regeneratePrompt?: string; signal?: AbortSignal },
+  ) => Promise<{ ok: boolean; upload?: any; followup?: any; error?: string }>;
 };
 
 function getSlackUI(ctx: ExtensionContext | undefined): SlackUI | undefined {
@@ -209,6 +215,68 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
         return textResult("timeout");
       } catch (err: any) {
         return errorResult(`slack_choice_card failed: ${err?.message || String(err)}`);
+      }
+    },
+  });
+
+  // ---- slack_post_artifact -------------------------------------------------
+  pi.registerTool({
+    name: "slack_post_artifact",
+    label: "Slack post file artifact",
+    description:
+      "Upload a generated file (code, CSV, JSON, Markdown, PDF, DOC, etc.) into the current Slack thread, optionally followed by a Regenerate button. Use this whenever the user asks for a file artifact: first write the file to a path under /tmp/, then call this tool with the absolute path. The tool reads the file and uploads it via files.uploadV2; the user will see the file in the thread, so do not also paste the file contents inline.",
+    promptSnippet:
+      "slack_post_artifact: upload a generated file artifact (code, CSV, PDF, etc.) into the Slack thread.",
+    promptGuidelines: [
+      "When the user asks for a file artifact, write it to an absolute /tmp/ path first, then call slack_post_artifact with that path.",
+      "Pick a descriptive `filename` with the right extension (e.g. 'sales.csv', 'schema.ts'). The user sees this name in Slack.",
+      "Set `mime_type` when known (e.g. 'text/csv', 'application/json') so Slack renders the preview correctly.",
+      "Set `regenerate_prompt` to the original user request (paraphrased if needed) when the artifact is reproducible — Slack shows a Regenerate button that re-fires it as a fresh turn.",
+      "Do not paste the file contents into the chat reply; the upload already shows them. Reply with a short caption about what was generated.",
+    ],
+    parameters: Type.Object({
+      filename: Type.String({
+        description: "Display name for the file (e.g. 'sales.csv', 'schema.ts'). Include the extension.",
+        minLength: 1,
+        maxLength: 200,
+      }),
+      file_path: Type.String({
+        description: "Absolute path on disk where the file was written. Should be under /tmp/.",
+        minLength: 1,
+        maxLength: 4096,
+      }),
+      mime_type: Type.Optional(Type.String({
+        description: "MIME type (e.g. 'text/csv', 'application/json'). Helps Slack render previews.",
+        maxLength: 100,
+      })),
+      description: Type.Optional(Type.String({
+        description: "One-line caption shown above the file in Slack. Defaults to '📎 <filename>'.",
+        maxLength: 1000,
+      })),
+      regenerate_prompt: Type.Optional(Type.String({
+        description: "If set, a 'Regenerate' button is attached that re-fires this prompt as a new Pi turn in the same thread. Paraphrase the original user request so the new turn can stand on its own.",
+        maxLength: 1900,
+      })),
+    }),
+    async execute(_toolCallId, params: any, signal, _onUpdate, ctx) {
+      const ui = getSlackUI(ctx);
+      if (!ui?.postFile) {
+        return errorResult(`slack_post_artifact requires a Slack-bound Pi turn. ${NOT_SLACK_BOUND_HINT}`);
+      }
+      try {
+        const result = await ui.postFile(params.filename, params.file_path, params.mime_type, {
+          description: params.description,
+          regeneratePrompt: params.regenerate_prompt,
+          signal,
+        });
+        if (!result?.ok) {
+          return errorResult(`slack_post_artifact failed: ${result?.error || "unknown_error"}`);
+        }
+        const uploadedFile = result.upload?.files?.[0]?.files?.[0] ?? result.upload?.files?.[0];
+        const permalink = uploadedFile?.permalink || uploadedFile?.url_private || "";
+        return textResult(`uploaded ${params.filename}`, { permalink, fileId: uploadedFile?.id });
+      } catch (err: any) {
+        return errorResult(`slack_post_artifact failed: ${err?.message || String(err)}`);
       }
     },
   });
