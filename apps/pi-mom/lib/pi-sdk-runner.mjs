@@ -96,6 +96,12 @@ import linearTools from "../../../extensions/linear-tools.ts";
 import slackInteractiveTools from "../../../extensions/slack-interactive-tools.ts";
 import browserUseTools from "../../../extensions/browser-use-tools.ts";
 import gitCheckpoint from "../../../extensions/git-checkpoint.ts";
+// cache-telemetry: emits `[pi-mom-trace] cache.usage` per assistant message
+// so we can verify prompt caching is actually hitting (cacheRead > 0 on
+// turn 2+ within a thread). Pure observer — does not mutate any request
+// or response. Gated by PI_MOM_TRACE; verbose extras via
+// PI_MOM_CACHE_TRACE_VERBOSE=true.
+import cacheTelemetry from "../../../extensions/cache-telemetry.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -138,6 +144,7 @@ export async function buildPiMomExtensionFactories({
     browserUseTools,
     gitCheckpoint,
     await loadSubagents(),
+    cacheTelemetry,
   ];
 }
 
