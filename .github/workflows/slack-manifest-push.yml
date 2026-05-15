@@ -1,14 +1,21 @@
 name: slack-manifest-push
 
-# Auto-pushes apps/pi-mom/manifest.yaml to the Slack app via
-# apps.manifest.update whenever the manifest or its declaration sources change
-# on main. Drift is caught earlier by the `Slack manifest drift check` step in
-# ci.yml — by the time this workflow runs, manifest.yaml is the source of truth.
+# Auto-pushes the Slack app manifest's slash_commands block whenever
+# declaration sources change on main. Drift is caught earlier by the
+# `Slack manifest drift check` step in ci.yml.
 #
-# Requires two repo secrets:
-#   SLACK_APP_CONFIG_TOKEN  (xoxe-… App Configuration Token, rotates ~12h —
-#                            see https://api.slack.com/reference/manifests#config-tokens)
-#   SLACK_APP_ID            (the Slack app ID this repo's manifest targets)
+# Token rotation: Slack App Configuration Tokens expire every ~12 hours.
+# This workflow rotates the token automatically on every run using the
+# stored refresh token, then writes both the new access and refresh tokens
+# back to repo secrets via GH_PAT. No manual token management required.
+#
+# Required repo secrets:
+#   SLACK_APP_CONFIG_REFRESH_TOKEN  (xoxe-1-… long-lived refresh token)
+#   SLACK_APP_ID                    (Slack app ID — A0B25AHCN0Y)
+#   GH_PAT                          (classic PAT with repo scope for secret writes)
+#
+# SLACK_APP_CONFIG_TOKEN is also stored for local --push fallback but the
+# workflow always mints a fresh one via rotation.
 
 on:
   push:
@@ -44,8 +51,41 @@ jobs:
       - name: Install workspace deps
         run: bun install --frozen-lockfile
 
+      - name: Rotate Slack config token
+        id: rotate
+        env:
+          SLACK_APP_CONFIG_REFRESH_TOKEN: ${{ secrets.SLACK_APP_CONFIG_REFRESH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          RESPONSE=$(curl -sS -X POST https://slack.com/api/tooling.tokens.rotate \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "refresh_token=${SLACK_APP_CONFIG_REFRESH_TOKEN}")
+
+          OK=$(echo "$RESPONSE" | jq -r '.ok')
+          if [[ "$OK" != "true" ]]; then
+            echo "Token rotation failed: $(echo "$RESPONSE" | jq -r '.error')"
+            exit 1
+          fi
+
+          NEW_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+          NEW_REFRESH=$(echo "$RESPONSE" | jq -r '.refresh_token')
+          EXP=$(echo "$RESPONSE" | jq -r '.exp')
+
+          # Mask both values so they never appear in logs.
+          echo "::add-mask::${NEW_TOKEN}"
+          echo "::add-mask::${NEW_REFRESH}"
+
+          # Expose access token to next step only.
+          echo "slack_token=${NEW_TOKEN}" >> "$GITHUB_OUTPUT"
+
+          # Write new pair back to repo secrets so the next run can also rotate.
+          echo "${NEW_TOKEN}"   | gh secret set SLACK_APP_CONFIG_TOKEN         --repo "$GITHUB_REPOSITORY"
+          echo "${NEW_REFRESH}" | gh secret set SLACK_APP_CONFIG_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY"
+
+          echo "Rotated OK (exp $(date -d @${EXP} -Iseconds 2>/dev/null || echo ${EXP}))"
+
       - name: Push manifest to Slack
         env:
-          SLACK_APP_CONFIG_TOKEN: ${{ secrets.SLACK_APP_CONFIG_TOKEN }}
+          SLACK_APP_CONFIG_TOKEN: ${{ steps.rotate.outputs.slack_token }}
           SLACK_APP_ID: ${{ secrets.SLACK_APP_ID }}
         run: bun scripts/sync-slack-manifest.mjs --push
