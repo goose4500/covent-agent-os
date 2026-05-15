@@ -417,7 +417,7 @@ export function createGitHubPrToolsFactory({
       name: "github_merge_pr",
       label: "Merge GitHub PR",
       description:
-        "Merge a pull request. ALWAYS prompts the user for explicit approval via a Slack approval card showing the PR identifier, title, head→base, merge_method, and the commit title/message that will be used. Per ADR 0010, PR merge requires explicit Slack user approval — there is no escape hatch. Returns the merge SHA on success. If the user rejects or the card times out, the tool returns isError without merging. Defaults to goose4500/covent-agent-os.",
+        "Merge a pull request. ALWAYS prompts the user for explicit approval via a Slack approval card showing the PR identifier, title, head→base@sha, merge_method, and the commit title/message that will be used. Per ADR 0010, PR merge requires explicit Slack user approval — there is no escape hatch. The merge call is pinned to the exact head SHA shown in the approval card, so any push that lands between approval and merge will fail the request (GitHub 409) instead of silently merging unreviewed commits. Returns the merge SHA on success. If the user rejects, the card times out, or the head moves, the tool returns isError without merging. Defaults to goose4500/covent-agent-os.",
       promptSnippet:
         "github_merge_pr: merge a PR after the user has explicitly asked you to. The tool itself shows a final approval card.",
       promptGuidelines: [
@@ -481,11 +481,16 @@ export function createGitHubPrToolsFactory({
 
         const commitTitle = String(params.commit_title || pr.title || "").trim();
         const commitMessage = String(params.commit_message || "").trim();
+        // Pin the merge to the exact head SHA the human approved. GitHub
+        // returns 409 if the head moves between approval and the PUT call,
+        // so a push that lands after the approval card is rendered will
+        // fail closed instead of silently merging unreviewed commits.
+        const approvedHeadSha = typeof pr.head?.sha === "string" ? pr.head.sha : "";
 
         const previewLines = [
           `**Repo:** ${owner}/${repo}`,
           `**PR:** #${pr.number} — ${pr.title}`,
-          `**Head → Base:** \`${pr.head?.ref}\` → \`${pr.base?.ref}\``,
+          `**Head → Base:** \`${pr.head?.ref}${approvedHeadSha ? `@${approvedHeadSha.slice(0, 7)}` : ""}\` → \`${pr.base?.ref}\``,
           `**Merge method:** ${mergeMethod}`,
           `**Mergeable:** ${pr.mergeable === null ? "unknown" : pr.mergeable} (state: ${pr.mergeable_state ?? "unknown"})`,
           ``,
@@ -517,6 +522,7 @@ export function createGitHubPrToolsFactory({
         const mergeBody: Record<string, unknown> = { merge_method: mergeMethod };
         if (commitTitle) mergeBody.commit_title = commitTitle;
         if (commitMessage) mergeBody.commit_message = commitMessage;
+        if (approvedHeadSha) mergeBody.sha = approvedHeadSha;
 
         const mergeResult = await call(
           "PUT",
@@ -525,7 +531,18 @@ export function createGitHubPrToolsFactory({
           signal,
           "PR merge",
         );
-        if ("error" in mergeResult) return mergeResult.error;
+        if ("error" in mergeResult) {
+          // 409 from GitHub's merge endpoint with a `sha` guard means the
+          // head moved between the approval card and the merge call. Re-shape
+          // the error so the model + human reply make the cause obvious.
+          const errText = mergeResult.error?.content?.[0]?.text || "";
+          if (approvedHeadSha && /\b409\b/.test(errText)) {
+            return errorResult(
+              `github_merge_pr aborted: head of ${owner}/${repo}#${pullNumber} moved after approval (approved \`${approvedHeadSha.slice(0, 7)}\`). The PR was NOT merged. Re-run github_get_pr to inspect the new head, then re-request approval if the new commits are still safe to merge.`,
+            );
+          }
+          return mergeResult.error;
+        }
         const merge = mergeResult.data || {};
         if (!merge.merged) {
           return errorResult(

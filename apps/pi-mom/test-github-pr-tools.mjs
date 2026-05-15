@@ -233,11 +233,12 @@ function ctxWithUI(uiOverrides = {}) {
   assert.match(r.content[0].text, /Slack-bound/);
 }
 
-// Case 7: github_merge_pr — fetches the PR first, builds preview from server-truth title/head/base, then PUT /merge.
+// Case 7: github_merge_pr — fetches the PR first, builds preview from server-truth title/head/base@sha, then PUT /merge pinned to head sha.
 {
   const fakePi = makeFakePi();
   const calls = [];
   let captured;
+  const headSha = "1234567890abcdef1234567890abcdef12345678";
   const fakeFetch = makeFakeFetch(({ method, url }) => {
     if (method === "GET" && /\/pulls\/122$/.test(url)) {
       return {
@@ -248,7 +249,7 @@ function ctxWithUI(uiOverrides = {}) {
           merged: false,
           mergeable: true,
           mergeable_state: "clean",
-          head: { ref: "claude/x" },
+          head: { ref: "claude/x", sha: headSha },
           base: { ref: "main" },
           html_url: "https://github.com/goose4500/covent-agent-os/pull/122",
         },
@@ -281,11 +282,52 @@ function ctxWithUI(uiOverrides = {}) {
   assert.equal(calls[1].method, "PUT");
   assert.equal(calls[1].body.merge_method, "squash");
   assert.equal(calls[1].body.commit_title, "Real PR Title", "commit_title falls back to PR title from server");
+  assert.equal(calls[1].body.sha, headSha, "merge body pins approved head SHA");
   // Approval card preview must reflect server-truth, not model-claimed values.
   assert.match(captured.title, /Merge .+#122/);
   assert.match(captured.previewMd, /Real PR Title/);
   assert.match(captured.previewMd, /squash/);
   assert.match(captured.previewMd, /claude\/x/);
+  // Preview shows short SHA so the human can verify what they're approving.
+  assert.match(captured.previewMd, new RegExp(headSha.slice(0, 7)));
+}
+
+// Case 7a: github_merge_pr — head SHA moved between approval and merge (GitHub 409). Surfaces a clear "head moved" error.
+{
+  const fakePi = makeFakePi();
+  const calls = [];
+  const fakeFetch = makeFakeFetch(({ method, url }) => {
+    if (method === "GET" && /\/pulls\/77$/.test(url)) {
+      return {
+        payload: {
+          number: 77,
+          title: "Race",
+          state: "open",
+          merged: false,
+          mergeable: true,
+          mergeable_state: "clean",
+          head: { ref: "f", sha: "aaaaaaa00000000000000000000000000000aaaa" },
+          base: { ref: "main" },
+          html_url: "u",
+        },
+      };
+    }
+    if (method === "PUT") {
+      return {
+        ok: false,
+        status: 409,
+        payload: { message: "Head branch was modified. Review and try the merge again." },
+      };
+    }
+    throw new Error("unexpected");
+  }, calls);
+  createGitHubPrToolsFactory({ env: baseEnv, fetchImpl: fakeFetch })(fakePi);
+  const merge = findTool(fakePi, "github_merge_pr");
+  const r = await merge.execute("tc7a", { pull_number: 77 }, undefined, undefined, ctxWithUI());
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /head .* moved|moved after approval/i);
+  assert.match(r.content[0].text, /aaaaaaa/, "error names the approved short SHA so the operator can audit");
+  assert.equal(calls.length, 2, "GET + PUT both attempted; only the PUT fails");
 }
 
 // Case 8: github_merge_pr refuses to merge an already-merged PR (no PUT call).
