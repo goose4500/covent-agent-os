@@ -356,8 +356,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     bridgeStatus: () => formatStatus(client),
   });
 
-  const initialText = `👀 Covent Pi is thinking… (req: ${requestId})\n\n`;
-  await slackSink.start({ initialText });
+  await slackSink.start();
   if (subagentCanvasSidecarSink) {
     try { await subagentCanvasSidecarSink.start(); }
     catch (err) { trace("subagent_canvas.start_failed", { requestId, error: err?.data?.error || err?.message || "unknown" }); }
