@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
+  buildApifyMcpServerFromEnv,
+  buildManagedMcpServersFromEnv,
   buildPiMomExtensionFactories,
   buildResourceLoaderOptions,
   buildSlackMcpConfigFromEnv,
   createRunner,
+  discoverMcpConfigForReconciliation,
+  reconcileManagedMcpServersFromEnv,
   resolvePiWorkdir,
   resolveProjectSkillsDir,
   resolveWebAccessResourcePaths,
@@ -445,6 +449,150 @@ function fakeAssistantErrorMessage(message) {
     assert.equal(skipped.reason, "exists");
   } finally {
     rmSync(agentDir, { recursive: true, force: true });
+  }
+}
+
+// Case 16: managed Apify MCP config is derived from env without embedding token values.
+{
+  assert.equal(buildApifyMcpServerFromEnv({}), null, "Apify MCP is disabled when APIFY_API_TOKEN is absent");
+  const apify = buildApifyMcpServerFromEnv({
+    APIFY_API_TOKEN: "apify_api_fake_secret",
+    APIFY_MCP_DIRECT_TOOLS: "true",
+    APIFY_MCP_IDLE_TIMEOUT_MINUTES: "12",
+  });
+  assert.equal(apify.url, "https://mcp.apify.com/");
+  assert.equal(apify.auth, "bearer");
+  assert.equal(apify.bearerTokenEnv, "APIFY_API_TOKEN");
+  assert.equal(apify.directTools, true);
+  assert.equal(apify.idleTimeout, 12);
+  assert.equal(JSON.stringify(apify).includes("apify_api_fake_secret"), false, "managed config stores env var names, not token values");
+
+  const managed = buildManagedMcpServersFromEnv({
+    APIFY_API_TOKEN: "apify_api_fake_secret",
+    SLACK_MCP_ENABLED: "1",
+    SLACK_MCP_BEARER_TOKEN_ENV: "SLACK_MCP_TOKEN",
+  });
+  assert.deepEqual(Object.keys(managed).sort(), ["apify", "slack"]);
+}
+
+// Case 17: managed MCP reconciliation adds missing env-enabled servers to the canonical Pi global config.
+{
+  const root = mkdtempSync(join(tmpdir(), "pi-mom-mcp-reconcile-"));
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const cwd = join(root, "workspace");
+  const mcpPath = join(agentDir, "mcp.json");
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  writeFileSync(mcpPath, JSON.stringify({
+    mcpServers: {
+      github: {
+        url: "https://api.githubcopilot.com/mcp/",
+        auth: "bearer",
+        bearerTokenEnv: "GITHUB_MCP_PAT",
+      },
+    },
+  }, null, 2));
+  try {
+    const result = reconcileManagedMcpServersFromEnv({
+      env: { APIFY_API_TOKEN: "apify_api_fake_secret" },
+      agentDir,
+      cwd,
+      homeDir,
+      log: { log() {}, warn() {}, error() {} },
+    });
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.added, ["apify"]);
+    const writtenText = readFileSync(mcpPath, "utf8");
+    const written = JSON.parse(writtenText);
+    assert.ok(written.mcpServers.github, "existing GitHub MCP server is preserved");
+    assert.equal(written.mcpServers.apify.url, "https://mcp.apify.com/");
+    assert.equal(written.mcpServers.apify.bearerTokenEnv, "APIFY_API_TOKEN");
+    assert.equal(written.mcpServers.apify.directTools, false);
+    assert.equal(writtenText.includes("apify_api_fake_secret"), false, "reconciled file never stores the Apify token value");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Case 18: reconciliation discovers project/imported MCP config and avoids duplicating servers into Pi global config.
+{
+  const root = mkdtempSync(join(tmpdir(), "pi-mom-mcp-discover-"));
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const cwd = join(root, "workspace");
+  mkdirSync(cwd, { recursive: true });
+  mkdirSync(join(homeDir, ".claude"), { recursive: true });
+  writeFileSync(join(homeDir, ".claude", "mcp.json"), JSON.stringify({
+    mcpServers: {
+      importedDocs: { command: "docs-mcp", args: [] },
+    },
+  }, null, 2));
+  writeFileSync(join(cwd, ".mcp.json"), JSON.stringify({
+    imports: ["claude-code"],
+    mcpServers: {
+      apify: {
+        url: "https://mcp.apify.com/",
+        auth: "bearer",
+        bearerTokenEnv: "APIFY_API_TOKEN",
+      },
+    },
+  }, null, 2));
+  try {
+    const discovered = discoverMcpConfigForReconciliation({ agentDir, cwd, homeDir, log: { warn() {} } });
+    assert.ok(discovered.config.mcpServers.apify, "project .mcp.json contributes to effective MCP config");
+    assert.ok(discovered.config.mcpServers.importedDocs, "project imports contribute to effective MCP config");
+    const result = reconcileManagedMcpServersFromEnv({
+      env: { APIFY_API_TOKEN: "apify_api_fake_secret" },
+      agentDir,
+      cwd,
+      homeDir,
+      log: { log() {}, warn() {}, error() {} },
+    });
+    assert.equal(result.changed, false);
+    assert.equal(result.reason, "already-configured");
+    assert.equal(existsSync(join(agentDir, "mcp.json")), false, "no duplicate Pi global file is written when discovered config already provides Apify");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Case 19: when a managed server already exists in Pi global config, defaults fill gaps without clobbering operator overrides.
+{
+  const root = mkdtempSync(join(tmpdir(), "pi-mom-mcp-preserve-"));
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const cwd = join(root, "workspace");
+  const mcpPath = join(agentDir, "mcp.json");
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  writeFileSync(mcpPath, JSON.stringify({
+    mcpServers: {
+      apify: {
+        url: "https://custom-apify.example/mcp",
+        directTools: true,
+        customField: "keep-me",
+      },
+    },
+  }, null, 2));
+  try {
+    const result = reconcileManagedMcpServersFromEnv({
+      env: { APIFY_API_TOKEN: "apify_api_fake_secret" },
+      agentDir,
+      cwd,
+      homeDir,
+      log: { log() {}, warn() {}, error() {} },
+    });
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.updated, ["apify"]);
+    const written = JSON.parse(readFileSync(mcpPath, "utf8"));
+    assert.equal(written.mcpServers.apify.url, "https://custom-apify.example/mcp", "operator URL override is preserved");
+    assert.equal(written.mcpServers.apify.directTools, true, "operator directTools override is preserved");
+    assert.equal(written.mcpServers.apify.customField, "keep-me");
+    assert.equal(written.mcpServers.apify.auth, "bearer", "missing managed defaults are filled");
+    assert.equal(written.mcpServers.apify.bearerTokenEnv, "APIFY_API_TOKEN");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 }
 

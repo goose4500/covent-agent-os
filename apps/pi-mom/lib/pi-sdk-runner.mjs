@@ -40,7 +40,7 @@ if (process.env.PI_AGENT_DIR && !process.env.PI_CODING_AGENT_DIR) {
 // the SDK owns subsequent token rotation via its file-lock path. The seed
 // env var is only consulted if auth.json is missing — we never overwrite
 // an existing file because that would clobber the SDK's rotated tokens.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Buffer as _NodeBuffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { homedir as _homedir } from "node:os";
@@ -102,6 +102,260 @@ export function buildSlackMcpConfigFromEnv(env = process.env) {
   };
 }
 
+export function buildApifyMcpServerFromEnv(env = process.env) {
+  const bearerTokenEnv = env.APIFY_MCP_BEARER_TOKEN_ENV || "APIFY_API_TOKEN";
+  if (!env[bearerTokenEnv]) return null;
+  const server = {
+    url: env.APIFY_MCP_URL || "https://mcp.apify.com/",
+    lifecycle: env.APIFY_MCP_LIFECYCLE || "lazy",
+    auth: "bearer",
+    bearerTokenEnv,
+    directTools: isTruthyEnv(env.APIFY_MCP_DIRECT_TOOLS),
+    idleTimeout: 10,
+  };
+  const timeoutRaw = env.APIFY_MCP_IDLE_TIMEOUT_MINUTES || env.APIFY_MCP_IDLE_TIMEOUT;
+  if (timeoutRaw !== undefined && timeoutRaw !== "") {
+    const idleTimeout = Number(timeoutRaw);
+    if (Number.isFinite(idleTimeout)) server.idleTimeout = idleTimeout;
+  }
+  return server;
+}
+
+export function buildManagedMcpServersFromEnv(env = process.env) {
+  const servers = {};
+  const slack = buildSlackMcpConfigFromEnv(env)?.mcpServers?.slack;
+  if (slack) servers.slack = slack;
+  const apify = buildApifyMcpServerFromEnv(env);
+  if (apify) servers.apify = apify;
+  return servers;
+}
+
+const MCP_SOURCE_IDS = {
+  SHARED_GLOBAL: "shared-global",
+  PI_GLOBAL: "pi-global",
+  SHARED_PROJECT: "shared-project",
+  PI_PROJECT: "pi-project",
+};
+
+function uniqueMcpSources(sources) {
+  const seen = new Set();
+  return sources.filter((source) => {
+    if (seen.has(source.path)) return false;
+    seen.add(source.path);
+    return true;
+  });
+}
+
+function getMcpSourcePaths({ agentDir = _resolveAgentDir(), cwd = process.cwd(), homeDir = _homedir() } = {}) {
+  return uniqueMcpSources([
+    {
+      id: MCP_SOURCE_IDS.SHARED_GLOBAL,
+      label: "user-global standard MCP",
+      path: _join(homeDir, ".config", "mcp", "mcp.json"),
+    },
+    {
+      id: MCP_SOURCE_IDS.PI_GLOBAL,
+      label: "Pi global override",
+      path: _join(agentDir, "mcp.json"),
+    },
+    {
+      id: MCP_SOURCE_IDS.SHARED_PROJECT,
+      label: "project standard MCP",
+      path: _resolve(cwd, ".mcp.json"),
+    },
+    {
+      id: MCP_SOURCE_IDS.PI_PROJECT,
+      label: "project Pi override",
+      path: _resolve(cwd, ".pi", "mcp.json"),
+    },
+  ]);
+}
+
+function getImportCandidatePaths(kind, { cwd = process.cwd(), homeDir = _homedir() } = {}) {
+  const candidates = {
+    cursor: [_join(homeDir, ".cursor", "mcp.json")],
+    "claude-code": [
+      _join(homeDir, ".claude", "mcp.json"),
+      _join(homeDir, ".claude.json"),
+      _join(homeDir, ".claude", "claude_desktop_config.json"),
+    ],
+    "claude-desktop": [_join(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json")],
+    codex: [_join(homeDir, ".codex", "config.json")],
+    windsurf: [_join(homeDir, ".windsurf", "mcp.json")],
+    vscode: [_resolve(cwd, ".vscode", "mcp.json")],
+  };
+  return candidates[kind] || [];
+}
+
+function resolveImportPath(kind, opts) {
+  return getImportCandidatePaths(kind, opts).find((candidate) => existsSync(candidate)) || null;
+}
+
+function readJsonObject(filePath, { log = console, label = filePath, throwOnInvalid = false } = {}) {
+  if (!existsSync(filePath)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    if (throwOnInvalid) throw err;
+    log?.warn?.(`Ignoring invalid MCP config at ${label}: ${err?.message || err}`);
+    return {};
+  }
+}
+
+function getMcpServersObject(raw) {
+  const servers = raw?.mcpServers ?? raw?.["mcp-servers"] ?? {};
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return {};
+  return servers;
+}
+
+function setMcpServersObject(raw, servers) {
+  delete raw["mcp-servers"];
+  raw.mcpServers = servers;
+}
+
+function getMcpImports(raw) {
+  return Array.isArray(raw?.imports) ? raw.imports.filter((value) => typeof value === "string") : [];
+}
+
+function mergeMcpConfig(base, next) {
+  return {
+    mcpServers: { ...(base.mcpServers || {}), ...(next.mcpServers || {}) },
+    settings: next.settings ? { ...(base.settings || {}), ...next.settings } : base.settings,
+  };
+}
+
+function expandMcpImports(raw, { cwd = process.cwd(), homeDir = _homedir(), log = console } = {}) {
+  const importedServers = {};
+  for (const importKind of getMcpImports(raw)) {
+    const importPath = resolveImportPath(importKind, { cwd, homeDir });
+    if (!importPath) continue;
+    const importedRaw = readJsonObject(importPath, { log, label: `${importKind} import ${importPath}` });
+    for (const [name, entry] of Object.entries(getMcpServersObject(importedRaw))) {
+      if (!importedServers[name]) importedServers[name] = entry;
+    }
+  }
+  return {
+    settings: raw.settings,
+    mcpServers: { ...importedServers, ...getMcpServersObject(raw) },
+  };
+}
+
+export function discoverMcpConfigForReconciliation({
+  agentDir = _resolveAgentDir(),
+  cwd = process.cwd(),
+  homeDir = _homedir(),
+  log = console,
+} = {}) {
+  let config = { mcpServers: {} };
+  const sources = [];
+  for (const source of getMcpSourcePaths({ agentDir, cwd, homeDir })) {
+    const exists = existsSync(source.path);
+    const raw = readJsonObject(source.path, { log, label: source.path });
+    const expanded = expandMcpImports(raw, { cwd, homeDir, log });
+    config = mergeMcpConfig(config, expanded);
+    sources.push({
+      ...source,
+      exists,
+      serverNames: Object.keys(getMcpServersObject(raw)).sort(),
+      importedServerNames: Object.keys(expanded.mcpServers || {})
+        .filter((name) => !getMcpServersObject(raw)[name])
+        .sort(),
+    });
+  }
+  return { config, sources };
+}
+
+function writeJsonObjectAtomic(filePath, raw) {
+  mkdirSync(_dirname(filePath), { recursive: true, mode: 0o700 });
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmpPath, filePath);
+}
+
+function mergeManagedServerEntry(existing, desired) {
+  // Defaults fill gaps, but operator-owned fields already in the target config win.
+  return { ...desired, ...existing };
+}
+
+export function reconcileManagedMcpServersFromEnv({
+  env = process.env,
+  agentDir = _resolveAgentDir(),
+  cwd = process.cwd(),
+  homeDir = _homedir(),
+  log = console,
+} = {}) {
+  const desiredServers = buildManagedMcpServersFromEnv(env);
+  const desiredNames = Object.keys(desiredServers).sort();
+  const targetPath = _join(agentDir, "mcp.json");
+  if (desiredNames.length === 0) {
+    return { changed: false, reason: "not-configured", path: targetPath, desiredNames };
+  }
+
+  const discovery = discoverMcpConfigForReconciliation({ agentDir, cwd, homeDir, log });
+  let raw;
+  try {
+    raw = readJsonObject(targetPath, { log, label: targetPath, throwOnInvalid: true });
+  } catch (err) {
+    log?.error?.(`Failed to reconcile managed MCP servers because ${targetPath} is invalid JSON: ${err?.message || err}`);
+    return { changed: false, reason: "target-invalid", path: targetPath, desiredNames, error: err, sources: discovery.sources };
+  }
+
+  const servers = { ...getMcpServersObject(raw) };
+  const added = [];
+  const updated = [];
+  const alreadyConfigured = [];
+
+  for (const name of desiredNames) {
+    const desired = desiredServers[name];
+    if (servers[name]) {
+      const merged = mergeManagedServerEntry(servers[name], desired);
+      if (JSON.stringify(merged) !== JSON.stringify(servers[name])) {
+        servers[name] = merged;
+        updated.push(name);
+      } else {
+        alreadyConfigured.push(name);
+      }
+      continue;
+    }
+
+    if (discovery.config.mcpServers?.[name]) {
+      alreadyConfigured.push(name);
+      continue;
+    }
+
+    servers[name] = desired;
+    added.push(name);
+  }
+
+  if (added.length === 0 && updated.length === 0) {
+    return {
+      changed: false,
+      reason: "already-configured",
+      path: targetPath,
+      desiredNames,
+      alreadyConfigured,
+      sources: discovery.sources,
+    };
+  }
+
+  setMcpServersObject(raw, servers);
+  writeJsonObjectAtomic(targetPath, raw);
+  log?.log?.(
+    `✓ Reconciled ${targetPath}: added [${added.join(",") || "none"}], updated [${updated.join(",") || "none"}]`,
+  );
+  return {
+    changed: true,
+    reason: "reconciled",
+    path: targetPath,
+    desiredNames,
+    added,
+    updated,
+    alreadyConfigured,
+    sources: discovery.sources,
+  };
+}
+
 export function seedMcpJsonFromEnv({ env = process.env, agentDir = _resolveAgentDir(), log = console } = {}) {
   const mcpPath = _join(agentDir, "mcp.json");
   if (existsSync(mcpPath)) return { seeded: false, reason: "exists", path: mcpPath };
@@ -132,15 +386,17 @@ export function seedMcpJsonFromEnv({ env = process.env, agentDir = _resolveAgent
   }
 }
 
-// MCP server config seeder. Mirrors the auth.json pattern: pi-mcp-adapter
-// reads `${PI_AGENT_DIR}/mcp.json` (the "Pi global override" slot in its
-// precedence list — see pi-mcp-adapter/config.ts). On Railway the file
-// doesn't exist on cold boot of a fresh volume, so we materialize it from
-// PI_MCP_JSON_B64 or, when SLACK_MCP_ENABLED=1, from a built-in Slack MCP
-// preset that reads its bearer token from an env var without writing the
-// token into git or disk. We only seed when the file is missing because the
-// adapter persists OAuth/directTools state back into this file.
+// MCP server config seeder/reconciler. Mirrors the auth.json pattern:
+// pi-mcp-adapter reads `${PI_AGENT_DIR}/mcp.json` (the "Pi global override"
+// slot in its precedence list — see pi-mcp-adapter/config.ts). On cold boot of
+// a fresh volume we first seed that file from PI_MCP_JSON_B64 or the built-in
+// Slack MCP preset. Then we reconcile env-enabled managed MCP servers (for
+// example Apify when APIFY_API_TOKEN is present) into the same canonical Pi
+// global config while preserving existing operator-managed servers such as
+// GitHub. Token values are never written; managed servers reference env var
+// names through bearerTokenEnv.
 seedMcpJsonFromEnv();
+reconcileManagedMcpServersFromEnv();
 
 import {
   AuthStorage,

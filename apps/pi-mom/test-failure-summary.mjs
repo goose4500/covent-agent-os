@@ -52,4 +52,17 @@ import {
   assert.match(text, /xox\[REDACTED\]/);
 }
 
+// Apify API tokens are redacted before Slack-visible failure details.
+{
+  const secret = "apify_api_super_secret_value";
+  const text = formatPiFailureForSlack({
+    requestId: "req_apify",
+    error: new Error(`Apify MCP API 401: invalid token ${secret}; APIFY_API_TOKEN=${secret}`),
+  });
+  assert.match(text, /req_apify/);
+  assert.doesNotMatch(text, new RegExp(secret));
+  assert.doesNotMatch(text, /APIFY_API_TOKEN=apify_api_/);
+  assert.match(text, /apify_api_\[REDACTED\]|APIFY_API_TOKEN=\[REDACTED\]/);
+}
+
 console.log("failure-summary tests passed");
