@@ -47,6 +47,33 @@ function makeTimerHarness() {
   };
 }
 
+function makeDeferredPostClient() {
+  const postMessages = [];
+  const updates = [];
+  let resolvePost;
+  let rejectPost;
+  const postPromise = new Promise((resolve, reject) => {
+    resolvePost = resolve;
+    rejectPost = reject;
+  });
+  return {
+    postMessages,
+    updates,
+    resolvePost: (post = { ok: true, ts: "001.000", channel: "C" }) => resolvePost(post),
+    rejectPost,
+    chat: {
+      postMessage: (args) => {
+        postMessages.push(args);
+        return postPromise;
+      },
+      update: async (args) => {
+        updates.push(args);
+        return { ok: true };
+      },
+    },
+  };
+}
+
 // Case 1: confirm() posts a blocks message, registers entry, resolves true on Approve.
 {
   _resetApprovalCounterForTests();
@@ -555,6 +582,107 @@ function makeTimerHarness() {
     client,
   });
   assert.equal(await pending, undefined);
+}
+
+// Case 20: confirm() registers before postMessage resolves, so a very fast click is not dropped.
+{
+  _resetApprovalCounterForTests();
+  const client = makeDeferredPostClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C20", threadTs: "20.0",
+    requestId: "req_r20", pendingApprovals,
+  });
+
+  const pending = ui.confirm("Approve fast?", "The user clicks before postMessage.then runs");
+  assert.equal(pendingApprovals.size, 1, "entry is registered synchronously before post resolves");
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  const ok = resolveConfirmAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_confirm_approve", value: approvalId },
+    body: { user: { id: "U_FAST" }, message: { ts: "20.123" } },
+    client,
+  });
+  assert.equal(ok, true);
+  assert.equal(await pending, true);
+  assert.equal(client.updates[0].ts, "20.123", "uses action payload ts before entry.messageTs is known");
+  client.resolvePost({ ok: true, ts: "20.456", channel: "C20" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pendingApprovals.size, 0, "late post resolution does not re-register finalized entry");
+}
+
+// Case 21: selectWithContext() also handles a fast choice before postMessage resolves.
+{
+  _resetApprovalCounterForTests();
+  const client = makeDeferredPostClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C21", threadTs: "21.0",
+    requestId: "req_r21", pendingApprovals,
+  });
+
+  const pending = ui.selectWithContext("Pick quickly", undefined, [
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+  ]);
+  assert.equal(pendingApprovals.size, 1);
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  const ok = resolveSelectAction({
+    pendingApprovals,
+    action: { action_id: "pi_uictx_select_1", value: `${approvalId}:1` },
+    body: { user: { id: "U_FAST" }, message: { ts: "21.123" } },
+    client,
+  });
+  assert.equal(ok, true);
+  assert.equal(await pending, "b");
+  assert.equal(client.updates[0].ts, "21.123");
+  client.resolvePost({ ok: true, ts: "21.456", channel: "C21" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pendingApprovals.size, 0);
+}
+
+// Case 22: inputRequest() registers before postMessage resolves, so Skip/Input launch can find the entry.
+{
+  _resetApprovalCounterForTests();
+  const client = makeDeferredPostClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C22", threadTs: "22.0",
+    requestId: "req_r22", pendingApprovals,
+  });
+
+  const pending = ui.inputRequest("Need details", "Provide the missing context");
+  assert.equal(pendingApprovals.size, 1, "input entry is available before post resolves");
+  const [[approvalId]] = [...pendingApprovals.entries()];
+  const ok = resolveInputCancel({
+    pendingApprovals,
+    view: { private_metadata: approvalId },
+    body: { user: { id: "U_FAST" }, message: { ts: "22.123" } },
+    client,
+  });
+  assert.equal(ok, true);
+  assert.equal(await pending, undefined);
+  assert.equal(client.updates[0].ts, "22.123");
+  client.resolvePost({ ok: true, ts: "22.456", channel: "C22" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pendingApprovals.size, 0);
+}
+
+// Case 23: postMessage failure after pre-registration finalizes and cleans up the pending entry.
+{
+  _resetApprovalCounterForTests();
+  const client = makeDeferredPostClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C23", threadTs: "23.0",
+    requestId: "req_r23", pendingApprovals,
+  });
+
+  const pending = ui.confirm("Will fail", "postMessage rejects");
+  assert.equal(pendingApprovals.size, 1);
+  client.rejectPost(new Error("boom"));
+  assert.equal(await pending, false);
+  assert.equal(pendingApprovals.size, 0);
 }
 
 console.log("slack-ui-context tests passed");

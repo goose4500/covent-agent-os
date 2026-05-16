@@ -18,10 +18,11 @@
 //      with a shared `pendingApprovals` Map (key: approvalId).
 //   2. Each call to confirm/select/input:
 //      - allocates an approvalId,
-//      - posts a Slack message with the right blocks,
 //      - registers a pending entry holding {resolve, type, channel, threadTs,
 //        messageTs, options, defaultValue, signal/timeout teardown} in the
-//        Map,
+//        Map before posting so a fast button click cannot race registration,
+//      - posts a Slack message with the right blocks,
+//      - fills messageTs after postMessage resolves,
 //      - returns the awaitable promise.
 //   3. Bolt action/view handlers (registered globally at app startup) look
 //      up the entry by approvalId, edit the original message to show the
@@ -126,7 +127,7 @@ export function createSlackUIContext({
     if (opts.signal) {
       if (opts.signal.aborted) {
         finalize(entry.approvalId, "aborted");
-        return;
+        return false;
       }
       entry.signal = opts.signal;
       entry.abortHandler = () => finalize(entry.approvalId, "aborted");
@@ -136,6 +137,7 @@ export function createSlackUIContext({
     if (opts.timeout && Number.isFinite(opts.timeout)) {
       entry.timeoutTimer = setTimeoutFn(() => finalize(entry.approvalId, "timeout"), opts.timeout);
     }
+    return true;
   }
 
   function finalize(approvalId, reason) {
@@ -159,6 +161,25 @@ export function createSlackUIContext({
       type: entry.type,
     });
     try { entry.resolve(entry.defaultValue); } catch {}
+  }
+
+  function postRegisteredInteractiveMessage({ entry, opts, postArgs, postedEvent, postedData = () => ({}), failedEvent }) {
+    if (!register(entry, opts)) return;
+    let postPromise;
+    try {
+      postPromise = client.chat.postMessage(postArgs);
+    } catch (err) {
+      trace(failedEvent, { requestId, approvalId: entry.approvalId, error: err?.data?.error || err.message });
+      finalize(entry.approvalId, "post_failed");
+      return;
+    }
+    Promise.resolve(postPromise).then((post) => {
+      if (!entry._finalized) entry.messageTs = post.ts;
+      trace(postedEvent, { requestId, approvalId: entry.approvalId, messageTs: post.ts, ...postedData(post) });
+    }).catch((err) => {
+      trace(failedEvent, { requestId, approvalId: entry.approvalId, error: err?.data?.error || err.message });
+      finalize(entry.approvalId, "post_failed");
+    });
   }
 
   async function confirm(title, message, opts = {}) {
@@ -187,18 +208,17 @@ export function createSlackUIContext({
         ] },
       ];
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `⚠️ Approval requested: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.confirm_posted", { requestId, approvalId, messageTs: post.ts });
-      }).catch((err) => {
-        trace("slack_ui.confirm_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(false);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `⚠️ Approval requested: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.confirm_posted",
+        failedEvent: "slack_ui.confirm_post_failed",
       });
     });
   }
@@ -232,18 +252,18 @@ export function createSlackUIContext({
         })) },
       ];
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Select: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.select_posted", { requestId, approvalId, optionCount: opts_capped.length });
-      }).catch((err) => {
-        trace("slack_ui.select_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(undefined);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `Select: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.select_posted",
+        postedData: () => ({ optionCount: opts_capped.length }),
+        failedEvent: "slack_ui.select_post_failed",
       });
     });
   }
@@ -286,18 +306,17 @@ export function createSlackUIContext({
         ] },
       ];
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `⚠️ Approval requested: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.confirm_with_preview_posted", { requestId, approvalId, messageTs: post.ts });
-      }).catch((err) => {
-        trace("slack_ui.confirm_with_preview_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(false);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `⚠️ Approval requested: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.confirm_with_preview_posted",
+        failedEvent: "slack_ui.confirm_with_preview_post_failed",
       });
     });
   }
@@ -355,18 +374,18 @@ export function createSlackUIContext({
       });
       blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `req: \`${requestId}\` · approval: \`${approvalId}\`` }] });
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Select: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.select_with_context_posted", { requestId, approvalId, optionCount: optionsRich.length });
-      }).catch((err) => {
-        trace("slack_ui.select_with_context_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(undefined);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `Select: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.select_with_context_posted",
+        postedData: () => ({ optionCount: optionsRich.length }),
+        failedEvent: "slack_ui.select_with_context_post_failed",
       });
     });
   }
@@ -406,18 +425,17 @@ export function createSlackUIContext({
         { type: "button", action_id: "pi_uictx_input_skip", text: { type: "plain_text", text: "Skip" }, value: approvalId },
       ] });
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Input requested: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.input_request_posted", { requestId, approvalId });
-      }).catch((err) => {
-        trace("slack_ui.input_request_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(undefined);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `Input requested: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.input_request_posted",
+        failedEvent: "slack_ui.input_request_post_failed",
       });
     });
   }
@@ -447,18 +465,17 @@ export function createSlackUIContext({
         ] },
       ];
 
-      client.chat.postMessage({
-        channel,
-        thread_ts: threadTs,
-        text: `Input requested: ${entry.title}`,
-        blocks,
-      }).then((post) => {
-        entry.messageTs = post.ts;
-        register(entry, opts);
-        trace("slack_ui.input_posted", { requestId, approvalId });
-      }).catch((err) => {
-        trace("slack_ui.input_post_failed", { requestId, approvalId, error: err?.data?.error || err.message });
-        resolve(undefined);
+      postRegisteredInteractiveMessage({
+        entry,
+        opts,
+        postArgs: {
+          channel,
+          thread_ts: threadTs,
+          text: `Input requested: ${entry.title}`,
+          blocks,
+        },
+        postedEvent: "slack_ui.input_posted",
+        failedEvent: "slack_ui.input_post_failed",
       });
     });
   }
@@ -670,10 +687,11 @@ export function resolveInputSubmission({ pendingApprovals, view, body, client, t
     try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
   }
   trace("slack_ui.input_submitted", { approvalId, requestId: entry.requestId, length: value.length });
-  if (entry.messageTs) {
+  const messageTs = entry.messageTs || slackMessageTsFromBody(body);
+  if (messageTs) {
     client.chat.update({
       channel: entry.channel,
-      ts: entry.messageTs,
+      ts: messageTs,
       text: `✅ ${entry.title} — input received${body?.user?.id ? ` from <@${body.user.id}>` : ""}`,
       blocks: [],
     }).catch((err) => trace("slack_ui.input_message_update_failed", { approvalId, error: err?.data?.error || err.message }));
@@ -693,10 +711,11 @@ export function resolveInputCancel({ pendingApprovals, view, body, client, trace
     try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
   }
   trace("slack_ui.input_canceled", { approvalId, requestId: entry.requestId });
-  if (entry.messageTs) {
+  const messageTs = entry.messageTs || slackMessageTsFromBody(body);
+  if (messageTs) {
     client.chat.update({
       channel: entry.channel,
-      ts: entry.messageTs,
+      ts: messageTs,
       text: `❌ ${entry.title} — input canceled${body?.user?.id ? ` by <@${body.user.id}>` : ""}`,
       blocks: [],
     }).catch((err) => trace("slack_ui.input_message_update_failed", { approvalId, error: err?.data?.error || err.message }));
@@ -730,6 +749,10 @@ export function buildInputModalView({ approvalId, title, placeholder }) {
   };
 }
 
+function slackMessageTsFromBody(body) {
+  return body?.message?.ts || body?.container?.message_ts;
+}
+
 function _resolvePendingFromButton({ pendingApprovals, body, client, trace, parse, apply, label }) {
   const parsed = parse();
   if (!parsed?.approvalId) {
@@ -754,10 +777,11 @@ function _resolvePendingFromButton({ pendingApprovals, body, client, trace, pars
     try { entry.signal.removeEventListener("abort", entry.abortHandler); } catch {}
   }
   trace(`slack_ui.${label}_resolved`, { approvalId: parsed.approvalId, requestId: entry.requestId });
-  if (entry.messageTs) {
+  const messageTs = entry.messageTs || slackMessageTsFromBody(body);
+  if (messageTs) {
     client.chat.update({
       channel: entry.channel,
-      ts: entry.messageTs,
+      ts: messageTs,
       text: applied.outcomeText,
       blocks: [],
     }).catch((err) => trace(`slack_ui.${label}_message_update_failed`, { approvalId: parsed.approvalId, error: err?.data?.error || err.message }));
