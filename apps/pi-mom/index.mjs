@@ -8,6 +8,7 @@ import {
 import { runPi, subagentsEnabledFromEnv } from "./lib/pi-sdk-runner.mjs";
 import { runTurn } from "./lib/pi-session.mjs";
 import { createSlackSink } from "./lib/slack-sink.mjs";
+import { buildSlackSessionPlanTitle } from "./lib/slack-session-plan.mjs";
 import { createCanvasSink } from "./lib/canvas-sink.mjs";
 import { createCompositeSink } from "./lib/composite-sink.mjs";
 import {
@@ -282,9 +283,10 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
   const teamId = event.team || event.team_id || event.context_team_id || AUTH_TEAM_ID;
   const recipient = user && teamId ? { user_id: user, team_id: teamId } : undefined;
 
-  // Plan title stays unset — the agent picks its own shape per turn
-  // (skill, canvas, plain answer). The slack-sink falls back to its
-  // timeline rendering when planTitle is undefined.
+  // Always name the Slack stream plan for Pi-backed turns. Without a
+  // planTitle, Slack renders each tool_execution_* as a top-level timeline
+  // item; with one, slack-sink starts task_display_mode="plan" and wraps
+  // the tool chain under a single agent session card.
   const slackSink = createSlackSink({
     client,
     channel,
@@ -292,6 +294,7 @@ async function runPiWithSlackStream({ client, event, channel, threadTs, user, pr
     recipient,
     surface: mode,
     requestId,
+    planTitle: buildSlackSessionPlanTitle(),
     trace,
     redact: redactSensitiveText,
   });
