@@ -42,14 +42,6 @@ for (const key of requiredEnv) {
 }
 
 const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
-function parseAllowedChannelIds(env = process.env) {
-  return String(env.SLACK_ALLOWED_CHANNEL_IDS || env.SLACK_ALLOWED_CHANNEL_ID || "")
-    .split(/[\s,;]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-const ALLOWED_CHANNEL_IDS = parseAllowedChannelIds(process.env);
-const ALLOWED_CHANNEL_ID = ALLOWED_CHANNEL_IDS.join(",");
 const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
 const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
 if (!["echo", "pi"].includes(MODE)) {
@@ -61,10 +53,6 @@ if (!["echo", "pi"].includes(MODE)) {
 // truncated text) has been deleted; if Slack's stream helper is unavailable,
 // the sink throws at start() and the standard error path posts a single
 // chat.postMessage with the error text.
-if (MODE === "pi" && ALLOWED_CHANNEL_IDS.length === 0 && process.env.PI_MOM_ALLOW_ANY_CHANNEL !== "true") {
-  console.error("SLACK_ALLOWED_CHANNEL_ID or SLACK_ALLOWED_CHANNEL_IDS is required in PI_MOM_MODE=pi. Set PI_MOM_ALLOW_ANY_CHANNEL=true to override for local testing.");
-  process.exit(1);
-}
 const PI_MODEL_LABEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING_LABEL = process.env.PI_MOM_THINKING_LEVEL || "high";
 const SUBAGENTS_ENABLED = subagentsEnabledFromEnv(process.env);
@@ -90,11 +78,6 @@ function trace(eventName, data = {}) {
   if (!TRACE_ENABLED) return;
   const entry = { ts: new Date().toISOString(), event: eventName, ...data };
   console.log(`[pi-mom-trace] ${JSON.stringify(entry)}`);
-}
-
-function isAllowedChannel(channel) {
-  if (ALLOWED_CHANNEL_IDS.length > 0) return ALLOWED_CHANNEL_IDS.includes(channel);
-  return process.env.PI_MOM_ALLOW_ANY_CHANNEL === "true";
 }
 
 // Slack encodes &, <, > as HTML entities in event.text so message bodies
@@ -220,7 +203,6 @@ async function formatStatus(client) {
     `• uptime: \`${Number.isFinite(uptimeSeconds) ? uptimeSeconds : "?"}s\`\n` +
     `• ${authLine}\n` +
     `• test channel target: \`#${TEST_CHANNEL_NAME || "?"}\`\n` +
-    `• allowed channel(s): \`${ALLOWED_CHANNEL_ID || "any"}\`\n` +
     `• pi model: \`${PI_MODEL_LABEL || "?"}\` (thinking: \`${PI_THINKING_LABEL || "?"}\`)\n` +
     `• pi tools: \`all registered tools active by default\`\n` +
     `• app extensions: \`default-on\` (Linear, Slack UI, Slack canvas, bridge, Browser Use, git checkpoint, MCP adapter, subagents, pi-web-access)\n` +
@@ -513,7 +495,6 @@ function buildHomeStatusSnapshot() {
   });
   return {
     mode: MODE,
-    allowedChannelId: ALLOWED_CHANNEL_ID || null,
     piModel: PI_MODEL_LABEL,
     piThinking: PI_THINKING_LABEL,
     linearConfigured: integrationHealth.linear.ok,
@@ -601,13 +582,6 @@ async function handleRequest({ client, event, mode, utilities }) {
     toolMode: "all",
   });
 
-  // Channel allowlist applies to channel mentions. DMs (direct_message) and the
-  // Assistant chat tab (assistant) are private to one user and bypass the gate.
-  if (mode === "app_mention" && !isAllowedChannel(channel)) {
-    trace("slack.ignored", { requestId, reason: "channel_not_allowed", channel, allowed: ALLOWED_CHANNEL_ID });
-    return;
-  }
-
   if (command.kind === "help") {
     await client.chat.postMessage({ channel, thread_ts: threadTs, text: formatHelp() });
     trace("slack.replied_help", { requestId, durationMs: Date.now() - start });
@@ -688,15 +662,6 @@ async function handleThreadSpecSlashCommand({ command, client, respond }) {
   }
 
   const targetChannel = reference.channel || channel;
-  if (!isAllowedChannel(targetChannel)) {
-    await respond({
-      response_type: "ephemeral",
-      text: `I can only work in the configured test channel for now. Target channel: \`${targetChannel}\`; allowed channel: \`${ALLOWED_CHANNEL_ID || "any"}\`.`,
-    });
-    trace("slack.command_ignored", { requestId, reason: "channel_not_allowed", targetChannel, allowed: ALLOWED_CHANNEL_ID });
-    return;
-  }
-
   const focus = reference.remainingText || "Turn this Slack thread into a concise PRD/spec draft.";
   await respond({
     response_type: "ephemeral",
@@ -888,7 +853,6 @@ app.assistant(assistant);
     console.log(`Mode: ${MODE}`);
     console.log("Slack streaming: enabled (slack-sink + heartbeat)");
     console.log(`Test channel target: #${TEST_CHANNEL_NAME}`);
-    console.log(`Allowed channel: ${ALLOWED_CHANNEL_ID || "any"}`);
     console.log(`📊 Tracing ${TRACE_ENABLED ? "enabled" : "disabled"}. Look for [pi-mom-trace]`);
   } catch (error) {
     console.error(`❌ Startup failed: ${error.message}`);

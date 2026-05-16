@@ -302,6 +302,5 @@ try {
 }
 
 console.log(`Test channel name: #${process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs"}`);
-console.log(`Allowed channel IDs: ${process.env.SLACK_ALLOWED_CHANNEL_IDS || process.env.SLACK_ALLOWED_CHANNEL_ID || "not restricted yet"}`);
 
 process.exit(ok ? 0 : 1);
