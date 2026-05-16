@@ -104,7 +104,41 @@ function makeFakeTimers() {
   assert.equal(taskChunks[1].status, "error");
 }
 
-// Case 2b: planTitle opts the stream into plan mode + emits a plan_update.
+// Case 2b: subagent task cards display specific agent families when args identify them.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C2b", threadTs: "2.1",
+    surface: "app_mention", requestId: "req_t2b", ...T,
+  });
+  await sink.start({});
+  sink.handle({ type: "tool_execution_start", toolCallId: "tc_kimi", toolName: "subagent", args: { agent: "kimi-analyst" } });
+  // End events may omit args; keep the title selected at start for the same tool call.
+  sink.handle({ type: "tool_execution_end", toolCallId: "tc_kimi", toolName: "subagent" });
+  sink.handle({
+    type: "tool_execution_start",
+    toolCall: {
+      toolCallId: "tc_gemini",
+      toolName: "subagent",
+      arguments: JSON.stringify({ tasks: [{ agent: "gemini-reviewer", task: "Review this" }] }),
+    },
+  });
+  sink.handle({ type: "tool_execution_end", toolCall: { toolCallId: "tc_gemini", toolName: "subagent" } });
+  sink.handle({ type: "tool_execution_start", toolCallId: "tc_general", toolName: "subagent", args: { action: "list" } });
+  await new Promise((r) => setImmediate(r));
+  const taskChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "task_update");
+  assert.equal(taskChunks.find((c) => c.id === "tc_kimi" && c.status === "in_progress")?.title, "kimi-agent");
+  assert.equal(taskChunks.find((c) => c.id === "tc_kimi" && c.status === "complete")?.title, "kimi-agent");
+  assert.equal(taskChunks.find((c) => c.id === "tc_gemini" && c.status === "in_progress")?.title, "gemini-agent");
+  assert.equal(taskChunks.find((c) => c.id === "tc_general" && c.status === "in_progress")?.title, "subagent");
+}
+
+// Case 2c: planTitle opts the stream into plan mode + emits a plan_update.
 {
   const fakeStream = makeFakeStream();
   const client = makeFakeClient({ streamFactory: (args) => { fakeStream._args = args; return fakeStream; } });

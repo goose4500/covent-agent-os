@@ -41,6 +41,66 @@ const DEFAULT_APPEND_BATCH_MS = 200;
 const DEFAULT_MAX_STREAM_CHARS = 9_000;
 const ZERO_WIDTH_SPACE = "​";
 
+function asObjectArgs(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || !(trimmed.startsWith("{") || trimmed.startsWith("["))) return {};
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" ? value : {};
+}
+
+function normalizeToolName(evt = {}) {
+  return String(evt.toolName || evt.toolCall?.toolName || evt.toolCall?.name || evt.name || "tool");
+}
+
+function normalizeToolArgs(evt = {}) {
+  return asObjectArgs(
+    evt.args ??
+    evt.arguments ??
+    evt.input ??
+    evt.toolCall?.args ??
+    evt.toolCall?.arguments ??
+    evt.toolCall?.input ??
+    {},
+  );
+}
+
+function collectAgentNamesFromArgs(args = {}, out = []) {
+  if (!args || typeof args !== "object") return out;
+  if (typeof args.agent === "string" && args.agent.trim()) out.push(args.agent.trim());
+  if (Array.isArray(args.tasks)) {
+    for (const task of args.tasks) collectAgentNamesFromArgs(task, out);
+  }
+  if (Array.isArray(args.chain)) {
+    for (const step of args.chain) {
+      collectAgentNamesFromArgs(step, out);
+      if (Array.isArray(step?.parallel)) {
+        for (const parallel of step.parallel) collectAgentNamesFromArgs(parallel, out);
+      }
+    }
+  }
+  return out;
+}
+
+function displayTitleForToolEvent(evt = {}) {
+  const toolName = normalizeToolName(evt);
+  if (toolName !== "subagent") return toolName;
+
+  const agents = collectAgentNamesFromArgs(normalizeToolArgs(evt));
+  for (const agent of agents) {
+    const normalized = String(agent || "").toLowerCase();
+    if (normalized.includes("kimi")) return "kimi-agent";
+    if (normalized.includes("gemini")) return "gemini-agent";
+  }
+  return "subagent";
+}
+
 export function createSlackSink({
   client,
   channel,
@@ -79,6 +139,7 @@ export function createSlackSink({
   let textBuffer = "";
   let assistantTextChars = 0;
   const textByContentIndex = new Map();
+  const taskTitleByToolCallId = new Map();
   const streamingRedactor = createStreamingRedactor({ redact });
   let textTimer;
   let heartbeatTimer;
@@ -273,18 +334,20 @@ export function createSlackSink({
       }
     } else if (evt.type === "tool_execution_start") {
       const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
-      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
+      const title = displayTitleForToolEvent(evt);
+      taskTitleByToolCallId.set(toolCallId, title);
       appendTaskUpdate({
         id: toolCallId,
-        title: toolName,
+        title,
         status: "in_progress",
       });
     } else if (evt.type === "tool_execution_end") {
       const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
-      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
+      const title = taskTitleByToolCallId.get(toolCallId) || displayTitleForToolEvent(evt);
+      taskTitleByToolCallId.delete(toolCallId);
       appendTaskUpdate({
         id: toolCallId,
-        title: toolName,
+        title,
         status: evt.isError || evt.error || evt.toolCall?.errorMessage ? "error" : "complete",
       });
     }
