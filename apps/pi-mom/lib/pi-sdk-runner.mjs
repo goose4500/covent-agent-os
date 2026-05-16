@@ -181,6 +181,7 @@ import slackCanvasTools from "../../../extensions/slack-canvas-tools.ts";
 // bridge per-turn.
 import bridgeTools from "../../../extensions/bridge-tools.ts";
 import browserUseTools from "../../../extensions/browser-use-tools.ts";
+import xFetchPostTool from "../../../extensions/x-fetch-post-tool.ts";
 import gitCheckpoint from "../../../extensions/git-checkpoint.ts";
 
 const require = createRequire(import.meta.url);
@@ -238,6 +239,7 @@ export async function buildPiMomExtensionFactories({
     slackCanvasTools,
     bridgeTools,
     browserUseTools,
+    xFetchPostTool,
     gitCheckpoint,
     await loadMcpAdapter(),
     await loadSubagents(),

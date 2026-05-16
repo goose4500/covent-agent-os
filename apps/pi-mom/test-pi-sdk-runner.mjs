@@ -320,9 +320,9 @@ function fakeAssistantErrorMessage(message) {
   const loadMcpAdapter = async () => { mcpLoads += 1; return fakeMcpAdapter; };
 
   const factories = await buildPiMomExtensionFactories({ loadSubagents, loadMcpAdapter });
-  assert.equal(factories.length, 9, "default factories: Linear + GitHub PR + Slack UI + Slack canvas + bridge + Browser Use + git checkpoint + pi-mcp-adapter + subagents");
-  assert.equal(factories[7], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
-  assert.equal(factories[8], fakeSubagentExtension, "subagents factory remains default-on (last)");
+  assert.equal(factories.length, 10, "default factories: Linear + GitHub PR + Slack UI + Slack canvas + bridge + Browser Use + X fetch + git checkpoint + pi-mcp-adapter + subagents");
+  assert.equal(factories[8], fakeMcpAdapter, "pi-mcp-adapter factory is default-on, placed before subagents");
+  assert.equal(factories[9], fakeSubagentExtension, "subagents factory remains default-on (last)");
   assert.equal(subagentLoads, 1, "imports pi-subagents exactly once for this loader build");
   assert.equal(mcpLoads, 1, "imports pi-mcp-adapter exactly once for this loader build");
 }
@@ -347,9 +347,9 @@ function fakeAssistantErrorMessage(message) {
   assert.equal(options.noPromptTemplates, false);
   assert.equal(options.noThemes, false);
   assert.equal(options.noContextFiles, false);
-  assert.equal(options.extensionFactories.length, 9);
-  assert.equal(options.extensionFactories[7], fakeMcpAdapter);
-  assert.equal(options.extensionFactories[8], fakeSubagentExtension);
+  assert.equal(options.extensionFactories.length, 10);
+  assert.equal(options.extensionFactories[8], fakeMcpAdapter);
+  assert.equal(options.extensionFactories[9], fakeSubagentExtension);
   assert.deepEqual(options.additionalExtensionPaths, [paths.extensionPath]);
 }
 
@@ -389,6 +389,7 @@ function fakeAssistantErrorMessage(message) {
       "github_get_pr", "github_pr_comment", "github_create_pr", "github_merge_pr",
       "slack_approval_card", "slack_choice_card", "slack_input_request",
       "browser_use_run",
+      "x_fetch_post",
       "subagent",
       "web_search", "fetch_content", "get_search_content", "code_search",
       "mcp",
