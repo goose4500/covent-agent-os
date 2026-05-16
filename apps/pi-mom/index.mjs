@@ -719,6 +719,7 @@ app.action("pi_uictx_input_launch", async ({ ack, body, action, client }) => {
     trace("slack_ui.input_launch_unknown", { approvalId });
     return;
   }
+  entry.messageTs ||= body?.message?.ts || body?.container?.message_ts;
   try {
     await client.views.open({
       trigger_id: body.trigger_id,
