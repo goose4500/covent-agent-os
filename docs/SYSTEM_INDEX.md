@@ -96,6 +96,16 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 - [`docs/adr/0002-linear-is-execution-truth.md`](adr/0002-linear-is-execution-truth.md)
 - [`docs/adr/0003-repo-docs-are-canonical-system-truth.md`](adr/0003-repo-docs-are-canonical-system-truth.md)
 - [`docs/adr/0004-whimsical-is-visual-map-not-canonical-data-store.md`](adr/0004-whimsical-is-visual-map-not-canonical-data-store.md)
+- [`docs/adr/0005-strategy-formalization-deferred.md`](adr/0005-strategy-formalization-deferred.md)
+- [`docs/adr/0006-read-only-github-mcp-access-for-pi-mom.md`](adr/0006-read-only-github-mcp-access-for-pi-mom.md) — superseded by ADR 0010.
+- [`docs/adr/0007-ec2-workspace-root-for-production-pi-mom.md`](adr/0007-ec2-workspace-root-for-production-pi-mom.md)
+- [`docs/adr/0007-polaris-slack-assistant-surface.md`](adr/0007-polaris-slack-assistant-surface.md) — numbering collision retained for history.
+- [`docs/adr/0008-capabilities-declare-their-slack-slash-command-surface.md`](adr/0008-capabilities-declare-their-slack-slash-command-surface.md)
+- [`docs/adr/0009-slack-config-token-auto-rotation.md`](adr/0009-slack-config-token-auto-rotation.md)
+- [`docs/adr/0010-write-capable-github-mcp-for-pi-mom.md`](adr/0010-write-capable-github-mcp-for-pi-mom.md)
+- [`docs/adr/0011-native-pi-tools-for-high-leverage-mcp-workflows.md`](adr/0011-native-pi-tools-for-high-leverage-mcp-workflows.md)
+- [`docs/adr/0012-pi-mom-production-hardening-2026-05-16.md`](adr/0012-pi-mom-production-hardening-2026-05-16.md)
+- [`docs/adr/0013-cli-first-ec2-agent-workstation.md`](adr/0013-cli-first-ec2-agent-workstation.md)
 
 ### History/archive
 
