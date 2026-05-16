@@ -33,6 +33,7 @@ export function buildIntegrationHealth({
   linearTeamId = env.LINEAR_TEAM_ID,
   linearProjectId = env.LINEAR_PROJECT_ID,
   linearStateId = env.LINEAR_STATE_ID,
+  openRouterApiKey = env.OPENROUTER_API_KEY,
 } = {}) {
   const slackStreamingAvailable = typeof slackClient?.chatStream === "function";
 
@@ -43,6 +44,8 @@ export function buildIntegrationHealth({
 
   const linearKeyPresent = hasEnv(env, "LINEAR_API_KEY");
   const linearTargetPresent = Boolean(linearTeamId && linearProjectId && linearStateId);
+
+  const openRouterKeyPresent = Boolean(String(openRouterApiKey || "").trim());
 
   return {
     slackStreaming: {
@@ -68,6 +71,11 @@ export function buildIntegrationHealth({
           ? "LINEAR_API_KEY missing"
           : "target IDs missing",
     },
+    openRouter: {
+      keyPresent: openRouterKeyPresent,
+      ok: openRouterKeyPresent,
+      label: openRouterKeyPresent ? "configured" : "OPENROUTER_API_KEY missing",
+    },
   };
 }
 
@@ -76,6 +84,7 @@ export function formatIntegrationHealthLogLines(health = {}) {
     `Slack streaming support: ${health.slackStreaming?.label || "not checked"}`,
     `Browser Use key: ${health.browserUse?.label || "not checked"}`,
     `Linear config: ${health.linear?.label || "not checked"}`,
+    `OpenRouter: ${health.openRouter?.label || "not checked"}`,
   ];
 }
 

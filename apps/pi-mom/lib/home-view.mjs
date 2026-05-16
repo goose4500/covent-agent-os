@@ -174,6 +174,7 @@ function statusBlocks({ status }) {
   const linear = status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key";
   const slackStream = status.slackStreamingAvailable ? ":white_check_mark: streaming ok" : ":warning: streaming unchecked/missing";
   const browserUse = status.browserUseConfigured ? ":white_check_mark: Browser Use key" : ":warning: Browser Use key missing";
+  const openRouter = status.openRouterConfigured ? ":white_check_mark: OpenRouter" : ":warning: OpenRouter key missing";
   const subagents = status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled";
   const uptime = Number.isFinite(status.uptimeSeconds) ? `${status.uptimeSeconds}s` : "—";
   return [
@@ -181,6 +182,7 @@ function statusBlocks({ status }) {
       `:satellite_antenna: *Status* · mode \`${status.mode || "?"}\`` +
         ` · Slack ${slackStream}` +
         ` · ${browserUse}` +
+        ` · ${openRouter}` +
         ` · Linear ${linear}` +
         ` · team subagents ${subagents}` +
         ` · uptime ${uptime}`,
@@ -234,6 +236,7 @@ export function buildSettingsModalView({ status, prefs } = {}) {
     lines.push(`*Pi model*: \`${status.piModel || "?"}\` (thinking \`${status.piThinking || "?"}\`)`);
     lines.push(`*Slack streaming*: ${status.slackStreamingAvailable ? ":white_check_mark: client.chatStream available" : ":warning: client.chatStream missing/unchecked"}`);
     lines.push(`*Browser Use key*: ${status.browserUseConfigured ? ":white_check_mark: configured" : ":warning: missing"}`);
+    lines.push(`*OpenRouter*: ${status.openRouterConfigured ? ":white_check_mark: configured" : ":warning: OPENROUTER_API_KEY missing"}`);
     lines.push(`*Linear*: ${status.linearConfigured ? ":white_check_mark: configured" : ":warning: missing key"}`);
     lines.push(`*Team subagents*: ${status.subagentsEnabled ? ":white_check_mark: enabled" : ":pause_button: disabled"}`);
     lines.push(`*Trace*: \`${status.traceEnabled ? "on" : "off"}\``);

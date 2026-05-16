@@ -502,6 +502,7 @@ function buildHomeStatusSnapshot() {
     linearConfigured: integrationHealth.linear.ok,
     slackStreamingAvailable: integrationHealth.slackStreaming.ok,
     browserUseConfigured: integrationHealth.browserUse.ok,
+    openRouterConfigured: integrationHealth.openRouter.ok,
     subagentsEnabled: SUBAGENTS_ENABLED,
     traceEnabled: TRACE_ENABLED,
     uptimeSeconds: Math.round((Date.now() - STARTED_AT.getTime()) / 1000),

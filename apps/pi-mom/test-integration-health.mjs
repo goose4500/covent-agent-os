@@ -16,18 +16,39 @@ import {
     linearTeamId: "team-id",
     linearProjectId: "project-id",
     linearStateId: "state-id",
+    openRouterApiKey: "sk-or-v1-test-key",
   });
   assert.equal(health.slackStreaming.ok, true);
   assert.equal(health.browserUse.ok, true);
   assert.equal(health.browserUse.source, "env");
   assert.equal(health.linear.ok, true);
+  assert.equal(health.openRouter.ok, true);
+  assert.equal(health.openRouter.label, "configured");
 
   const lines = formatIntegrationHealthLogLines(health).join("\n");
   assert.match(lines, /Slack streaming support: ok/);
   assert.match(lines, /Browser Use key: configured \(env\)/);
   assert.match(lines, /Linear config: configured/);
+  assert.match(lines, /OpenRouter: configured/);
   assert.doesNotMatch(lines, /bu_live_secret_value/);
   assert.doesNotMatch(lines, /lin_api_secret_value/);
+  assert.doesNotMatch(lines, /sk-or-v1-test-key/);
+}
+
+// OpenRouter key missing — reports warning.
+{
+  const health = buildIntegrationHealth({
+    env: {},
+    slackClient: { chatStream() {} },
+    fileExists: () => false,
+    linearTeamId: "team-id",
+    linearProjectId: "project-id",
+    linearStateId: "state-id",
+  });
+  assert.equal(health.openRouter.ok, false);
+  assert.equal(health.openRouter.label, "OPENROUTER_API_KEY missing");
+  const lines = formatIntegrationHealthLogLines(health).join("\n");
+  assert.match(lines, /OpenRouter: OPENROUTER_API_KEY missing/);
 }
 
 // Missing env Browser Use key can still be present via the local secret file;

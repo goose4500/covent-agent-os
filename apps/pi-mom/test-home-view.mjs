@@ -159,6 +159,7 @@ function viewText(view) {
       linearConfigured: true,
       slackStreamingAvailable: true,
       browserUseConfigured: true,
+      openRouterConfigured: true,
       subagentsEnabled: true,
       uptimeSeconds: 42,
     },
@@ -168,6 +169,7 @@ function viewText(view) {
   assert.match(text, /mode `pi`/);
   assert.match(text, /Slack :white_check_mark: streaming ok/);
   assert.match(text, /Browser Use key/);
+  assert.match(text, /OpenRouter/);
   assert.match(text, /Linear :white_check_mark: configured/);
   assert.match(text, /team subagents :white_check_mark: enabled/);
   assert.match(text, /uptime 42s/);
@@ -176,7 +178,7 @@ function viewText(view) {
 // ---------- case 11: settings modal builder shape ----------
 {
   const modal = buildSettingsModalView({
-    status: { mode: "echo", linearConfigured: false, slackStreamingAvailable: false, browserUseConfigured: false, subagentsEnabled: false, traceEnabled: true, uptimeSeconds: 9 },
+    status: { mode: "echo", linearConfigured: false, slackStreamingAvailable: false, browserUseConfigured: false, openRouterConfigured: false, subagentsEnabled: false, traceEnabled: true, uptimeSeconds: 9 },
   });
   assert.equal(modal.type, "modal");
   assert.equal(modal.callback_id, "home_settings_modal");
