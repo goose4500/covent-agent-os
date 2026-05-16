@@ -12,18 +12,26 @@ const CHILD_EXTENSION_PATHS = [
   "../../extensions/git-checkpoint.ts",
   "node_modules/pi-web-access/index.ts",
 ];
+// kimi-analyst is read-only research: no approval cards or git checkpointing.
+const KIMI_EXTENSION_PATHS = [
+  "../../extensions/linear-tools.ts",
+  "../../extensions/browser-use-tools.ts",
+  "node_modules/pi-web-access/index.ts",
+];
 const expectedSkills = new Map([
   ["team-scout", ["covent-project-context-primer"]],
   ["team-planner", ["covent-project-context-primer"]],
   ["team-reviewer-readonly", ["covent-project-context-primer"]],
+  ["kimi-analyst", ["covent-project-context-primer"]],
 ]);
-// Read-only/scout-like team agents default to Gemini 3.1 Flash Lite Preview
-// via Pi's `google` provider (Google Generative AI direct, GEMINI_API_KEY).
-// team-planner stays on the Codex GPT-5.5 model used by the parent session.
+// Read-only/scout-like team agents default to Gemini 3.1 Flash Lite Preview.
+// team-planner stays on GPT-5.5. kimi-analyst uses Kimi K2.6 via OpenRouter
+// for its 262K context window.
 const expectedModels = new Map([
   ["team-scout", "google/gemini-3.1-flash-lite-preview"],
   ["team-planner", "openai-codex/gpt-5.5"],
   ["team-reviewer-readonly", "google/gemini-3.1-flash-lite-preview"],
+  ["kimi-analyst", "openrouter/moonshotai/kimi-k2.6"],
 ]);
 const projectSkillSources = new Set(["project", "project-package", "project-settings"]);
 
@@ -57,6 +65,21 @@ for (const name of ["team-scout", "team-planner", "team-reviewer-readonly"]) {
     assert.ok(projectSkillSources.has(resolved.source), `${name} skill ${skillName} should be project-owned, got ${resolved.source}`);
     assert.ok(isUnderDir(resolved.path, projectSkillsDir), `${name} skill ${skillName} should resolve under repo skills/, got ${resolved.path}`);
   }
+}
+
+// kimi-analyst: OpenRouter Kimi K2.6 long-context analyst with trimmed extension surface.
+{
+  const name = "kimi-analyst";
+  assert.ok(byName.has(name), "kimi-analyst should be discoverable as a project subagent");
+  const agent = byName.get(name);
+  assert.equal(agent.source, "project", "kimi-analyst must be project-scoped");
+  assert.equal(agent.model, expectedModels.get(name), "kimi-analyst should pin openrouter/moonshotai/kimi-k2.6");
+  assert.equal(agent.disabled, undefined, "kimi-analyst should be executable");
+  assert.equal(agent.inheritSkills, true, "kimi-analyst should inherit skills");
+  assert.deepEqual(agent.skills || [], expectedSkills.get(name), "kimi-analyst should load the project primer");
+  assert.deepEqual(agent.tools || [], [], "kimi-analyst should not carry a tool allowlist");
+  assert.deepEqual(agent.extensions || [], KIMI_EXTENSION_PATHS, "kimi-analyst loads research extensions only");
+  assert.match(agent.systemPrompt, /262K/i, "kimi-analyst prompt documents the context window advantage");
 }
 
 console.log("subagent project agent tests passed");
