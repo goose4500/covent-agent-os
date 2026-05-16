@@ -103,7 +103,7 @@ PI_MOM_MODE=pi                     echo | pi
 PI_MOM_MODEL                       openai-codex/gpt-5.5
 PI_MOM_THINKING_LEVEL              high
 PI_MOM_TRACE                       true
-PI_TIMEOUT_MS                      180000   wall-clock per Pi run
+PI_TIMEOUT_MS                      720000   wall-clock per Pi run
 PI_OFFLINE                         1        no SDK auto-npm-install
 # Subagents and web access are default-on in code; no feature flag required.
 PI_ALLOW_BROWSER_COOKIES           0        keep Gemini Web browser cookies off by default

@@ -282,7 +282,7 @@ export function resolvePiWorkdir(env = process.env, cwd = process.cwd()) {
   return env.PI_WORKDIR || cwd || env.HOME;
 }
 
-const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 180000);
+const PI_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS || 720000);
 const PI_MODEL = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
 const PI_THINKING = process.env.PI_MOM_THINKING_LEVEL || "high";
 const PI_WORKDIR = resolvePiWorkdir();
