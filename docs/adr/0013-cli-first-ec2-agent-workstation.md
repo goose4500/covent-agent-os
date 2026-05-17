@@ -2,15 +2,15 @@
 
 Date: 2026-05-16
 Status: accepted
-Related: ADR 0007, ADR 0010, ADR 0011, ADR 0012
+Related: ADR 0007, ADR 0010, ADR 0011, ADR 0012, ADR 0015
 
 ## Context
 
 Covent's Slack/Pi agent system now has three overlapping ways to touch GitHub, Git, and Railway:
 
 1. **Shell/CLI through Pi bash** — `git`, `gh`, `railway`, `bun`, `pi`, and normal Unix tools in the agent workspace.
-2. **MCP proxy tools** — e.g. GitHub MCP through `mcp({ server: "github", tool: "…" })`.
-3. **Native Pi tools** — hand-written wrappers such as `github_create_pr`, `github_merge_pr`, Linear tools, and Slack UI tools.
+2. **MCP proxy tools** — non-GitHub servers reached through `mcp({ server: "…", tool: "…" })`.
+3. **Native Pi tools** — hand-written wrappers such as Linear tools and Slack UI tools.
 
 The EC2 workspace became much less valuable than Jake's personal CLI because it was missing the everyday operator layer: Git identity, GitHub CLI auth, Railway CLI auth/linking, and normal PATH access to the project runtimes. Without that layer, agents could reason about work but could not reliably perform basic engineering operations in the shared environment.
 
@@ -66,29 +66,13 @@ Do **not** remove MCP or native tools categorically. Keep them where they add le
 
 - **Slack UI tools** for approval cards, choice cards, input requests, and canvases.
 - **Linear tools** for structured issue search/create/comment behavior with predictable output shapes.
-- **Native GitHub PR tools** when a Slack turn needs forced approval UX, redaction, and structured responses around PR create/merge.
 - **MCP proxy** for broad structured API access, one-off discovery, or surfaces where the CLI is weaker.
 
 But do not wrap `gh` or `railway` commands merely because they exist. A native wrapper should clear the ADR 0011 bar: frequent, safety-critical, schema-stable enough to own, and materially improved by Pi-native UI/telemetry.
 
-### GitHub MCP posture on EC2
+### GitHub posture on EC2
 
-The EC2 GitHub MCP config should not remain artificially read-only if the same machine also has an authenticated `gh` CLI. Keep the GitHub MCP server bounded by toolsets and env-var token reference, but remove read-only/lockdown headers:
-
-```json
-{
-  "url": "https://api.githubcopilot.com/mcp/",
-  "auth": "bearer",
-  "bearerTokenEnv": "GITHUB_MCP_PAT",
-  "headers": {
-    "X-MCP-Toolsets": "context,repos,pull_requests,issues,actions"
-  },
-  "directTools": false,
-  "lifecycle": "lazy"
-}
-```
-
-`directTools: false` remains the default so the MCP surface stays behind the single `mcp` proxy unless a future ADR explicitly promotes a subset.
+ADR 0015 supersedes the earlier GitHub MCP posture: do not keep a GitHub MCP server or native `github_*` tools in the active pi-mom surface. Use the authenticated local `gh` CLI for GitHub operations after explicit Slack intent/approval. Keep `pi-mcp-adapter` for non-GitHub servers.
 
 ## Credential posture
 
@@ -125,7 +109,7 @@ git ls-remote origin main              → returns refs/heads/main
 pi --version                           → 0.74.0
 ```
 
-EC2 GitHub MCP config was also updated to remove `X-MCP-Readonly` and `X-MCP-Lockdown`, with a timestamped local backup retained under `/home/ubuntu/.pi/agent/`.
+ADR 0015 later retired the GitHub MCP config entirely in favor of the authenticated `gh` CLI. Operators should remove any persisted legacy `github` server entry from the active agent `mcp.json` without printing token values.
 
 ## Consequences
 
@@ -146,8 +130,8 @@ Trade-offs:
 
 ## Non-goals
 
-- Do not delete existing MCP/native integrations only because the CLI exists.
-- Do not expose every GitHub MCP tool as direct top-level Pi tools by default.
+- Do not delete non-GitHub MCP/native integrations only because a CLI exists.
+- Do not expose every MCP tool as direct top-level Pi tools by default.
 - Do not make EC2 secret storage canonical. Durable secret truth belongs in the approved secret manager / Railway variables / future AWS secret store, not checked-in files or docs.
 - Do not treat a successful CLI setup as permission to deploy, restart, merge, or rotate secrets without current explicit approval.
 
