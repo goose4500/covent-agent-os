@@ -49,7 +49,9 @@ for (const key of requiredEnv) {
 }
 
 const TEST_CHANNEL_NAME = process.env.SLACK_TEST_CHANNEL_NAME || "idea-specs";
+const DEFAULT_ZIP_INTAKE_CHANNEL_NAME = "polaris-prd-intake";
 const SLACK_ZIP_INTAKE_CHANNEL_ID = process.env.SLACK_ZIP_INTAKE_CHANNEL_ID || process.env.SLACK_ALLOWED_CHANNEL_ID || process.env.SLACK_TEST_CHANNEL_ID || "";
+const SLACK_ZIP_INTAKE_CHANNEL_NAME = process.env.SLACK_ZIP_INTAKE_CHANNEL_NAME || DEFAULT_ZIP_INTAKE_CHANNEL_NAME;
 const EXPECTED_SLACK_BOT_USER = process.env.EXPECTED_SLACK_BOT_USER || "covent_pi";
 const MODE = process.env.PI_MOM_MODE || "echo"; // echo | pi
 if (!["echo", "pi"].includes(MODE)) {
@@ -555,14 +557,15 @@ const channelNameCache = new Map();
 async function isSlackZipIntakeAllowedChannel(client, channel) {
   if (!channel) return false;
   if (SLACK_ZIP_INTAKE_CHANNEL_ID) return channel === SLACK_ZIP_INTAKE_CHANNEL_ID;
-  if (!TEST_CHANNEL_NAME) return false;
-  if (channelNameCache.has(channel)) return channelNameCache.get(channel) === TEST_CHANNEL_NAME;
+  const allowedName = SLACK_ZIP_INTAKE_CHANNEL_NAME || TEST_CHANNEL_NAME;
+  if (!allowedName) return false;
+  if (channelNameCache.has(channel)) return channelNameCache.get(channel) === allowedName;
 
   try {
     const res = await client.conversations.info({ channel });
     const name = res?.channel?.name || "";
     channelNameCache.set(channel, name);
-    return name === TEST_CHANNEL_NAME;
+    return name === allowedName;
   } catch (error) {
     trace("slack_zip.channel_lookup_failed", {
       channel,
