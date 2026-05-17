@@ -95,6 +95,7 @@ settings:
     - app_home_opened
     - assistant_thread_context_changed
     - assistant_thread_started
+    - file_shared
     - message.im
   interactivity:
     is_enabled: true
