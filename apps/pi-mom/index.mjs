@@ -578,18 +578,13 @@ async function isSlackZipIntakeAllowedChannel(client, channel) {
 async function handleSlackFileSharedEvent({ event, client, context, body }) {
   const fileId = event?.file_id || event?.file?.id;
   const eventChannel = event?.channel_id || event?.channel;
-  const eventThreadTs = event?.thread_ts || event?.event_ts || event?.ts;
+  const eventThreadTs = event?.thread_ts || event?.ts;
   const user = event?.user_id || event?.user;
   const retryAttempt = body?.retry_attempt || body?.retry_num;
 
   if (!fileId) return;
   if (retryAttempt) {
-    trace("slack_zip.retry_ignored", { fileId, channel: eventChannel, retryAttempt });
-    return;
-  }
-  if (context?.botUserId && user === context.botUserId) {
-    trace("slack_zip.self_ignored", { fileId, channel: eventChannel });
-    return;
+    trace("slack_zip.retry_seen", { fileId, channel: eventChannel, retryAttempt });
   }
 
   let fileInfo;
@@ -598,8 +593,8 @@ async function handleSlackFileSharedEvent({ event, client, context, body }) {
   try {
     fileInfo = await client.files.info({ file: fileId });
     const shareContext = findShareContext(fileInfo?.file || {}, eventChannel);
-    channel = channel || shareContext.channel;
-    threadTs = threadTs || shareContext.threadTs || shareContext.messageTs;
+    channel = shareContext.channel || channel;
+    threadTs = shareContext.threadTs || shareContext.messageTs || threadTs || event?.event_ts;
   } catch (error) {
     trace("slack_zip.file_info_failed", { fileId, channel: eventChannel, error: error?.data?.error || error?.message || "unknown" });
     return;
