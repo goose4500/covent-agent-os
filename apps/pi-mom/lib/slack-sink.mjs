@@ -83,6 +83,8 @@ export function createSlackSink({
   let textTimer;
   let heartbeatTimer;
   let lastActivityMs = now();
+  let fallbackToolSeq = 0;
+  const pendingFallbackToolIdsByName = new Map();
 
   function buildStreamArgs() {
     const args = { channel, thread_ts: threadTs };
@@ -243,6 +245,38 @@ export function createSlackSink({
     touch();
   }
 
+  function explicitToolCallId(evt = {}) {
+    return evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || evt.id || "";
+  }
+
+  function normalizeToolName(evt = {}) {
+    return evt.toolName || evt.toolCall?.toolName || evt.toolCall?.name || evt.name || "tool";
+  }
+
+  function allocateFallbackToolId(toolName) {
+    const id = `tool_fallback_${++fallbackToolSeq}`;
+    const pending = pendingFallbackToolIdsByName.get(toolName) || [];
+    pending.push(id);
+    pendingFallbackToolIdsByName.set(toolName, pending);
+    return id;
+  }
+
+  function consumeFallbackToolId(toolName) {
+    const pending = pendingFallbackToolIdsByName.get(toolName);
+    if (!pending?.length) return `tool_fallback_${++fallbackToolSeq}`;
+    const id = pending.shift();
+    if (pending.length === 0) pendingFallbackToolIdsByName.delete(toolName);
+    return id;
+  }
+
+  function toolCallIdForStart(evt, toolName) {
+    return explicitToolCallId(evt) || allocateFallbackToolId(toolName);
+  }
+
+  function toolCallIdForEnd(evt, toolName) {
+    return explicitToolCallId(evt) || consumeFallbackToolId(toolName);
+  }
+
   function handle(evt) {
     if (!evt || stopped) return;
     if (evt.type === "message_update" && evt.assistantMessageEvent) {
@@ -272,16 +306,16 @@ export function createSlackSink({
         }
       }
     } else if (evt.type === "tool_execution_start") {
-      const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
-      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
+      const toolName = normalizeToolName(evt);
+      const toolCallId = toolCallIdForStart(evt, toolName);
       appendTaskUpdate({
         id: toolCallId,
         title: toolName,
         status: "in_progress",
       });
     } else if (evt.type === "tool_execution_end") {
-      const toolCallId = evt.toolCallId || evt.toolCall?.toolCallId || evt.toolCall?.id || `tool_${streamedChars}`;
-      const toolName = evt.toolName || evt.toolCall?.toolName || "tool";
+      const toolName = normalizeToolName(evt);
+      const toolCallId = toolCallIdForEnd(evt, toolName);
       appendTaskUpdate({
         id: toolCallId,
         title: toolName,

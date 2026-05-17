@@ -104,7 +104,65 @@ function makeFakeTimers() {
   assert.equal(taskChunks[1].status, "error");
 }
 
-// Case 2b: planTitle opts the stream into plan mode + emits a plan_update.
+// Case 2b: missing tool ids get stable fallback ids even when streamed text changes.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C2b", threadTs: "2.1",
+    surface: "app_mention", requestId: "req_t2b",
+    appendBatchMs: 100, ...T,
+  });
+  await sink.start({ initialText: "go" });
+  sink.handle({ type: "tool_execution_start", toolName: "read" });
+  sink.handle({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: " while running" } });
+  const flushTimerId = T.timers.findIndex((t) => t.kind === "to" && !t.cleared);
+  await T.fireTimer(flushTimerId);
+  sink.handle({ type: "tool_execution_end", toolName: "read" });
+  await new Promise((r) => setImmediate(r));
+  const taskChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "task_update");
+  assert.equal(taskChunks.length, 2, "two fallback task_update chunks");
+  assert.equal(taskChunks[0].title, "read");
+  assert.equal(taskChunks[1].title, "read");
+  assert.equal(taskChunks[0].status, "in_progress");
+  assert.equal(taskChunks[1].status, "complete");
+  assert.equal(taskChunks[0].id, taskChunks[1].id, "fallback task id remains stable across text appends");
+}
+
+// Case 2c: alternate tool name shapes are used as titles and stable fallback keys.
+{
+  const fakeStream = makeFakeStream();
+  const client = makeFakeClient({ streamFactory: () => fakeStream });
+  const T = makeFakeTimers();
+  const sink = createSlackSink({
+    client, channel: "C2c", threadTs: "2.15",
+    surface: "app_mention", requestId: "req_t2c", ...T,
+  });
+  await sink.start({});
+  sink.handle({ type: "tool_execution_start", toolCall: { name: "shell" } });
+  sink.handle({ type: "tool_execution_end", toolCall: { name: "shell" } });
+  sink.handle({ type: "tool_execution_start", name: "search" });
+  sink.handle({ type: "tool_execution_end", name: "search", isError: true });
+  await new Promise((r) => setImmediate(r));
+  const taskChunks = fakeStream.appends
+    .filter((a) => Array.isArray(a.chunks))
+    .flatMap((a) => a.chunks)
+    .filter((c) => c.type === "task_update");
+  assert.equal(taskChunks.length, 4, "four task_update chunks for alternate name shapes");
+  assert.equal(taskChunks[0].title, "shell");
+  assert.equal(taskChunks[1].title, "shell");
+  assert.equal(taskChunks[0].id, taskChunks[1].id, "toolCall.name fallback id is stable");
+  assert.equal(taskChunks[2].title, "search");
+  assert.equal(taskChunks[3].title, "search");
+  assert.equal(taskChunks[2].id, taskChunks[3].id, "top-level name fallback id is stable");
+  assert.equal(taskChunks[3].status, "error");
+}
+
+// Case 2d: planTitle opts the stream into plan mode + emits a plan_update.
 {
   const fakeStream = makeFakeStream();
   const client = makeFakeClient({ streamFactory: (args) => { fakeStream._args = args; return fakeStream; } });
