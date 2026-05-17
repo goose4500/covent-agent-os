@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Sync the Slack app manifest's slash_commands block from declarations in
 // skills/, extensions/, and .mcp.json. Optionally pushes the manifest to
-// Slack via apps.manifest.update.
+// Slack via apps.manifest.update, merging repo-declared bot events/scopes so
+// production event subscriptions do not drift behind manifest.yaml.
 //
 // Modes:
 //   (default)  : regenerate, write file if changed, print summary
@@ -21,6 +22,7 @@ import {
 } from "../apps/pi-mom/lib/slash-command-discovery.mjs";
 import {
   applySlashCommandsToManifest,
+  mergeRepoManifestCapabilities,
 } from "../apps/pi-mom/lib/slack-manifest-sync.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -48,10 +50,11 @@ function printHelp() {
   );
 }
 
-// Push strategy: export live manifest → patch slash_commands → push as JSON.
-// This avoids sending the repo's YAML directly (Slack expects JSON) and
-// prevents accidentally overwriting live settings we don't control (user
-// scopes, functions, hermes_app_type, is_mcp_enabled, etc.).
+// Push strategy: export live manifest → patch slash_commands + required
+// repo-declared bot events/scopes → push as JSON. This avoids sending the
+// repo's YAML directly (Slack expects JSON) and prevents accidentally
+// overwriting live settings we don't control (user scopes, functions,
+// hermes_app_type, is_mcp_enabled, etc.).
 async function pushToSlack(commands) {
   const token = process.env.SLACK_APP_CONFIG_TOKEN;
   const appId = process.env.SLACK_APP_ID;
@@ -71,8 +74,12 @@ async function pushToSlack(commands) {
     throw new Error(`apps.manifest.export failed: ${expData.error || JSON.stringify(expData)}`);
   }
 
-  // 2. Patch slash_commands in the live manifest object.
-  const manifest = expData.manifest;
+  // 2. Patch slash_commands and merge required manifest capabilities in the
+  // live manifest object.
+  const { manifest, requiredBotEvents, requiredBotScopes } = mergeRepoManifestCapabilities(
+    expData.manifest,
+    readFileSync(MANIFEST_PATH, "utf-8"),
+  );
   manifest.features = manifest.features ?? {};
   manifest.features.slash_commands = commands.map((c) => {
     const entry = { command: c.command, description: c.description, should_escape: c.should_escape ?? false };
@@ -93,7 +100,7 @@ async function pushToSlack(commands) {
       : data.response_metadata?.messages?.join("; ") || data.error || JSON.stringify(data);
     throw new Error(`apps.manifest.update failed: ${detail}`);
   }
-  return data;
+  return { ...data, requiredBotEvents, requiredBotScopes };
 }
 
 async function main() {
@@ -153,7 +160,11 @@ async function main() {
     process.stdout.write("Pushing manifest to Slack via apps.manifest.update…\n");
     const result = await pushToSlack(commands);
     const permalink = result.permalink || `app_id=${process.env.SLACK_APP_ID}`;
-    process.stdout.write(`✓ Slack manifest updated (${permalink}).\n`);
+    process.stdout.write(
+      `✓ Slack manifest updated (${permalink}).\n` +
+        `  merged bot events: ${result.requiredBotEvents.join(", ") || "(none)"}\n` +
+        `  merged bot scopes: ${result.requiredBotScopes.length} repo-declared scope(s)\n`,
+    );
   }
 }
 
