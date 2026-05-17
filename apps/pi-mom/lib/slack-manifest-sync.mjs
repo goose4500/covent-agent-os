@@ -1,10 +1,13 @@
-// Regenerates the `slash_commands:` block in apps/pi-mom/manifest.yaml from
-// the slash commands discovered across skills, extensions, and MCP servers.
+// Regenerates selected Slack app manifest surfaces from repo declarations.
 //
 // We do line-based replacement instead of a full YAML round-trip so the rest
 // of the manifest (scope ordering, comments-via-spacing, ordering of feature
 // blocks) is preserved exactly. The manifest has a stable shape today and is
-// edited via this script for the slash_commands surface only.
+// edited via this script for the slash_commands surface.
+//
+// For live Slack pushes, we export the current Slack manifest and merge in
+// repo-declared required capabilities (bot events/scopes) so production event
+// subscriptions do not drift when a PR changes apps/pi-mom/manifest.yaml.
 
 const FEATURE_INDENT = "  ";
 const ITEM_INDENT = "  ";
@@ -74,4 +77,76 @@ export function applySlashCommandsToManifest(manifestText, commands) {
   const before = lines.slice(0, oauthIdx);
   const after = lines.slice(oauthIdx);
   return [...before, ...blockLines, ...after].join("\n");
+}
+
+export function extractYamlListAtPath(manifestText, path) {
+  const wanted = Array.isArray(path) ? path : String(path).split(".");
+  const lines = manifestText.split("\n");
+  const stack = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^(\s*)([A-Za-z_][A-Za-z0-9_-]*):(?:\s|$)/.exec(lines[i]);
+    if (!match) continue;
+
+    const indent = match[1].length;
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack.push({ key: match[2], indent });
+
+    if (stack.map((entry) => entry.key).join(".") !== wanted.join(".")) continue;
+
+    const values = [];
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const line = lines[j];
+      if (!line.trim()) continue;
+
+      const nextKey = /^(\s*)([A-Za-z_][A-Za-z0-9_-]*):(?:\s|$)/.exec(line);
+      if (nextKey && nextKey[1].length <= indent) break;
+
+      const item = /^\s*-\s+(.+?)\s*$/.exec(line);
+      if (item) values.push(stripYamlScalarQuotes(item[1]));
+    }
+    return values;
+  }
+
+  return [];
+}
+
+function stripYamlScalarQuotes(value) {
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'");
+  if (value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1).replace(/\\"/g, '"');
+  return value;
+}
+
+function mergeUnique(existing = [], required = []) {
+  const out = Array.isArray(existing) ? [...existing] : [];
+  for (const value of required || []) {
+    if (typeof value === "string" && value && !out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+export function mergeRepoManifestCapabilities(liveManifest, repoManifestText) {
+  const manifest = structuredClone(liveManifest || {});
+  const requiredBotEvents = extractYamlListAtPath(repoManifestText, ["settings", "event_subscriptions", "bot_events"]);
+  const requiredBotScopes = extractYamlListAtPath(repoManifestText, ["oauth_config", "scopes", "bot"]);
+
+  manifest.settings ??= {};
+  manifest.settings.event_subscriptions ??= {};
+  manifest.settings.event_subscriptions.bot_events = mergeUnique(
+    manifest.settings.event_subscriptions.bot_events,
+    requiredBotEvents,
+  );
+
+  manifest.oauth_config ??= {};
+  manifest.oauth_config.scopes ??= {};
+  manifest.oauth_config.scopes.bot = mergeUnique(
+    manifest.oauth_config.scopes.bot,
+    requiredBotScopes,
+  );
+
+  return {
+    manifest,
+    requiredBotEvents,
+    requiredBotScopes,
+  };
 }

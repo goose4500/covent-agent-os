@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   applySlashCommandsToManifest,
+  extractYamlListAtPath,
   findSlashCommandsRange,
+  mergeRepoManifestCapabilities,
   renderSlashCommandsBlock,
 } from "./lib/slack-manifest-sync.mjs";
 import { discoverSlashCommands } from "./lib/slash-command-discovery.mjs";
@@ -83,7 +85,33 @@ const MANIFEST_PATH = resolve(REPO_ROOT, "apps/pi-mom/manifest.yaml");
   assert.match(out, /\noauth_config:/);
 }
 
-// 7. DRIFT CHECK: live manifest matches discovered commands.
+// 7. extractYamlListAtPath: reads repo-declared bot events/scopes from the manifest.
+{
+  const text = readFileSync(MANIFEST_PATH, "utf-8");
+  assert.ok(
+    extractYamlListAtPath(text, ["settings", "event_subscriptions", "bot_events"]).includes("file_shared"),
+    "live manifest fixture must declare file_shared",
+  );
+  assert.ok(
+    extractYamlListAtPath(text, ["oauth_config", "scopes", "bot"]).includes("files:read"),
+    "live manifest fixture must declare files:read",
+  );
+}
+
+// 8. mergeRepoManifestCapabilities: live Slack pushes keep existing settings
+//    while adding newly-required repo-declared bot events/scopes.
+{
+  const repoManifest = `oauth_config:\n  scopes:\n    bot:\n    - chat:write\n    - files:read\nsettings:\n  event_subscriptions:\n    bot_events:\n    - app_mention\n    - file_shared\n`;
+  const liveManifest = {
+    oauth_config: { scopes: { bot: ["chat:write"] } },
+    settings: { event_subscriptions: { bot_events: ["app_home_opened"] } },
+  };
+  const { manifest } = mergeRepoManifestCapabilities(liveManifest, repoManifest);
+  assert.deepEqual(manifest.settings.event_subscriptions.bot_events, ["app_home_opened", "app_mention", "file_shared"]);
+  assert.deepEqual(manifest.oauth_config.scopes.bot, ["chat:write", "files:read"]);
+}
+
+// 9. DRIFT CHECK: live manifest matches discovered commands.
 //    If this fails, run `bun scripts/sync-slack-manifest.mjs` and commit the diff.
 {
   const text = readFileSync(MANIFEST_PATH, "utf-8");
