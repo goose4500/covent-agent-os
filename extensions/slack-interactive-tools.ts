@@ -86,10 +86,12 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
       "slack_approval_card: pause and ask for human approval with a previewed preview before a mutation.",
     promptGuidelines: [
       "Call slack_approval_card before any irreversible or high-impact action when the user has not pre-approved it in the current turn.",
+      "Call this as the only tool in its assistant step. Do not combine it with the tool/action it is approving; wait for the approval result first.",
       "Put the proposed change in `preview_md` (full markdown). Keep `summary` to one line that explains why approval is being asked.",
-      "Wait for the result. 'approved' → proceed with the action. 'rejected' or 'timeout' → stop and tell the user.",
+      "Wait for the result. 'approved' → continue in the same turn and execute the approved action. 'rejected' or 'timeout' → stop and tell the user.",
       "Do not chain back-to-back approval cards for the same decision; one approval covers the whole next mutation.",
     ],
+    executionMode: "sequential",
     parameters: Type.Object({
       title: Type.String({
         description: "Header text. e.g. 'Create Linear issue?' or 'Run rm -rf?'",
@@ -156,10 +158,12 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
       "slack_choice_card: ask the user to pick one of N options when the right path is ambiguous.",
     promptGuidelines: [
       "Use slack_choice_card when the agent has 2–5 candidate paths and the user is best placed to disambiguate.",
+      "Call this as the only tool in its assistant step. Do not combine it with tools that depend on the user's choice; wait for the selected id first.",
       "Give each option a stable, distinctive `id`; the model receives back that id verbatim.",
       "Put the human-readable context (issue title/state, file path/preview, etc.) in `context_md` so the user can decide without leaving Slack.",
       "Treat a 'timeout' result as 'the user did not pick' — do not silently pick option 1.",
     ],
+    executionMode: "sequential",
     parameters: Type.Object({
       title: Type.String({
         description: "Header text. e.g. 'Which Linear issue should I comment on?'",
@@ -223,9 +227,11 @@ export default function slackInteractiveTools(pi: ExtensionAPI) {
       "slack_input_request: ask the user for free-form text input via a Slack modal.",
     promptGuidelines: [
       "Use slack_input_request when you need text the user must provide and cannot reasonably infer.",
+      "Call this as the only tool in its assistant step. Do not combine it with tools that depend on the user's input; wait for the text first.",
       "Phrase `prompt` as a complete sentence with the question and any constraints (length, format).",
       "If the user 'skipped' the input, do not retry the same request — work with what you have or tell the user you need it.",
     ],
+    executionMode: "sequential",
     parameters: Type.Object({
       title: Type.String({
         description: "Header text. Modal title is capped to 24 chars by Slack; the launcher message uses the full title.",

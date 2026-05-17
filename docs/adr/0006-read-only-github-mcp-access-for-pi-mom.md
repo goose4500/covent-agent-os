@@ -1,8 +1,8 @@
 # ADR 0006: Read-only GitHub MCP access for pi-mom
 
 Date: 2026-05-14
-Status: superseded by ADR 0010
-Related: PR #76, ADR 0010 (write-capable posture, issue #121)
+Status: superseded by ADR 0010 and ADR 0015
+Related: PR #76, ADR 0010 (write-capable posture, issue #121), ADR 0015 (retire GitHub MCP for gh CLI)
 
 ## Context
 

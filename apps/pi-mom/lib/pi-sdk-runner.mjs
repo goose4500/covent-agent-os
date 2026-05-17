@@ -154,13 +154,6 @@ import {
 // issue creation directly via tool calls, which is composable with future
 // search/comment/update tools.
 import linearTools from "../../../extensions/linear-tools.ts";
-// github-pr-tools: registers `github_get_pr`, `github_pr_comment`,
-// `github_create_pr`, `github_merge_pr` as top-level Pi tools so the
-// model can drive PR work without going through the `mcp({ server:
-// "github", tool: "…" })` proxy. The mutating create/merge tools always
-// show a Slack approval card via ctx.ui.confirmWithPreview before
-// hitting GitHub — see ADR 0010 for the approval boundary.
-import githubPrTools from "../../../extensions/github-pr-tools.ts";
 // slack-interactive-tools: registers `slack_approval_card`,
 // `slack_choice_card`, `slack_input_request` as Pi custom tools so the
 // model can post polished Block Kit interactivity (approval previews,
@@ -234,7 +227,6 @@ export async function buildPiMomExtensionFactories({
 } = {}) {
   return [
     linearTools,
-    githubPrTools,
     slackInteractiveTools,
     slackCanvasTools,
     bridgeTools,

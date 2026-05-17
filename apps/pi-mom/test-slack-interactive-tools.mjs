@@ -69,11 +69,14 @@ function makeCtx(uiOverrides = {}) {
   assert.equal(typeof approval.execute, "function");
   assert.ok(approval.promptSnippet, "approval has promptSnippet");
   assert.ok(Array.isArray(approval.promptGuidelines));
+  assert.equal(approval.executionMode, "sequential", "approval must block dependent tool calls until the human responds");
 
   const choice = findTool(fakePi, "slack_choice_card");
   assert.ok(choice.parameters, "choice has params");
+  assert.equal(choice.executionMode, "sequential", "choice must block dependent tool calls until the human responds");
   const input = findTool(fakePi, "slack_input_request");
   assert.ok(input.parameters, "input has params");
+  assert.equal(input.executionMode, "sequential", "input must block dependent tool calls until the human responds");
 }
 
 // Case 2: slack_approval_card returns "approved" when ctx.ui.confirmWithPreview resolves true.

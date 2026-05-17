@@ -1,8 +1,8 @@
 # ADR 0011: Package high-leverage MCP workflows as native Pi tools
 
 Date: 2026-05-15
-Status: accepted
-Related: ADR 0010 (write-capable GitHub MCP for pi-mom), PR #123 (github-pr-tools spike)
+Status: accepted (GitHub PR wrapper example retired by ADR 0015)
+Related: ADR 0010 (historical write-capable GitHub MCP posture), ADR 0015 (retire GitHub MCP/native PR tools), PR #123 (retired github-pr-tools spike)
 
 ## Context
 
@@ -12,7 +12,7 @@ ADR 0010 unlocked write-capable GitHub MCP access for pi-mom. With that toggle f
 2. **Vendor name drift.** Upstream MCP servers can rename tools (`create_pull_request` → `pulls.create`) or restructure parameters in a minor version bump. Anything in our prompt templates, skill markdown, or ADRs that names the upstream tool breaks silently when that happens.
 3. **No room for cross-cutting UX.** Approval cards (`slack_approval_card`), structured telemetry, canvas sink details, and credential redaction all have to live in either the SDK or the MCP server. We can't inject them into a single proxied tool call without forking the upstream server.
 
-The GitHub PR spike (PR #123) demonstrates the alternative. Four hand-written Pi tools — `github_get_pr`, `github_pr_comment`, `github_create_pr`, `github_merge_pr` — call the GitHub REST API directly with the same `GITHUB_MCP_PAT`, own a Slack approval card on the mutating ones, redact PAT-shaped substrings from error paths, and return both a text summary (for the model) and a structured `details` payload (for sinks / future observability). The tools cost ~600 lines of TypeScript total and are exercised by 13 dedicated test cases plus the existing SDK loader smoke check.
+The now-retired GitHub PR spike (PR #123) demonstrated the native-wrapper alternative before ADR 0015 moved GitHub work to the local `gh` CLI. Its lessons still apply to future non-GitHub wrappers: own the approval UX, redact credential-shaped strings, and return both a text summary (for the model) and a structured `details` payload (for sinks / future observability).
 
 ## Decision
 
@@ -33,13 +33,13 @@ A workflow is **out of scope** when:
 
 ## What "native wrapper" means in practice
 
-A native wrapper follows the shape established by `extensions/linear-tools.ts`, `extensions/slack-interactive-tools.ts`, and `extensions/github-pr-tools.ts`:
+A native wrapper follows the shape established by `extensions/linear-tools.ts` and `extensions/slack-interactive-tools.ts`:
 
 - Lives at `extensions/<surface>-<workflow>-tools.ts`.
 - Registered in `buildPiMomExtensionFactories` (`apps/pi-mom/lib/pi-sdk-runner.mjs`) so it's default-on; placement near related extensions keeps the array readable.
 - Exports a default factory with zero required config plus a non-default `create…Factory` that accepts injectable `fetch` + `env`, so tests run hermetically.
 - Mutating tools own their approval card via `ctx.ui.confirmWithPreview`. Build the preview from server-truth (fetch state first, don't trust the model's args). Read tools do not show approval prompts.
-- Errors return `isError: true` and never leak token-shaped strings. Use the redactor pattern in `extensions/github-pr-tools.ts` (`gh*_[REDACTED]`, `Authorization: [REDACTED]`) + `extensions/linear-tools.ts` (`lin_api_[REDACTED]`).
+- Errors return `isError: true` and never leak token-shaped strings. Use the redactor pattern in `extensions/linear-tools.ts` (`lin_api_[REDACTED]`) and any surface-specific token patterns.
 - A dedicated `apps/pi-mom/test-<workflow>-tools.mjs` covers, at minimum: registration shape, happy paths for read + write, approval rejection blocks the API call, missing-env errors, `AbortSignal`, HTTP error with secret redaction.
 - Wired into `apps/pi-mom/package.json`'s `check` script and the SDK loader smoke check in `apps/pi-mom/test-pi-sdk-runner.mjs` (factory count + tool-name registration check).
 
@@ -69,5 +69,4 @@ A native wrapper follows the shape established by `extensions/linear-tools.ts`, 
 
 1. **`slack_send_message` native wrapper.** High-frequency, mutating, currently behind the `mcp` proxy (`SLACK_MCP_DIRECT_TOOLS` is opt-in via env). Strong candidate for the next wrapper pass.
 2. **Canvas / observability sink for native-tool calls.** Native wrappers already emit structured `details`; surface them in `canvas-sink.mjs` so reviewers can scrub past tool calls in the live thread canvas.
-3. **Diff-anchored PR review-comment tool.** `github_pr_comment` covers issue-style PR comments. Diff-anchored review comments live behind a different REST endpoint; add a `github_pr_review` wrapper when we start running automated review passes that need to point at specific lines.
-4. **Linear MCP variant evaluation.** The current Linear extension calls the GraphQL API directly. If a Linear MCP server lands upstream, re-evaluate against this ADR's criteria before swapping.
+3. **Linear MCP variant evaluation.** The current Linear extension calls the GraphQL API directly. If a Linear MCP server lands upstream, re-evaluate against this ADR's criteria before swapping.

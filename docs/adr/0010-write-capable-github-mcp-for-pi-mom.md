@@ -1,8 +1,9 @@
 # ADR 0010: Write-capable GitHub MCP access for pi-mom
 
 Date: 2026-05-15
-Status: accepted
+Status: superseded by ADR 0015
 Supersedes: ADR 0006
+Superseded-by: ADR 0015 (retire GitHub MCP/native PR tools for gh CLI)
 Related: Issue #121
 
 ## Context
