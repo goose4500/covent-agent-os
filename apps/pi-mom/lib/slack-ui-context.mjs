@@ -108,9 +108,9 @@ export function createSlackUIContext({
 
   // Active canvas-sink (if any). startCanvas creates one and attaches it
   // to the compositeSink; stopCanvas detaches and finalizes. We only
-  // support one live canvas per turn — the model can finish-and-start to
-  // open another, but parallel canvases would race on the slack-sink
-  // text-delta accumulator.
+  // support one live canvas at a time — if the model starts another canvas
+  // before explicitly finishing the first, we auto-finalize the first so
+  // subsequent text cannot accidentally stream into / replace it.
   let activeCanvasSink;
   const canCanvas = Boolean(
     compositeSink &&
@@ -516,7 +516,25 @@ export function createSlackUIContext({
   async function startCanvas({ title, initialText, postLinkToThread = true } = {}) {
     if (disposed) return { ok: false, error: "ui_disposed" };
     if (!canCanvas) return { ok: false, error: "canvas_unavailable" };
-    if (activeCanvasSink) return { ok: false, error: "canvas_already_open", canvasId: activeCanvasSink.canvasId, url: activeCanvasSink.url };
+    if (activeCanvasSink) {
+      const previousSink = activeCanvasSink;
+      activeCanvasSink = undefined;
+      try { compositeSink.removeSink(previousSink); } catch {}
+      try {
+        const stopResult = await previousSink.stop({});
+        trace("slack_ui.canvas_auto_stopped_for_new_start", {
+          requestId,
+          canvasId: stopResult?.canvasId || previousSink.canvasId,
+          streamedChars: stopResult?.streamedChars || 0,
+        });
+      } catch (err) {
+        trace("slack_ui.canvas_auto_stop_failed", {
+          requestId,
+          canvasId: previousSink.canvasId,
+          error: err?.data?.error || err?.message || "unknown",
+        });
+      }
+    }
     const sink = createCanvasSinkFn({
       client,
       channel,
