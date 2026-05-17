@@ -106,6 +106,9 @@ Slack discussion becomes Linear truth, backed by Git implementation and repo doc
 - [`docs/adr/0011-native-pi-tools-for-high-leverage-mcp-workflows.md`](adr/0011-native-pi-tools-for-high-leverage-mcp-workflows.md)
 - [`docs/adr/0012-pi-mom-production-hardening-2026-05-16.md`](adr/0012-pi-mom-production-hardening-2026-05-16.md)
 - [`docs/adr/0013-cli-first-ec2-agent-workstation.md`](adr/0013-cli-first-ec2-agent-workstation.md)
+- [`docs/adr/0014-openrouter-as-multi-model-provider.md`](adr/0014-openrouter-as-multi-model-provider.md)
+- [`docs/adr/0015-retire-github-mcp-for-gh-cli.md`](adr/0015-retire-github-mcp-for-gh-cli.md)
+- [`docs/adr/0016-slack-hitl-tools-are-sequential-boundaries.md`](adr/0016-slack-hitl-tools-are-sequential-boundaries.md)
 
 ### History/archive
 
