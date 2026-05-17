@@ -223,6 +223,43 @@ Known-good non-secret values:
 - Pi model: `PI_MOM_MODEL=openai-codex/gpt-5.5` with `PI_MOM_THINKING_LEVEL=high` by default
 - Subagent models: read-only / scout-like profiles (`team-scout`, `team-reviewer-readonly`, `scout-fast`, `frontend-polish`, `linear-auditor`, `linear-subissue-auditor`) pin `google/gemini-3.1-flash-lite-preview` in their `.agents/*.md` / `agents/*.md` frontmatter. `team-planner` and write-capable profiles stay on `openai-codex/gpt-5.5`. The deployed `GEMINI_API_KEY` (Google AI Studio) must be set or `bun run doctor:pi-mom` will fail the subagent-model probe.
 
+## Pi context window and auto-compaction
+
+`apps/pi-mom` does not implement its own compaction loop. It creates an upstream Pi `AgentSession` in `lib/pi-sdk-runner.mjs`; upstream `@earendil-works/pi-coding-agent` auto-compaction is enabled by default and triggers when:
+
+```text
+contextTokens > contextWindow - reserveTokens
+```
+
+Current default parent route:
+
+```text
+PI_MOM_MODEL=openai-codex/gpt-5.5
+PI_MOM_THINKING_LEVEL=high
+```
+
+For that `openai-codex/gpt-5.5` route, Pi's registry currently reports `contextWindow=272000` and `maxTokens=128000`, so the default compaction threshold is approximately:
+
+```text
+272000 - 16384 = 255616 tokens
+```
+
+`reserveTokens` defaults to `16384` and `keepRecentTokens` defaults to `20000`. Override them only through Pi settings (`${PI_AGENT_DIR}/settings.json` or `.pi/settings.json`) when you intentionally want to change compaction behavior; do not raise the local model metadata just to delay compaction unless the backend has been proven to accept the larger context.
+
+Some registry routes may expose ~1M context, for example `openai/gpt-5.5-pro`, but that is a different provider/model path from the ChatGPT/Codex `openai-codex/gpt-5.5` subscription route. If we switch, document the provider/auth path and validate it in staging first.
+
+Safe validation commands/procedure:
+
+```bash
+# From repo root: reads model registry + Pi settings, does not send a model request.
+bun --filter pi-mom run doctor
+
+# Optional route probe, provided the matching provider auth is configured.
+PI_MOM_MODEL=openai/gpt-5.5-pro bun --filter pi-mom run doctor
+```
+
+The doctor output includes non-secret model metadata and the active auto-compaction threshold, e.g. `contextWindow`, `maxTokens`, `reserveTokens`, `keepRecentTokens`, and `contextWindow - reserveTokens`. To validate actual backend acceptance beyond metadata, use a non-production Slack bridge/session, switch `PI_MOM_MODEL`, run doctor first, then run a deliberate long-context probe and watch for Pi compaction entries or context-overflow errors before changing production.
+
 Detailed historical runbook: `docs/archive/runbooks/covent-pi-mom-known-good.md` (archived evidence only; not current instructions).
 
 ## MCP servers (pi-mcp-adapter)
@@ -256,7 +293,7 @@ The schema lives in [`/examples/mcp.example.json`](../../examples/mcp.example.js
 
 **Interactive auth:** OAuth flows (`/mcp-auth <server>`) require a TUI Pi session — run them locally against the same `PI_AGENT_DIR`, then redeploy. Bearer / `client_credentials` servers don't need this.
 
-`bun run doctor:pi-mom` reports adapter resolution and the active `mcp.json` path/server count.
+`bun run doctor:pi-mom` reports Pi model context metadata, auto-compaction threshold, adapter resolution, and the active `mcp.json` path/server count.
 
 ## Notes
 

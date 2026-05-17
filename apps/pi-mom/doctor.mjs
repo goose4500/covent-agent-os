@@ -1,10 +1,17 @@
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { WebClient } from "@slack/web-api";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { resolveProjectSkillsDir, subagentsEnabledFromEnv, webAccessEnabledFromEnv } from "./lib/pi-sdk-runner.mjs";
+import {
+  buildPiRuntimeContextDiagnostic,
+  formatPiRuntimeContextDiagnostic,
+  parsePiModelId,
+  resolvePiModelId,
+  resolvePiThinkingLevel,
+} from "./lib/pi-runtime-diagnostics.mjs";
 
 const require = createRequire(import.meta.url);
 const TEAM_AGENT_NAMES = ["team-scout", "team-planner", "team-reviewer-readonly"];
@@ -268,16 +275,22 @@ if (webAccessEnabled) {
 try {
   const auth = await AuthStorage.create();
   const registry = ModelRegistry.create(auth);
-  const modelId = process.env.PI_MOM_MODEL || "openai-codex/gpt-5.5";
-  const slash = modelId.indexOf("/");
-  const provider = slash >= 0 ? modelId.slice(0, slash) : modelId;
-  const id = slash >= 0 ? modelId.slice(slash + 1) : "";
+  const modelId = resolvePiModelId(process.env);
+  const { provider, id } = parsePiModelId(modelId);
   const model = registry.find(provider, id);
-  if (model) {
-    console.log(`✓ Pi SDK model resolved: ${modelId} (thinking: ${process.env.PI_MOM_THINKING_LEVEL || "high"})`);
-  } else {
-    console.error(`✗ Pi SDK model not found: ${modelId}. Provider key missing or model id wrong?`);
-    ok = false;
+  const agentDir = process.env.PI_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || path.join(process.env.HOME || "/root", ".pi", "agent");
+  const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+  const diagnostic = buildPiRuntimeContextDiagnostic({
+    modelId,
+    thinkingLevel: resolvePiThinkingLevel(process.env),
+    model,
+    compactionSettings: settingsManager.getCompactionSettings(),
+  });
+  for (const line of formatPiRuntimeContextDiagnostic(diagnostic)) {
+    const prefix = line.level === "ok" ? "✓" : line.level === "error" ? "✗" : "!";
+    const log = line.level === "error" ? console.error : console.log;
+    log(`${prefix} ${line.message}`);
+    if (line.level === "error") ok = false;
   }
 
   // Read-only/scout-like subagents (team-scout, team-reviewer-readonly, and
