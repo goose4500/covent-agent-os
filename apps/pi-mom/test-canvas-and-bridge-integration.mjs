@@ -178,7 +178,7 @@ function makeFakeSlackSink() {
   assert.equal(res.error, "no_active_canvas");
 }
 
-// ---------- case 5: double-start returns canvas_already_open with the existing ids ----------
+// ---------- case 5: double-start auto-finalizes the first canvas, then opens a new one ----------
 {
   const client = makeFakeClient();
   const composite = createCompositeSink([makeFakeSlackSink()]);
@@ -187,16 +187,27 @@ function makeFakeSlackSink() {
     client, channel: "C1", threadTs: "1.0", requestId: "req_c5",
     pendingApprovals: new Map(), surface: "app_mention",
     compositeSink: composite,
-    createCanvasSinkFn: canvasFactory,
+    createCanvasSinkFn: (opts) => {
+      const next = makeFakeCanvasSinkFactory({
+        canvasId: `F_FAKE_CANVAS_${canvasFactory.created.length + 1}`,
+        url: `https://slack/canvas/fake-${canvasFactory.created.length + 1}`,
+      });
+      const sink = next(opts);
+      canvasFactory.created.push(sink);
+      return sink;
+    },
   });
 
   const first = await ui.startCanvas({ title: "A" });
   assert.equal(first.ok, true);
+  assert.equal(composite.sinks.length, 2, "first canvas is attached");
+
   const second = await ui.startCanvas({ title: "B" });
-  assert.equal(second.ok, false);
-  assert.equal(second.error, "canvas_already_open");
-  assert.equal(second.canvasId, first.canvasId);
-  assert.equal(canvasFactory.created.length, 1, "second start did not create a second sink");
+  assert.equal(second.ok, true);
+  assert.notEqual(second.canvasId, first.canvasId, "second start opens a separate canvas");
+  assert.equal(canvasFactory.created.length, 2, "second start created a new sink");
+  assert.equal(canvasFactory.created[0]._stoppedWith.result, undefined, "first canvas was finalized without overwriting from the second");
+  assert.equal(composite.sinks.length, 2, "only slack sink + second canvas remain attached");
 }
 
 // ---------- case 6: startCanvas without compositeSink/factory returns canvas_unavailable ----------
