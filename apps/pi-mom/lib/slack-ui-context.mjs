@@ -160,6 +160,19 @@ export function createSlackUIContext({
       reason,
       type: entry.type,
     });
+    if (entry.messageTs) {
+      const label = reason === "timeout" ? "timed out" : reason === "aborted" ? "aborted" : "expired";
+      client.chat.update({
+        channel: entry.channel,
+        ts: entry.messageTs,
+        text: `⌛ ${entry.title || "Approval"} — ${label}`,
+        blocks: [],
+      }).catch((err) => trace("slack_ui.finalize_message_update_failed", {
+        approvalId,
+        reason,
+        error: err?.data?.error || err.message,
+      }));
+    }
     try { entry.resolve(entry.defaultValue); } catch {}
   }
 

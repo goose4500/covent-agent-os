@@ -685,4 +685,31 @@ function makeDeferredPostClient() {
   assert.equal(pendingApprovals.size, 0);
 }
 
+// dispose() with a still-pending card removes stale buttons from Slack.
+// EC2 discovered this gap: users could click a card whose approvalId was
+// already finalized because finalize() never cleaned up the Slack message.
+{
+  _resetApprovalCounterForTests();
+  const client = makeFakeClient();
+  const pendingApprovals = new Map();
+  const ui = createSlackUIContext({
+    client, channel: "C_stale", threadTs: "stale.0",
+    requestId: "req_stale", pendingApprovals,
+  });
+
+  const pending = ui.selectWithContext("Live smoke test", "Pick one", [
+    { id: "ok", label: "Looks good" },
+    { id: "bad", label: "Needs follow-up" },
+  ]);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pendingApprovals.size, 1, "select card registered");
+
+  ui.dispose("dispose");
+  assert.equal(await pending, undefined, "dispose resolves with default");
+  assert.equal(pendingApprovals.size, 0, "pending entry cleaned up");
+  assert.equal(client.updates.length, 1, "stale card edited to remove buttons");
+  assert.deepEqual(client.updates[0].blocks, [], "buttons stripped from stale card");
+  assert.match(client.updates[0].text, /expired/, "expiry label in text");
+}
+
 console.log("slack-ui-context tests passed");
