@@ -241,7 +241,7 @@ async function getThreadContext(client, channel, rootTs) {
 }
 
 function buildPiPrompt({ mode, user, channel, threadTs, text, threadContext }) {
-  return `You are Covent Pi, Jake's local Pi AI agent replying into Slack through a Socket Mode bridge.
+  return `You are Covent Pi, a Pi AI agent replying into Slack through a Socket Mode bridge.
 
 Slack context:
 - Mode: ${mode}
