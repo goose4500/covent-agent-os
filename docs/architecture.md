@@ -11,7 +11,7 @@ The bridge keeps route parsing simple: `apps/pi-mom/lib/routes.mjs` owns route l
 ## The 3 primitives
 
 ```text
-@earendil-works/pi-coding-agent@0.74     ─►  in-process parent Pi agent
+@earendil-works/pi-coding-agent@0.75.3   ─►  in-process parent Pi agent
 @slack/bolt@4.7 + @slack/web-api@7.15.2  ─►  Slack runtime + streaming + canvases
 apps/pi-mom/lib/routes.mjs               ─►  route labels/instructions/help/status
 ```

@@ -10,7 +10,7 @@ Read this before changing Slack/Pi/Linear behavior. The purpose is to prevent fu
 
 ## What Covent Pi / pi-mom is
 
-`apps/pi-mom` is a Slack Socket Mode bridge running on **bun 1.3+**. It receives Slack `app_mention` events, Assistant container messages, DMs, and `/thread-spec` slash commands, resolves each to a route from `apps/pi-mom/lib/routes.mjs`, runs the Pi SDK **in-process** to satisfy the request, and streams the response back into the thread. It is deployed as a long-running Railway worker (`covent-pi-mom` service, production env, source branch `main`).
+`apps/pi-mom` is a Slack Socket Mode bridge running on **bun 1.3+** and **Node >=22.19.0**. It receives Slack `app_mention` events, Assistant container messages, DMs, and `/thread-spec` slash commands, resolves each to a route from `apps/pi-mom/lib/routes.mjs`, runs the Pi SDK **in-process** to satisfy the request, and streams the response back into the thread. It is deployed as a long-running Railway worker (`covent-pi-mom` service, production env, source branch `main`).
 
 The core product loop:
 
@@ -24,7 +24,7 @@ Everything is wired on these. Don't write code that duplicates what they already
 
 | Primitive | What it is |
 |---|---|
-| `@earendil-works/pi-coding-agent@0.74` | Pi SDK; `createAgentSession`, `SessionManager`, `setActiveToolsByName`, `ExtensionUIContext`, custom tools via `pi.registerTool` |
+| `@earendil-works/pi-coding-agent@0.75.3` | Pi SDK; `createAgentSession`, `SessionManager`, `setActiveToolsByName`, `ExtensionUIContext`, custom tools via `pi.registerTool` |
 | `@slack/bolt@4.7` + `@slack/web-api@7.15.2` | Slack runtime; `Assistant` + `app_mention` adapters share one request path; `chat.startStream`; `canvases.{create,edit}`; `views.{publish,open}` |
 | `apps/pi-mom/lib/routes.mjs` | Route labels/instructions/help/status. Prefixes shape workflow; tool/skill/extension access is default-on. |
 
