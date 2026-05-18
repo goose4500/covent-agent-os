@@ -29,7 +29,7 @@
 //   home_refresh               (no value, just re-publish)
 //   home_settings_open         (opens settings modal)
 //
-// 2026-block fallback: @slack/web-api ^7.15.2 predates `table` / `alert` /
+// 2026-block fallback: @slack/web-api ^7.16.0 predates `table` / `alert` /
 // `markdown` blocks. We emit `section` + `mrkdwn` instead. Swap when the SDK
 // is bumped; callers don't need to change.
 

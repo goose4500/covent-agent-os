@@ -143,7 +143,7 @@ Linear behavior in `PI_MOM_MODE=pi`:
 
 Team subagents behavior in `PI_MOM_MODE=pi`:
 
-- `pi-subagents` is loaded by default from the app dependency (`pi-subagents@0.24.2`).
+- `pi-subagents` is loaded by default from the app dependency (`pi-subagents@0.24.3`).
 - The `subagent` tool is available on every turn; the agent decides when to spawn subagents based on the user's request.
 - Project-owned team profiles live in `.agents/team-*.md`; they inherit skills, omit tool allowlists, and load the same app-approved extension surface for child `pi` CLI runs.
 - Child subagent runs spawn the `pi` CLI, so the deployment image must have `pi` on PATH.
