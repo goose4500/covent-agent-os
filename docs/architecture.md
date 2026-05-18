@@ -12,7 +12,7 @@ The bridge keeps route parsing simple: `apps/pi-mom/lib/routes.mjs` owns route l
 
 ```text
 @earendil-works/pi-coding-agent@0.75.3   ─►  in-process parent Pi agent
-@slack/bolt@4.7 + @slack/web-api@7.15.2  ─►  Slack runtime + streaming + canvases
+@slack/bolt@4.7.2 + @slack/web-api@7.16.0  ─►  Slack runtime + streaming + canvases
 apps/pi-mom/lib/routes.mjs               ─►  route labels/instructions/help/status
 ```
 
@@ -70,7 +70,7 @@ Normal Slack Pi turns omit `tools`, so `apps/pi-mom/lib/pi-sdk-runner.mjs`:
 - `extensions/slack-interactive-tools.ts`
 - `extensions/browser-use-tools.ts`
 - `extensions/git-checkpoint.ts`
-- official `pi-subagents@0.24.2`
+- official `pi-subagents@0.24.3`
 - official `pi-web-access@0.10.7` via `additionalExtensionPaths`
 
 Skills are also default-on: repo skills plus `pi-web-access/skills` are added explicitly, and `noSkills: false` allows the SDK's normal skill discovery. `PI_OFFLINE=1` remains set so the SDK does not auto-install user-scope packages at session creation.

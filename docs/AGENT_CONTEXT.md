@@ -25,7 +25,7 @@ Everything is wired on these. Don't write code that duplicates what they already
 | Primitive | What it is |
 |---|---|
 | `@earendil-works/pi-coding-agent@0.75.3` | Pi SDK; `createAgentSession`, `SessionManager`, `setActiveToolsByName`, `ExtensionUIContext`, custom tools via `pi.registerTool` |
-| `@slack/bolt@4.7` + `@slack/web-api@7.15.2` | Slack runtime; `Assistant` + `app_mention` adapters share one request path; `chat.startStream`; `canvases.{create,edit}`; `views.{publish,open}` |
+| `@slack/bolt@4.7.2` + `@slack/web-api@7.16.0` | Slack runtime; `Assistant` + `app_mention` adapters share one request path; `chat.startStream`; `canvases.{create,edit}`; `views.{publish,open}` |
 | `apps/pi-mom/lib/routes.mjs` | Route labels/instructions/help/status. Prefixes shape workflow; tool/skill/extension access is default-on. |
 
 ## Active routes

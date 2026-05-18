@@ -18,7 +18,7 @@ The bridge is wired on three primitives. Nothing bespoke duplicates what they al
 | Primitive | What it is |
 |---|---|
 | [`@earendil-works/pi-coding-agent@0.75.3`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) | Pi SDK, **embedded in-process** for parent runs via `createAgentSession` + `SessionManager` + `setActiveToolsByName`. Child subagents may spawn the `pi` CLI. |
-| [`@slack/bolt@4.7`](https://slack.dev/bolt-js/) + [`@slack/web-api@7.15.2`](https://slack.dev/node-slack-sdk/web-api) | Slack runtime. `Assistant` container + `app_mention` adapter share one `dispatchToAction`. `chat.startStream` + `canvases.{create,edit}`. |
+| [`@slack/bolt@4.7.2`](https://slack.dev/bolt-js/) + [`@slack/web-api@7.16.0`](https://slack.dev/node-slack-sdk/web-api) | Slack runtime. `Assistant` container + `app_mention` adapter share one `dispatchToAction`. `chat.startStream` + `canvases.{create,edit}`. |
 | `apps/pi-mom/lib/routes.mjs` | Route catalog. Dispatcher/help/status/tests read the same route labels and workflow instructions. |
 
 Runtime: **bun 1.3+** and **Node >=22.19.0**.
