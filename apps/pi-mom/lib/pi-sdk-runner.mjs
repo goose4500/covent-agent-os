@@ -3,7 +3,7 @@
 // Public contract preserved from the old runPi (apps/pi-mom/index.mjs):
 //   runPi(prompt, { onOutput, signal }): Promise<string>
 //
-// SDK event shape relied on (verified against @earendil-works/pi-coding-agent@0.74.0
+// SDK event shape relied on (verified against @earendil-works/pi-coding-agent@0.75.3
 // + @earendil-works/pi-agent-core + @earendil-works/pi-ai type defs):
 //   AgentEvent { type: "message_update", assistantMessageEvent: AssistantMessageEvent }
 //   AssistantMessageEvent { type: "text_delta", delta: string, ... }
