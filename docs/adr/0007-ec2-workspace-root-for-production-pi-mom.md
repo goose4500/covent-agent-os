@@ -66,6 +66,8 @@ That directory is the canonical home for production `pi-mom` auth state, MCP con
 
 Historical Railway or local Pi transcripts may be copied to EC2 as archival imports, but they should not be merged into the live session directory or live `thread-sessions.json` unless an operator intentionally rewrites paths and accepts the resume semantics.
 
+`pi-mom` owns a small managed-MCP reconciliation step at boot. It discovers the same MCP config source classes that `pi-mcp-adapter` uses (`~/.config/mcp/mcp.json`, `${PI_AGENT_DIR}/mcp.json`, cwd `.mcp.json`, and cwd `.pi/mcp.json`, plus imports declared by those files), then writes missing env-enabled managed server definitions only to the canonical Pi global target `${PI_AGENT_DIR}/mcp.json`. This makes EC2, Railway rollback, and local app-cwd runs converge without writing to every discovered config file. Existing operator-managed servers such as GitHub are preserved, and managed entries reference token env var names such as `APIFY_API_TOKEN` via `bearerTokenEnv` instead of storing token values.
+
 ## Security posture
 
 The approved Slack channels are treated as an operator boundary. Pi-backed Slack routes intentionally expose a broad default tool surface, including bash/file tools, app extensions, web access, MCP, skills, and subagents. Moving from Railway to EC2 increases the usefulness of that surface and also increases the blast radius.
